@@ -102,7 +102,7 @@ describe('conversations across a restart of Looper', { timeout: 30_000 }, () => 
   const setUp = (e: Engine, cwd: string, command: string) => {
     e.updateSettings({
       environments: e.settings.environments.map((env) =>
-        env.id === 'local' ? { ...env, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command }] } : env,
+        env.id === 'local' ? { ...env, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command }] } : env,
       ),
     });
     e.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } }));
@@ -135,7 +135,14 @@ describe('conversations across a restart of Looper', { timeout: 30_000 }, () => 
     fs.writeFileSync(path.join(runDir, 'session.json'), JSON.stringify({ session_id: 's1', transcript_path: transcript }));
     const startedAt = e1.getChat(chatId)!.startedAt;
     // Saved as it changed, before any quit.
-    await until(() => (JSON.parse(fs.readFileSync(path.join(data, 'state.json'), 'utf8')).conversations ?? []).length === 1, 'the list in state.json');
+    const savedList = (): number => {
+      try {
+        return (JSON.parse(fs.readFileSync(path.join(data, 'state.json'), 'utf8')).conversations ?? []).length;
+      } catch {
+        return 0; // not written yet
+      }
+    };
+    await until(() => savedList() === 1, 'the list in state.json');
     await stop(e1);
     expect(lines(spawns)).toHaveLength(1);
 
@@ -271,5 +278,30 @@ describe('conversations across a restart of Looper', { timeout: 30_000 }, () => 
     expect(e3.sessionsState().sessions).toEqual([]);
     // It never had a turn: nothing is left of it.
     expect(fs.existsSync(path.join(data, 'tasks', 't1', 'runs', id))).toBe(false);
+  });
+
+  it("runs an addon's command in a terminal session of the project, or of a folder, listed by its title and kept only while open", async () => {
+    const data = dataDir();
+    const dir = tmp('looper-cmd-');
+    const p1 = fakePtys();
+    const e1 = open(data, { spawnTerminal: p1.spawn });
+    const project = e1.saveProject({ name: 'App', cwd: dir, environmentId: 'local', permissionMode: 'auto' });
+    const id = e1.startCommandTerminal({ projectId: project.id }, ['git', 'push'], 'git push');
+    expect(p1.procs).toHaveLength(1);
+    const runDir = path.join(data, 'tasks', `@project-${project.id}`, 'runs', id);
+    await until(() => e1.sessionsState().sessions.some((s) => s.id === id), 'the session to be listed');
+    expect(e1.sessionsState().sessions.find((s) => s.id === id)).toMatchObject({ kind: 'terminal', title: 'git push', harnessName: 'Terminal', projectId: project.id });
+    // A folder that is the project's runs as the project.
+    const same = e1.startCommandTerminal({ environmentId: 'local', cwd: dir }, ['git', 'pull'], 'Pull');
+    await until(() => e1.sessionsState().sessions.some((s) => s.id === same), 'the second session');
+    expect(e1.sessionsState().sessions.find((s) => s.id === same)).toMatchObject({ title: 'Pull', projectId: project.id });
+    expect(() => e1.startCommandTerminal({ environmentId: 'nope', cwd: dir }, ['x'], 'x')).toThrow('There\'s no environment "nope".');
+    expect(fs.readdirSync(runDir)).toContain('command.sh');
+    await e1.closeSession(id);
+    expect(fs.existsSync(runDir)).toBe(false);
+    await stop(e1);
+
+    const e2 = open(data, { spawnTerminal: fakePtys().spawn });
+    expect(e2.sessionsState().sessions).toEqual([]);
   });
 });

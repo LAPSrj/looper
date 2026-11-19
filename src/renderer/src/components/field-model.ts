@@ -49,7 +49,7 @@ function isOneLine(node: ReactNode): boolean {
  * the first control among its children, and is a group named by the label too;
  * any other children (several controls, text) make the field a group.
  */
-export function bindField(children: ReactNode, id: string): FieldBinding {
+export function bindField(children: ReactNode, id: string, extra?: Record<string, unknown>): FieldBinding {
   // Conditional content that isn't showing (`{warn && <p>…</p>}`) doesn't make a field taller.
   const shown = Children.toArray(children);
   const oneLine = shown.length > 0 && shown.every(isOneLine);
@@ -57,13 +57,13 @@ export function bindField(children: ReactNode, id: string): FieldBinding {
   const only = children as ReactElement<{ id?: string; children?: ReactNode }>;
   if (isControl(only)) {
     const own = only.props.id;
-    return { children: own ? only : cloneElement(only, { id }), controlId: own ?? id, group: false, oneLine };
+    return { children: own && !extra ? only : cloneElement(only, { ...(own ? {} : { id }), ...extra }), controlId: own ?? id, group: false, oneLine };
   }
   const inner = Children.toArray(only.props.children);
   const at = inner.findIndex(isControl);
   if (at === -1) return { children, group: true, oneLine };
   const control = inner[at] as ReactElement<{ id?: string }>;
   const own = control.props.id;
-  const next = own ? control : cloneElement(control, { id });
+  const next = own && !extra ? control : cloneElement(control, { ...(own ? {} : { id }), ...extra });
   return { children: cloneElement(only, undefined, ...inner.map((c, i) => (i === at ? next : c))), controlId: own ?? id, group: true, oneLine };
 }

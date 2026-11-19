@@ -641,6 +641,8 @@ describe('headless agent over pipes', () => {
     expect(modConfig(ctx.runDir).inbox).toEqual(
       ['guidance.json', 'events-waiting.json', 'delegate-waiting.json', 'notice.json'].map((n) => path.join(ctx.runDir, n)),
     );
+    // Only the guidance is the user's own words: it ends the turn, and the rest go along as notes.
+    expect(modConfig(ctx.runDir).userInbox).toEqual([path.join(ctx.runDir, 'guidance.json')]);
     expect(fs.readFileSync(path.join(ctx.runDir, 'run.sh'), 'utf8')).toContain(`--plugin-dir '${path.join(ctx.runDir, 'looper-mod')}'`);
     expect(fs.readFileSync(path.join(ctx.runDir, 'bin', 'looper-stop-hook'), 'utf8')).toContain(
       `g='${path.join(ctx.runDir, 'guidance.json')}'`,

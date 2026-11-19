@@ -11,6 +11,8 @@ export interface MainScreen {
   tab: string;
   detail?: string;
   project?: boolean;
+  /** After selecting the project: the project's tab to show (`last`: an addon's, after Looper's own). */
+  projectTab?: 'last';
   chat?: boolean;
   terminal?: boolean;
   addon?: boolean;

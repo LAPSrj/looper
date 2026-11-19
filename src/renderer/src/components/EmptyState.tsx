@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { StatusGlyph, type StatusLevel } from './icons';
 
 /**
  * Where a screen's "nothing to show here" text sits. `pane`: a window's or a
@@ -6,9 +7,10 @@ import type { ReactNode } from 'react';
  * nothing in the row. `row`: the only row of an empty listbox or tree, which
  * must own one. `section`: a list section's body (a phone draws it as the
  * section's row). `overlay`: over the content that's on its way (a terminal
- * starting).
+ * starting). `inline`: inside a screen, after its other parts, in place of
+ * the content it can't show.
  */
-export type EmptyAt = 'pane' | 'detail' | 'row' | 'section' | 'overlay';
+export type EmptyAt = 'pane' | 'detail' | 'row' | 'section' | 'overlay' | 'inline';
 
 /**
  * A screen's text for nothing to show. How it looks on the desktop, iOS and
@@ -21,8 +23,17 @@ export function EmptyState({
   title,
   busy,
   onMenu,
+  level,
+  action,
   children,
 }: {
+  /**
+   * A problem that keeps the content from showing (Windows' in-place error:
+   * normal text after a 16x16 icon of this level), not just nothing to show.
+   */
+  level?: StatusLevel;
+  /** What fixes it or shows the content: a button under the text (Restart, Try Again, Install Git). */
+  action?: ReactNode;
   at?: EmptyAt;
   /** at="row": what holds the row, for its role. */
   list?: 'listbox' | 'tree';
@@ -50,8 +61,21 @@ export function EmptyState({
       }
     >
       {busy && <span className="pg-spinner" aria-hidden="true" />}
-      {title && <span className="empty-state-title">{title}</span>}
-      {children}
+      {level ? (
+        <div className="empty-state-problem" role="alert">
+          <StatusGlyph level={level} />
+          <div className="empty-state-text">
+            {title && <span className="empty-state-title">{title}</span>}
+            {children && <span className="empty-state-body">{children}</span>}
+          </div>
+        </div>
+      ) : (
+        <>
+          {title && <span className="empty-state-title">{title}</span>}
+          {children}
+        </>
+      )}
+      {action && <div className="empty-state-action">{action}</div>}
     </div>
   );
 }

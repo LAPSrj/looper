@@ -42,6 +42,7 @@ export const READ_CHANNELS: ReadonlySet<string> = new Set([
   'addons:list',
   'addons:pane',
   'addons:render',
+  'addons:projectTab',
   'run:canGuide',
   'git:repos',
   'git:check',

@@ -56,6 +56,7 @@ export function Row({
   valueTone,
   selected,
   checked,
+  multiple,
   disabled,
   tabIndex = 0,
   onOpen,
@@ -77,6 +78,8 @@ export function Row({
   valueTone?: 'error' | 'warning';
   /** One option of a choice of one: true shows the check at its end (HIG: Lists and tables). */
   checked?: boolean;
+  /** `checked` is one of several choices any of which can be on (a check box, not a radio). */
+  multiple?: boolean;
   disabled?: boolean;
   /** A row that opens: -1 leaves it out of the Tab order (one Tab stop for a radio group). */
   tabIndex?: number;
@@ -90,7 +93,7 @@ export function Row({
   return (
     <div
       className={`pg-row${open ? ' tappable' : ''}${tone ? ` tone-${tone}` : ''}${valueTone ? ` value-${valueTone}` : ''}${selected ? ' selected' : ''}${disabled ? ' disabled' : ''}`}
-      role={checked !== undefined ? 'radio' : onOpen ? 'button' : undefined}
+      role={checked !== undefined ? (multiple ? 'checkbox' : 'radio') : onOpen ? 'button' : undefined}
       aria-checked={checked}
       aria-haspopup={(popUp && onOpen && 'menu') || undefined}
       aria-disabled={disabled || undefined}

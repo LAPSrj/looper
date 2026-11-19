@@ -45,7 +45,7 @@ import { ClaudeStreamAccumulator, CodexExecAccumulator } from './builder/stream'
 import { contextOfLine, readCodexContextWindow, readContextTokens } from './context';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
-import { COMPACTED_FILE, compactedFile, findCodexRollout, TranscriptReader, transcriptHostPath } from './messages';
+import { COMPACTED_FILE, compactedFile, findCodexRollout, LiveRows, TranscriptReader, transcriptHostPath } from './messages';
 import { claudeModelWindows, modelWindows as sharedWindows } from './model-windows';
 import { AGENT_DONE, childEnv, SOCKET_FILE, writeLauncher, type RunContext } from './steps/common';
 import { mergeClaudeSettings, readUserSettings, readUserSettingsSync } from './claude-settings';
@@ -471,6 +471,13 @@ export function historyRows(rows: MessageRow[]): MessageRow[] {
   return rows.map((r, i) => ({ ...r, id: `h${i}` }));
 }
 
+/**
+ * How often an interactive chat reads the rows its mod hands over
+ * (MOD_FILES.live). They're on the run folder's own disk, so this is cheap,
+ * where the transcript may be on another system's.
+ */
+const LIVE_POLL_MS = 100;
+
 /** How long Stop waits for Claude to end its turn by itself before ending the process. */
 const INTERRUPT_GRACE_MS = 5000;
 
@@ -648,6 +655,9 @@ class ChatSession {
   private termSize?: { cols: number; rows: number };
   /** The conversation is in Claude Code's Code Mode (its transcript's repl-mode record): Claude Code resumes it only in a terminal. */
   private codeMode = false;
+  /** The interactive session's rows from its mod, ahead of its transcript. */
+  private live: LiveRows | null = null;
+  private livePolling = false;
   /** Interactive: the mod's and the session's files as last read (their mtimes). */
   private seen = { session: 0, turnEnd: 0, usage: 0 };
   private polling = false;
@@ -906,6 +916,9 @@ class ChatSession {
           else this.pollPermissions();
           this.pollSubagentMessages();
         }, 300),
+        setInterval(() => {
+          if (this.interactive) void this.pollLive();
+        }, LIVE_POLL_MS),
       );
       // The user's --settings join the chat's (Claude Code keeps only the last one given).
       const args = [...this.harness.args, ...this.extraArgs];
@@ -1445,6 +1458,20 @@ class ChatSession {
     const reader = new TranscriptReader(file, {}, 'claude', (line) => this.onTranscriptLine(line));
     await reader.skipExisting();
     this.transcript = { file, reader };
+    this.live = new LiveRows(path.join(this.dir, MOD_FILES.live));
+  }
+
+  /** The rows the mod handed over since the last read: the conversation shows them before the transcript has them. */
+  private async pollLive(): Promise<void> {
+    if (this.livePolling || this.closed || !this.live) return;
+    this.livePolling = true;
+    try {
+      if (await this.live.read((rec) => this.onRecord(rec))) this.scheduleEmit();
+    } catch (err) {
+      this.d.log.warn(`chat ${this.id}: cannot read the rows the session handed over: ${errMsg(err)}`);
+    } finally {
+      this.livePolling = false;
+    }
   }
 
   private onTranscriptLine(line: string): void {
@@ -1454,13 +1481,17 @@ class ChatSession {
     } catch {
       return;
     }
-    if (!rec) return;
+    if (rec && (!this.live || this.live.transcriptRow(rec.uuid))) this.onRecord(rec);
+  }
+
+  /** A record of the session's conversation, from its transcript or from its mod (LiveRows). */
+  private onRecord(rec: Rec): void {
     if (rec.type === 'repl-mode' && typeof rec.replMode === 'boolean' && rec.replMode !== this.codeMode) {
       this.codeMode = rec.replMode;
       this.save();
     }
     if (isInterruptedRecord(rec)) this.acc.addNote('Stopped.');
-    else this.acc.addLine(line);
+    else this.acc.addParsed(rec);
     if (rec.type === 'assistant' && rec.isSidechain !== true) {
       const model = obj(rec.message)?.model;
       if (typeof model === 'string' && !model.startsWith('<')) this.activeModel = model;
@@ -1708,6 +1739,7 @@ class ChatSession {
   private startClaude(): void {
     // The stream brings the conversation from now on: an interactive session's transcript is read from its end again next time.
     this.transcript = null;
+    this.live = null;
     const q = (s: string) => this.target.quote(s);
     const s = this.settings;
     const parts = [this.harness.command];

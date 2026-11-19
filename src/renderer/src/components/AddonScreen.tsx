@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import type { AddonButton, AddonEventKind, AddonField, AddonNode, AddonProp, AddonScreen } from '@shared/addons';
+import type { AddonButton, AddonEventKind, AddonField, AddonListRow, AddonNode, AddonProp, AddonScreen, AddonValue } from '@shared/addons';
 import { ADDON_WINDOW_VIEWS } from '@shared/commands/build';
 import type { AddonContext, CommandContext } from '@shared/commands/context';
 import { DetailView } from './DetailView';
@@ -9,65 +9,20 @@ import { PathField } from './form-blocks';
 import { useDialogKeys } from './hooks';
 import { Markdown } from './Markdown';
 import { PropertyList, type Property } from './PropertyList';
+import { AddonListDetail } from './AddonListDetail';
+import { emptyValue, fieldRuns, fieldsOf, fillsScreen, isMissing, mergeValues, propsOf, refreshes, toggleChecked, type Values } from './addon-screen-model';
+import { DiffPane } from './DiffPane';
+import { Group, Row } from './phone/PhoneList';
 import { ListActions, ListButton, SelectList } from './SelectList';
-import { CheckboxField, Field, FieldRow, FormGroup, InfoBar, InputRow, InputSuffix, MainInstruction, NumberInput, SelectInput, TabBar, TextArea, TextInput } from './ui';
+import { EmptyState } from './EmptyState';
+import { CheckboxField, Field, FieldError, FieldRow, FormGroup, InfoBar, InputRow, InputSuffix, MainInstruction, NumberInput, onIos, SelectInput, TabBar, TextArea, TextInput } from './ui';
 import { WindowActions } from './WindowActions';
+import { reportError } from '../report-error';
 import { isPhone } from '../web/page-nav';
 
-type Value = string | number | boolean;
-type Values = Record<string, Value>;
-
-/** Every field of a screen, inside rows and sections too. */
-function fieldsOf(nodes: AddonNode[]): AddonField[] {
-  return nodes.flatMap((n) =>
-    n.type === 'field'
-      ? [n]
-      : n.type === 'row'
-        ? n.items
-        : n.type === 'section'
-          ? fieldsOf(n.body)
-          : n.type === 'tabs'
-            ? n.items.flatMap((t) => fieldsOf(t.body))
-            : [],
-  );
-}
-
-/** Every property of a screen, inside sections and tabs too. */
-function propsOf(nodes: AddonNode[]): AddonProp[] {
-  return nodes.flatMap((n) =>
-    n.type === 'props' ? n.items : n.type === 'section' ? propsOf(n.body) : n.type === 'tabs' ? n.items.flatMap((t) => propsOf(t.body)) : [],
-  );
-}
+type Value = AddonValue;
 
 const isList = (n: AddonNode) => n.type === 'field' && n.input === 'list';
-
-/** A screen's nodes in order: each run of fields and rows together (a FormGroup), every other node alone. A list is a section of its own. */
-function fieldRuns(nodes: AddonNode[]): { at: number; fields: boolean; nodes: AddonNode[] }[] {
-  const runs: { at: number; fields: boolean; nodes: AddonNode[] }[] = [];
-  nodes.forEach((n, at) => {
-    const fields = (n.type === 'field' && !isList(n)) || n.type === 'row';
-    const last = runs[runs.length - 1];
-    if (fields && last?.fields) last.nodes.push(n);
-    else runs.push({ at, fields, nodes: [n] });
-  });
-  return runs;
-}
-
-const emptyValue = (f: AddonField): Value =>
-  f.input === 'checkbox' ? false : f.input === 'number' ? 0 : f.input === 'list' ? (f.options?.[0]?.value ?? '') : '';
-
-/**
- * Fields keep what the user typed across redraws; only fields new to the screen take the addon's value.
- * A list whose selected row is gone selects the addon's value again, or its first row.
- */
-function mergeValues(prev: Values, fields: AddonField[]): Values {
-  const next: Values = {};
-  for (const f of fields) {
-    const kept = f.id in prev && (f.input !== 'list' || !!f.options?.some((o) => o.value === prev[f.id]));
-    next[f.id] = kept ? prev[f.id] : (f.value ?? emptyValue(f));
-  }
-  return next;
-}
 
 const SECRET_MASK = '••••••••';
 /** A new screen slower than this to draw goes to the engine log. */
@@ -80,7 +35,8 @@ export type AddonScreenReport = NonNullable<AddonContext['screen']>;
  * An addon's screen, drawn from the nodes it sent: in the main window's
  * detail area (`main`), as the whole of an addon window (`window`, with its
  * footer as the window's Save | Cancel | Apply), or as its body alone inside
- * another view (`inline`: a tool call's result on the Now tab). It draws no
+ * another view (`inline`: a tool call's result on the Now tab), or filling a
+ * place without a title (`fill`: a project's tab, a list's detail). It draws no
  * toolbar or menus of its own: it reports its state (`onScreen`), and its
  * window builds them from the addon's commands, as it does Looper's.
  */
@@ -90,6 +46,7 @@ export function AddonScreenView({
   view,
   params,
   mode,
+  narrow = false,
   onScreen,
   toolbar,
 }: {
@@ -97,7 +54,9 @@ export function AddonScreenView({
   addonName: string;
   view: string;
   params: Record<string, unknown>;
-  mode: 'main' | 'window' | 'inline';
+  mode: 'main' | 'window' | 'inline' | 'fill';
+  /** A narrow place (the Sessions window's activity pane), or a list's detail: a list stacks over its detail. */
+  narrow?: boolean;
   /** The screen showing and its commands' state, or null once it's gone. */
   onScreen?: (screen: AddonScreenReport | null) => void;
   /** `window`: the window's toolbar, at its top. */
@@ -106,6 +65,16 @@ export function AddonScreenView({
   const [screen, setScreen] = useState<AddonScreen | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [values, setValues] = useState<Values>({});
+  // Problems with what was typed, by field id (the event answer's `errors`).
+  const [problems, setProblems] = useState<Record<string, string>>({});
+  const problemsKey = Object.keys(problems).join('\n');
+  // The first field with a problem gets the focus, its text selected (Windows' user input errors).
+  useEffect(() => {
+    if (!problemsKey) return;
+    const control = pageRef.current?.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('[aria-invalid="true"]');
+    control?.focus();
+    if (control && 'select' in control && control.type !== 'checkbox') control.select();
+  }, [problemsKey]);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const paramsKey = JSON.stringify(params);
@@ -123,6 +92,8 @@ export function AddonScreenView({
         setScreen(s);
         setError(null);
         setValues((v) => mergeValues(v, fieldsOf(s.body)));
+        // The problems the screen came with (a field's `error`); an event's answer replaces them.
+        setProblems(Object.fromEntries(fieldsOf(s.body).flatMap((f) => (f.error ? [[f.id, f.error]] : []))));
       })
       .catch((e: Error) => {
         if (n === latestLoad.current) setError(e.message);
@@ -133,12 +104,17 @@ export function AddonScreenView({
   const asked = useRef<{ at: number; addonId: string; view: string } | null>(null);
   // The selected tab of each tabs node, by its id: kept across redraws of the same screen.
   const [tabSel, setTabSel] = useState<Record<string, string>>({});
+  // The row picked in each listDetail node, by its id: kept across redraws too (null: a phone went back to the list).
+  const [listSel, setListSel] = useState<Record<string, string | null>>({});
+  // A phone shows a list's detail over the screen: the screen's other parts make way.
+  const [pushed, setPushed] = useState(false);
   useEffect(() => {
     setScreen(null);
     setError(null);
     setValues({});
     setRevealed({});
     setTabSel({});
+    setListSel({});
     asked.current = { at: performance.now(), addonId, view };
     load();
   }, [load, addonId, view]);
@@ -156,12 +132,12 @@ export function AddonScreenView({
     () =>
       window.looper.addons.onEvent((e) => {
         // A redraw the addon asks for follows a change: a revealed secret may be stale.
-        if (e.type === 'refresh' && e.addonId === addonId) {
+        if (e.type === 'refresh' && e.addonId === addonId && refreshes(e.only, { view })) {
           setRevealed({});
           load();
         } else if (e.type === 'addons' && e.addons.some((a) => a.id === addonId && a.status === 'running')) load();
       }),
-    [addonId, load],
+    [addonId, view, load],
   );
 
   useEffect(() => {
@@ -170,12 +146,13 @@ export function AddonScreenView({
     return () => clearTimeout(t);
   }, [screen, load]);
 
-  const send = async (kind: AddonEventKind, id: string, confirm?: string, changed?: Values) => {
+  const send = async (kind: AddonEventKind, id: string, confirm?: string, changed?: Values, item?: string) => {
     const { view: v, params: p } = source.current;
     setBusy(true);
     try {
-      const r = await window.looper.addons.event(addonId, { source: { view: v, params: p }, kind, id, values: { ...values, ...changed } }, confirm);
+      const r = await window.looper.addons.event(addonId, { source: { view: v, params: p }, kind, id, ...(item !== undefined ? { item } : {}), values: { ...values, ...changed } }, confirm);
       if (r.values) setValues((prev) => ({ ...prev, ...r.values }));
+      if (kind !== 'change') setProblems(r.errors ?? {});
       if (kind === 'reveal' && r.value !== undefined) setRevealed((m) => ({ ...m, [id]: r.value! }));
     } finally {
       setBusy(false);
@@ -216,10 +193,14 @@ export function AddonScreenView({
   useEffect(() => () => reportRef.current?.(null), []);
 
   const fields = screen ? fieldsOf(screen.body) : [];
-  const missing = fields.some((f) => f.required && (values[f.id] === undefined || String(values[f.id]).trim() === ''));
+  const missing = fields.some((f) => isMissing(f, values[f.id]));
   const footer = mode === 'window' ? screen?.body.find((n) => n.type === 'footer') : undefined;
 
   type TabsNode = Extract<AddonNode, { type: 'tabs' }>;
+  /** A part that fills its place, or tabs one of whose pages has one. */
+  const fills = (n: AddonNode) => fillsScreen(n) || (n.type === 'tabs' && n.items.some((t) => t.body.some(fillsScreen)));
+  // A filling part takes the room its window, tab or detail has; an inline screen (a tool call's result) flows.
+  const filling = mode !== 'inline' && !!screen?.body.some(fills);
   const activeTab = (n: TabsNode) => (n.items.some((t) => t.id === tabSel[n.id]) ? tabSel[n.id] : n.items[0].id);
   const selectTab = (n: TabsNode) => (id: string) => setTabSel((m) => ({ ...m, [n.id]: id }));
   // A window's top-level tabs go across the top of the window, as in Looper's own editors.
@@ -256,7 +237,17 @@ export function AddonScreenView({
     </button>
   );
 
-  const setValue = (id: string, v: Value) => setValues((m) => ({ ...m, [id]: v }));
+  /** A field's problem goes once what's in it changes. */
+  const clearProblem = (id: string) =>
+    setProblems((m) => {
+      if (!(id in m)) return m;
+      const { [id]: _gone, ...rest } = m;
+      return rest;
+    });
+  const setValue = (id: string, v: Value) => {
+    setValues((m) => ({ ...m, [id]: v }));
+    clearProblem(id);
+  };
 
   const field = (f: AddonField) => {
     const v = values[f.id] ?? emptyValue(f);
@@ -276,7 +267,7 @@ export function AddonScreenView({
         );
       case 'textarea':
         return (
-          <Field key={f.id} label={f.label}>
+          <Field key={f.id} label={f.label} error={problems[f.id]}>
             <TextArea
               rows={5}
               value={String(v)}
@@ -293,6 +284,7 @@ export function AddonScreenView({
           <PathField
             key={f.id}
             label={f.label}
+            error={problems[f.id]}
             value={String(v)}
             placeholder={f.placeholder}
             autoFocus={f.autofocus}
@@ -307,8 +299,15 @@ export function AddonScreenView({
       }
       case 'select':
         return (
-          <Field key={f.id} label={f.label} help={f.options?.find((o) => o.value === String(v))?.description}>
-            <SelectInput value={String(v)} autoFocus={f.autofocus} onChange={(e) => setValue(f.id, e.target.value)}>
+          <Field key={f.id} label={f.label} error={problems[f.id]} help={f.options?.find((o) => o.value === String(v))?.description}>
+            <SelectInput
+              value={String(v)}
+              autoFocus={f.autofocus}
+              onChange={(e) => {
+                setValue(f.id, e.target.value);
+                if (f.change) void send('change', f.id, undefined, { [f.id]: e.target.value });
+              }}
+            >
               {(f.options ?? []).map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
@@ -327,6 +326,7 @@ export function AddonScreenView({
             <SelectList
               items={options}
               label={f.label}
+              error={problems[f.id]}
               title={f.label}
               idPrefix={`addon-${f.id}`}
               selectedKey={f.readOnly ? null : (selected?.value ?? null)}
@@ -363,15 +363,55 @@ export function AddonScreenView({
           </Fragment>
         );
       }
+      case 'checklist': {
+        const checked = Array.isArray(v) ? v : [];
+        const set = (value: string, on: boolean) => {
+          setValues((m) => ({ ...m, [f.id]: toggleChecked(f, m[f.id], value, on) }));
+          clearProblem(f.id);
+        };
+        const options = f.options ?? [];
+        // iOS: rows with a check on each chosen one (HIG: Lists and tables); elsewhere Looper's check boxes, each with its description under it.
+        if (onIos) {
+          return (
+            <div key={f.id} className="radio-rows addon-checklist" role="group" aria-label={f.label}>
+              <Group title={f.label}>
+                {options.map((o) => (
+                  <Row key={o.value} title={o.label} sub={o.description} checked={checked.includes(o.value)} multiple onOpen={() => set(o.value, !checked.includes(o.value))} />
+                ))}
+              </Group>
+              {problems[f.id] && <FieldError>{problems[f.id]}</FieldError>}
+            </div>
+          );
+        }
+        return (
+          <div key={f.id} className="radio-field addon-checklist" role="group" aria-label={f.label}>
+            <span className="field-label">{f.label}</span>
+            <div className="addon-checklist-box">
+              {options.map((o, n) => (
+                <CheckboxField
+                  key={o.value}
+                  className="radio-option"
+                  label={o.label}
+                  note={o.description}
+                  checked={checked.includes(o.value)}
+                  autoFocus={f.autofocus && n === 0}
+                  onChange={(on) => set(o.value, on)}
+                />
+              ))}
+            </div>
+            {problems[f.id] && <FieldError>{problems[f.id]}</FieldError>}
+          </div>
+        );
+      }
       case 'number':
         return (
-          <Field key={f.id} label={f.label}>
+          <Field key={f.id} label={f.label} error={problems[f.id]}>
             <NumberInput suffix={f.suffix} value={Number(v) || 0} autoFocus={f.autofocus} onChange={(n) => setValue(f.id, n)} />
           </Field>
         );
       default:
         return (
-          <Field key={f.id} label={f.label}>
+          <Field key={f.id} label={f.label} error={problems[f.id]}>
             {f.suffix ? <InputSuffix suffix={f.suffix}>{text(f.input)}</InputSuffix> : text(f.input)}
           </Field>
         );
@@ -463,8 +503,15 @@ export function AddonScreenView({
             key={i}
             title={n.title}
             message={n.message}
+            level={n.level}
             action={n.button ? button(n.button) : undefined}
           />
+        );
+      case 'empty':
+        return (
+          <EmptyState key={i} at="inline" level={n.level} action={n.button ? button(n.button) : undefined}>
+            {n.text}
+          </EmptyState>
         );
       case 'buttons':
         return (
@@ -485,15 +532,46 @@ export function AddonScreenView({
         );
       case 'tabs': {
         const active = activeTab(n);
-        const body = <div key={`${n.id}:${active}`}>{nodes(n.items.find((t) => t.id === active)!.body)}</div>;
-        if (n === windowTabs) return body;
+        const shown = n.items.find((t) => t.id === active)!.body;
+        if (n === windowTabs) return <div key={`${n.id}:${active}`}>{nodes(shown)}</div>;
+        const filled = filling && fills(n);
         return (
-          <div key={i} className="addon-tabs">
-            <TabBar tabs={n.items.map((t) => [t.id, t.title] as const)} active={active} onSelect={selectTab(n)} />
-            {body}
+          <div key={i} className={`addon-tabs${filled ? ' filled' : ''}`}>
+            {/* A phone's pushed detail covers the tabs too, as the Git tab's does. */}
+            {!pushed && <TabBar tabs={n.items.map((t) => [t.id, t.title] as const)} active={active} onSelect={selectTab(n)} />}
+            <div key={`${n.id}:${active}`} className="addon-tab-body">
+              {filled ? parts(shown) : nodes(shown)}
+            </div>
           </div>
         );
       }
+      case 'listDetail':
+        return (
+          <AddonListDetail
+            key={`list-${n.id}`}
+            node={n}
+            picked={listSel[n.id]}
+            onPick={(id) => setListSel((m) => ({ ...m, [n.id]: id }))}
+            stack={narrow}
+            busy={busy}
+            onMenuPick={(b, row: AddonListRow) => void send('click', b.id, b.confirm, undefined, row.id)}
+            onMore={() => void window.looper.addons.event(addonId, { source: { ...source.current }, kind: 'more', id: n.id }).catch(reportError)}
+            onPushed={setPushed}
+            detail={(row) => (
+              <AddonScreenView
+                key={`${row.detail!.view}/${JSON.stringify(row.detail!.params ?? {})}`}
+                addonId={addonId}
+                addonName={addonName}
+                view={row.detail!.view}
+                params={row.detail!.params ?? {}}
+                mode="fill"
+                narrow
+              />
+            )}
+          />
+        );
+      case 'diff':
+        return <DiffPane key={i} title={n.title} subtitle={n.subtitle} file={n.file} diff={{ binary: !!n.binary, hunks: n.hunks, truncated: !!n.truncated }} />;
       case 'footer':
         // In the main window a footer is an ordinary button row.
         if (mode === 'window') return null;
@@ -508,7 +586,8 @@ export function AddonScreenView({
         }
         return (
           <div key={i} className="env-actions">
-            {[n.primary, ...(n.apply ? [n.apply] : [])].map(button)}
+            {/* A required field without a value holds the commit back, as a window's footer does. */}
+            {[{ ...n.primary, disabled: missing || n.primary.disabled }, ...(n.apply ? [n.apply] : [])].map(button)}
           </div>
         );
     }
@@ -520,22 +599,54 @@ export function AddonScreenView({
       run.fields ? <FormGroup key={`fields-${run.at}`}>{run.nodes.map((n, j) => node(n, run.at + j))}</FormGroup> : node(run.nodes[0], run.at),
     );
 
+  /**
+   * A screen with a part that fills its place (a list beside its detail, a diff), in the main window or
+   * filling a tab: that part takes the room left, and the parts between are padded, and make way for a
+   * phone's pushed detail.
+   */
+  const parts = (list: AddonNode[]) => {
+    const out: ReactNode[] = [];
+    let part: ReactNode[] = [];
+    const flush = (at: number) => {
+      if (part.length && !pushed) {
+        out.push(
+          <div key={`part-${at}`} className="addon-fill-part">
+            {part}
+          </div>,
+        );
+      }
+      part = [];
+    };
+    for (const run of fieldRuns(list)) {
+      if (!run.fields && fills(run.nodes[0])) {
+        flush(run.at);
+        out.push(node(run.nodes[0], run.at));
+      } else part.push(run.fields ? <FormGroup key={`fields-${run.at}`}>{run.nodes.map((n, j) => node(n, run.at + j))}</FormGroup> : node(run.nodes[0], run.at));
+    }
+    flush(list.length);
+    return out;
+  };
+
   const failed = error !== null && (
-    <InfoBar stacked title={`${addonName} couldn't show this screen`} message={error} action={<button className="btn" onClick={load}>Try Again</button>} />
+    <EmptyState level="error" title={`${addonName} couldn't show this screen`} action={<button className="btn" onClick={load}>Try Again</button>}>
+      {error}
+    </EmptyState>
   );
 
+  const instruction = screen?.instruction && !pushed && <MainInstruction>{screen.instruction}</MainInstruction>;
   const page = failed || (screen && (
     <>
-      {screen.instruction && <MainInstruction>{screen.instruction}</MainInstruction>}
-      {nodes(screen.body)}
+      {filling && instruction ? <div className="addon-fill-part">{instruction}</div> : instruction}
+      {filling ? parts(screen.body) : nodes(screen.body)}
     </>
   ));
 
   if (mode === 'inline') return <div className="addon-screen addon-inline">{page}</div>;
+  if (mode === 'fill') return <div className={`addon-screen addon-fill${filling ? '' : ' status-pane'}`}>{page}</div>;
   if (mode === 'main') {
     return (
       <DetailView title={screen?.title ?? ''} className="detail addon-screen">
-        <div className="status-pane">{page}</div>
+        <div className={filling ? 'addon-fill' : 'status-pane'}>{page}</div>
       </DetailView>
     );
   }
@@ -554,7 +665,7 @@ export function AddonScreenView({
       )}
       <div className="editor-body">
         {/* A list fills the window, as in Looper's own list windows (the Recycle Bin). */}
-        <div className={`form${screen?.body.some(isList) ? ' env-tab' : ''}`} ref={pageRef}>
+        <div className={filling ? 'addon-fill' : `form${screen?.body.some(isList) ? ' env-tab' : ''}`} ref={pageRef}>
           {page}
         </div>
       </div>

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { isPhone } from '../web/page-nav';
 import { Group, Row } from './phone/PhoneList';
 import { RowList, type ListMenuItem } from './RowList';
+import { FieldError } from './ui';
 
 export type { ListMenuItem };
 
@@ -34,6 +35,8 @@ interface SelectListProps<T> {
   empty?: ReactNode;
   /** A heading above the list, one of a window's parts. */
   title?: string;
+  /** A problem with what's chosen: under the list (Field's in-place error). */
+  error?: string;
 }
 
 /**
@@ -43,9 +46,9 @@ interface SelectListProps<T> {
  * shows the menu of, and a swipe offers the menu's destructive command; one without is a choice of one, with a
  * check on the chosen row.
  */
-export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, onReorder, menu, onDelete, onRename, autoFocus, empty, title }: SelectListProps<T>) {
+export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, itemName, itemSub, onSelect, onOpen, onReorder, menu, onDelete, onRename, autoFocus, empty, title, error }: SelectListProps<T>) {
   const rows = items.map((item, i) => ({ item, i }));
-  return (
+  const list = (
     <RowList
       section
       title={title}
@@ -75,6 +78,14 @@ export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, it
       }}
       phoneRow={({ item, i }) => ({ title: itemName(item, i), sub: itemSub?.(item, i) || undefined, chevron: !!menu && !!onOpen })}
     />
+  );
+  return error ? (
+    <>
+      {list}
+      <FieldError>{error}</FieldError>
+    </>
+  ) : (
+    list
   );
 }
 

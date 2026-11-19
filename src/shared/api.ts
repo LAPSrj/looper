@@ -3,8 +3,10 @@ import type {
   AddonInfo,
   AddonLocalRun,
   AddonPaneContent,
+  AddonProjectTabState,
   AddonScreen,
   AddonUiEvent,
+  AddonValue,
 } from './addons';
 import type { BuilderSetup, BuilderState } from './builder';
 import type { RecentRun } from './dashboard';
@@ -567,6 +569,8 @@ export interface LooperApi {
     /** A pane's items; rejects with the reason when the addon can't give them. */
     pane(id: string, pane: string): Promise<AddonPaneContent>;
     render(id: string, view: string, params: Record<string, unknown>): Promise<AddonScreen>;
+    /** How the addon's project tab `tab` is for the project: whether it shows and its title now. */
+    projectTab(id: string, tab: string, projectId: string): Promise<AddonProjectTabState>;
     /** Log a screen that took `ms` from being asked for to being drawn. */
     reportSlowDraw(id: string, view: string, ms: number): void;
     /** Log a window screen's page (its tab `tab`, '' without tabs) that scrolls: `height` is the page height it needs. */
@@ -580,7 +584,7 @@ export interface LooperApi {
       id: string,
       ev: AddonEvent,
       confirm?: string,
-    ): Promise<{ value?: string; values?: Record<string, string | number | boolean> }>;
+    ): Promise<{ value?: string; values?: Record<string, AddonValue>; errors?: Record<string, string> }>;
     restart(id: string): Promise<void>;
     /** Open the Edit Addon window, over the calling window. */
     edit(id: string): Promise<void>;

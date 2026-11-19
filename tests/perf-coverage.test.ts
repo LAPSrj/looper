@@ -23,6 +23,16 @@ describe('the performance check covers every screen (scripts/perf/check.mjs)', (
     expect(hashes).toContain('');
   });
 
+  it('opens each window at a route main.tsx has, not the main window by mistake', () => {
+    const literals = new Set([...main.matchAll(/hash === '([^']+)'/g)].map((m) => m[1]));
+    const patterns = [...main.matchAll(/^const \w+Match = \/(.+)\/\.exec\(hash\);$/gm)].map((m) => new RegExp(m[1]));
+    for (const w of WINDOWS) {
+      const h = filled(w.hash);
+      if (h === '') continue;
+      expect(literals.has(h) || patterns.some((p) => p.test(h)), `${w.name} (#${w.hash})`).toBe(true);
+    }
+  });
+
   it('opens each variant a route spells out: a new item and an existing one, a view and a compare', () => {
     const hashes = WINDOWS.map((w) => w.hash);
     for (const variant of ['/new', '/window', '/report', '/compare', '/view', 'copy-', 'send-guidance/', 'continue-run/']) {

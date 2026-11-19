@@ -712,7 +712,7 @@ describe('an addon’s commands', () => {
   });
 
   it('accepts the demo addon’s manifest and draws it', () => {
-    const file = path.join(__dirname, '..', 'scripts', 'screenshots', 'demo', 'home', 'addons', 'servers.looperaddon');
+    const file = path.join(__dirname, '..', 'scripts', 'screenshots', 'demo', 'home', 'addons', 'servers', 'addon.json');
     const r = readAddonManifest(JSON.parse(fs.readFileSync(file, 'utf8')));
     expect(r.ok, !r.ok ? r.error : '').toBe(true);
     if (!r.ok) return;

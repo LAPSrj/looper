@@ -39,6 +39,8 @@ export interface TerminalEntry {
   ended: boolean;
   /** Quitting Looper stopped its harness: it's ready for the key that starts it again. */
   stopped?: boolean;
+  /** It runs a command instead of a harness (an addon's): the title it's listed as. */
+  command?: string;
 }
 
 /** A task run whose agent step is in flight: the Chats window lists it while Show Task Runs is on, and a delegated agent's always. */
@@ -671,7 +673,7 @@ export class SessionHub {
   private terminalSummary(e: TerminalEntry, projects: Project[]): SessionSummary {
     const t = this.track(e.id, e.startedAt);
     const { task, projectId, groupName } = this.place(e.taskId, projects);
-    const harness = task ? this.d.harnessOf(task) : { kind: 'custom' as const, name: 'Terminal' };
+    const harness = task && !e.command ? this.d.harnessOf(task) : { kind: 'custom' as const, name: 'Terminal' };
     const prompt = t.hooks.prompt?.at ?? 0;
     const stopHook = t.hooks.stop && !isTitleThread(t.hooks.stop.payload) && t.hooks.stop.at > e.startedAt ? t.hooks.stop : null;
     const stop = stopHook?.at ?? 0;
@@ -694,6 +696,7 @@ export class SessionHub {
     // The user's name, then the harness's, then the one its first turn recorded, then its first message.
     const info = this.d.terminalTitle(e.taskId, e.id);
     const title =
+      e.command ??
       (info?.titleBy === 'user' ? info.title : undefined) ??
       t.harnessTitle ??
       info?.title ??

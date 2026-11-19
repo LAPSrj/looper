@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mergeClaudeSettings, mergeSystemPrompt, readUserSettings } from '../src/engine/claude-settings';
 import { renderMod } from '../src/engine/claude-mod';
@@ -98,6 +99,7 @@ describe('the mod', () => {
     const source = renderMod({
       files: { ready: '/r/mod.json', control: '/r/mod-control.json', turnEnd: '/r/turn-end.json', usage: '/r/usage.json', turn: '/r/turn.json' },
       inbox: ['/r/guidance.json'],
+      userInbox: ['/r/guidance.json'],
       signalCommands: ['looper-done'],
       guardMessage: "a subagent can't",
       ask: { command: 'looper-ask', timeoutMs: 1000 },
@@ -109,6 +111,133 @@ describe('the mod', () => {
     expect(source).not.toContain('__CONFIG__');
     // An ES module: syntax-check it as one, with its export turned into a plain function.
     expect(() => new Function(source.replace('export function register', 'function register'))).not.toThrow();
+  });
+
+  it('hands the rows of the main conversation and the notes a conversation shows to the live folder, as the transcript will record them', async () => {
+    const dir = tmp('looper-mod-live-');
+    const live = path.join(dir, 'live');
+    const module = path.join(dir, 'register.mjs');
+    fs.writeFileSync(
+      module,
+      renderMod({
+        files: { ready: path.join(dir, 'mod.json'), control: path.join(dir, 'c.json'), turnEnd: path.join(dir, 'turn-end.json'), usage: path.join(dir, 'u.json'), turn: path.join(dir, 't.json') },
+        inbox: [],
+        userInbox: [],
+        signalCommands: [],
+        guardMessage: '',
+        headless: false,
+        prompted: false,
+        windows: false,
+        live,
+      }),
+    );
+    type Hook = ($: unknown, e: Record<string, unknown>, next: (e: Record<string, unknown>) => Promise<unknown>) => Promise<unknown>;
+    const hooks: Record<string, Hook> = {};
+    const { register } = (await import(pathToFileURL(module).href)) as { register: (on: (name: string, hook: Hook) => void) => void };
+    register((name, hook) => (hooks[name] = hook));
+    const $ = {
+      fs: { write: async (p: string, text: string) => (fs.mkdirSync(path.dirname(p), { recursive: true }), fs.writeFileSync(p, text)) },
+      session: { usage: async () => ({}) },
+    };
+    let n = 0;
+    const append = (door: string, origin: unknown, message: Record<string, unknown>, agentId?: string) =>
+      hooks['session.append']($, { door, origin, uuid: `u${++n}`, message, ...(agentId ? { agentId } : {}) }, async (x) => ({ message: x.message, uuid: x.uuid }));
+    const model = { kind: 'model', model: 'claude-x' };
+    const synthetic = { kind: 'model', model: '<synthetic>' };
+    const text = (t: string) => [{ type: 'text', text: t }];
+    const turnEnd = (reason: string) => hooks['turn.complete']($, { reason, answer: '', isAborted: false, turnId: 't' }, async (x) => x);
+    await hooks['turn.start']($, { turnId: 't' }, async (x) => x);
+    await append('prompt', { kind: 'composer' }, { type: 'user', role: 'user', content: text('hi') }); // u1
+    await append('response', model, { type: 'assistant', role: 'assistant', content: [{ type: 'thinking', thinking: 'hmm' }] }); // u2
+    await append('response', model, { type: 'assistant', role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Edit', input: {} }] }); // u3
+    await hooks['tool.call']($, { tool: 'Edit', tool_use_id: 't1', file_path: 'a.txt' }, async () => ({ result: { structuredPatch: [1] }, text: 'ok' }));
+    await append('tool-result', { kind: 'tool', tool: 'Edit' }, { type: 'user', role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] }); // u4
+    await append('tool-message', { kind: 'tool', tool: 'Skill' }, { type: 'user', role: 'user', isMeta: true, content: text('Base directory for this skill') }); // u5
+    // Left out: what the engine adds that no conversation shows, a subagent's rows, and the plugin's own note, which poll writes.
+    await append('attachment', { kind: 'engine' }, { type: 'attachment', name: 'date', content: text('today') }); // u6
+    await append('response', model, { type: 'assistant', role: 'assistant', content: text('from a subagent') }, 'a1'); // u7
+    await append('note', { kind: 'plugin' }, { type: 'user', role: 'user', content: text('a note') }); // u8
+    // The notes a conversation reads, from the text the model gets.
+    const notice = '<system-reminder>\n<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>\n</system-reminder>';
+    await append('delivery', { kind: 'task-notification' }, { type: 'attachment', name: 'queued_command', content: text(notice) }); // u9
+    await append('hook-context', { kind: 'hook', event: 'Stop' }, { type: 'attachment', name: 'hook_additional_context', content: text('Stop hook additional context: again') }); // u10
+    await append('attachment', { kind: 'engine' }, { type: 'attachment', name: 'skill_listing', content: text('The skills:\n- a: one') }); // u11
+    // A stand-in reply waits for the turn's end, which says it was the API error that ended the turn; the rows after it keep their place.
+    await append('response', synthetic, { type: 'assistant', role: 'assistant', content: text('Prompt is too long') }); // u12
+    await append('hook-context', { kind: 'hook', event: 'Stop' }, { type: 'attachment', name: 'hook_additional_context', content: text('after the error') }); // u13
+    await turnEnd('error');
+    // One the turn goes on past isn't an error.
+    await append('response', synthetic, { type: 'assistant', role: 'assistant', content: text('No response requested.') }); // u14
+    await append('prompt', { kind: 'composer' }, { type: 'user', role: 'user', content: text('next') }); // u15
+    // Each file's name ends in its row's id, which the session step's sweep reads.
+    const read = () =>
+      fs.existsSync(live)
+        ? fs.readdirSync(live).sort().map((f) => {
+            const row = JSON.parse(fs.readFileSync(path.join(live, f), 'utf8'));
+            expect(f).toMatch(new RegExp(`^\\d+-\\d{9}-${row.uuid}\\.json$`));
+            return row;
+          })
+        : [];
+    for (let i = 0; i < 100 && read().length < 12; i++) await new Promise((r) => setTimeout(r, 20));
+    const rows = read();
+    expect(rows.map((r) => r.uuid)).toEqual(['u1', 'u2', 'u3', 'u4', 'u5', 'u9', 'u10', 'u11', 'u12', 'u13', 'u14', 'u15']);
+    const by = Object.fromEntries(rows.map((r) => [r.uuid, r]));
+    expect(by.u1).toMatchObject({ type: 'user', isSidechain: false, message: { role: 'user', content: text('hi') } });
+    expect(by.u3).toMatchObject({ type: 'assistant', message: { role: 'assistant', model: 'claude-x', content: [{ type: 'tool_use', id: 't1' }] } });
+    // One response's blocks share its message id, as the transcript's do.
+    expect(by.u2.message.id).toBe(by.u3.message.id);
+    expect(by.u4.toolUseResult).toEqual({ structuredPatch: [1] });
+    expect(by.u5.isMeta).toBe(true);
+    expect(by.u9.attachment).toEqual({ type: 'queued_command', prompt: notice, commandMode: 'task-notification' });
+    expect(by.u10.attachment).toEqual({ type: 'hook_additional_context', hookEvent: 'Stop', content: ['Stop hook additional context: again'] });
+    expect(by.u11.attachment).toEqual({ type: 'skill_listing', content: 'The skills:\n- a: one' });
+    expect(by.u12.isApiErrorMessage).toBe(true);
+    expect(by.u14.isApiErrorMessage).toBeUndefined();
+    expect(by.u14.message.id).not.toBe(by.u12.message.id);
+  });
+
+  it("hands over a Stop hook's feedback, and a prompt typed mid-turn as typed", async () => {
+    const dir = tmp('looper-mod-live-');
+    const live = path.join(dir, 'live');
+    const module = path.join(dir, 'register.mjs');
+    fs.writeFileSync(
+      module,
+      renderMod({
+        files: { ready: path.join(dir, 'mod.json'), control: path.join(dir, 'c.json'), turnEnd: path.join(dir, 'turn-end.json'), usage: path.join(dir, 'u.json'), turn: path.join(dir, 't.json') },
+        inbox: [],
+        userInbox: [],
+        signalCommands: [],
+        guardMessage: '',
+        headless: false,
+        prompted: false,
+        windows: false,
+        live,
+      }),
+    );
+    type Hook = ($: unknown, e: Record<string, unknown>, next: (e: Record<string, unknown>) => Promise<unknown>) => Promise<unknown>;
+    const hooks: Record<string, Hook> = {};
+    const { register } = (await import(pathToFileURL(module).href)) as { register: (on: (name: string, hook: Hook) => void) => void };
+    register((name, hook) => (hooks[name] = hook));
+    const $ = { fs: { write: async (p: string, text: string) => (fs.mkdirSync(path.dirname(p), { recursive: true }), fs.writeFileSync(p, text)) } };
+    const append = (uuid: string, door: string, origin: unknown, message: Record<string, unknown>) =>
+      hooks['session.append']($, { door, origin, uuid, message }, async (x) => ({ message: x.message, uuid: x.uuid }));
+    await append('f1', 'note', { kind: 'engine' }, { type: 'user', role: 'user', isMeta: true, content: [{ type: 'text', text: 'Stop hook feedback:\nsay bye' }] });
+    await hooks['prompt.submit']($, { text: 'also this', turnId: 't', wait: false, origin: { kind: 'composer' } }, async (x) => ({ text: x.text }));
+    const wrapped = '<system-reminder>\nThe user sent a new message while you were working:\nalso this\n\nPlease address it.\n</system-reminder>';
+    await append('q1', 'delivery', { kind: 'composer' }, { type: 'attachment', name: 'queued_command', content: [{ type: 'text', text: wrapped }] });
+    // Each file's name ends in its row's id, which the session step's sweep reads.
+    const read = () =>
+      fs.existsSync(live)
+        ? fs.readdirSync(live).sort().map((f) => {
+            const row = JSON.parse(fs.readFileSync(path.join(live, f), 'utf8'));
+            expect(f).toMatch(new RegExp(`^\\d+-\\d{9}-${row.uuid}\\.json$`));
+            return row;
+          })
+        : [];
+    for (let i = 0; i < 100 && read().length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+    const [feedback, typed] = read();
+    expect(feedback).toMatchObject({ type: 'user', uuid: 'f1', isMeta: true, message: { content: [{ type: 'text', text: 'Stop hook feedback:\nsay bye' }] } });
+    expect(typed).toMatchObject({ type: 'attachment', uuid: 'q1', attachment: { type: 'queued_command', prompt: 'also this', commandMode: 'prompt' } });
   });
 });
 
@@ -149,6 +278,102 @@ function makeCtx(fake: string, agent: Record<string, unknown> = {}, harnessArgs:
 }
 
 const MOD_READY = `printf '{"version":"1"}' > "$LOOPER_RUN_DIR/mod.json"; printf '{}' > "$LOOPER_RUN_DIR/session.json"`;
+
+describe("the mod's messages for the agent", () => {
+  it("ends the turn for the user's message once no tool call is working and sends it as their prompt, while Looper's own messages go along as notes", async () => {
+    const dir = tmp('looper-mod-interrupt-');
+    const user = path.join(dir, 'chat-message.json');
+    const events = path.join(dir, 'events.json');
+    const module = path.join(dir, 'register.mjs');
+    fs.writeFileSync(
+      module,
+      renderMod({
+        files: { ready: path.join(dir, 'mod.json'), control: path.join(dir, 'c.json'), turnEnd: path.join(dir, 'turn-end.json'), usage: path.join(dir, 'u.json'), turn: path.join(dir, 't.json') },
+        inbox: [user, events],
+        userInbox: [user],
+        signalCommands: [],
+        guardMessage: '',
+        headless: false,
+        prompted: false,
+        windows: false,
+      }),
+    );
+    type Hook = ($: unknown, e: Record<string, unknown>, next: (e: Record<string, unknown>) => unknown) => unknown;
+    const hooks: Record<string, Hook> = {};
+    const { register } = (await import(pathToFileURL(module).href)) as { register: (on: (name: string, hook: Hook) => void) => void };
+    register((name, hook) => (hooks[name] = hook));
+    let tick: () => Promise<void> = async () => {};
+    const aborted: string[] = [];
+    const prompts: unknown[] = [];
+    const notes: string[] = [];
+    const $ = {
+      fs: {
+        write: async (p: string, text: string) => fs.writeFileSync(p, text),
+        read: async (p: string) => fs.readFileSync(p, 'utf8'),
+        exists: async (p: string) => fs.existsSync(p),
+      },
+      process: { run: async (argv: string[]) => (fs.renameSync(argv[1], argv[2]), { exitCode: 0 }) },
+      session: {
+        id: async () => 's1',
+        usage: async () => ({}),
+        append: async (a: { message: { content: { text: string }[] } }) => (notes.push(a.message.content[0].text), { uuid: 'n1', message: a.message }),
+      },
+      clock: { every: (_ms: number, fn: () => Promise<void>) => (tick = fn) },
+      turn: { abort: async (a: { turnId: string }) => void aborted.push(a.turnId) },
+      prompt: { read: async () => ({ text: '', cursor: 0 }), submit: async (p: { text: string }) => (prompts.push(p), { text: p.text }) },
+    };
+    const pass = async (x: unknown) => x;
+    await hooks['session.start']($, {}, pass);
+    /** One request of turn `turnId`: whether it was sent, and what the hook answered. */
+    const step = async (turnId: string, index: number) => {
+      let sent = false;
+      const stream = hooks['turn.step']($, { turnId, index }, () =>
+        (async function* () {
+          sent = true;
+          return { turnId, index, answer: '', toolUses: [], stopReason: 'tool_use', usage: null };
+        })(),
+      ) as AsyncGenerator<unknown, { toolUses: unknown[] }>;
+      let r = await stream.next();
+      while (!r.done) r = await stream.next();
+      return { sent, answer: r.value };
+    };
+    const store = (door: string, content: unknown[]) => hooks['session.append']($, { door, origin: { kind: 'model', model: 'm' }, uuid: 'r' + Math.random(), message: { type: door === 'response' ? 'assistant' : 'user', content } }, async (x) => ({ message: (x as { message: unknown }).message, uuid: 'u' }));
+    const call = (id: string, name: string) => store('response', [{ type: 'tool_use', id, name, input: {} }]);
+    const result = (id: string) => store('tool-result', [{ type: 'tool_result', tool_use_id: id, content: 'ok' }]);
+
+    await hooks['turn.start']($, { turnId: 't1' }, pass);
+    expect((await step('t1', 0)).sent).toBe(true);
+    await call('c1', 'Bash');
+    fs.writeFileSync(user, JSON.stringify('also check the tests'));
+    fs.writeFileSync(events, JSON.stringify('a related event'));
+    // A command is running: the user's message waits, and Looper's event goes along with the next request.
+    await tick();
+    expect(aborted).toEqual([]);
+    expect(fs.existsSync(user)).toBe(true);
+    expect(notes).toEqual(['a related event']);
+    // The command ended: before the next request, the message ends the turn and starts the next one.
+    await result('c1');
+    const between = await step('t1', 1);
+    expect(between.sent).toBe(false);
+    expect(between.answer.toolUses).toEqual([]);
+    expect(aborted).toEqual(['t1']);
+    expect(prompts).toEqual([{ text: 'also check the tests', asUser: true }]);
+    expect(fs.existsSync(user)).toBe(false);
+    await hooks['turn.complete']($, { reason: 'aborted', isAborted: true }, pass);
+
+    // A turn waiting in Poll ends for the message at once.
+    await hooks['turn.start']($, { turnId: 't2' }, pass);
+    await step('t2', 0);
+    await call('p1', 'Poll');
+    fs.writeFileSync(user, JSON.stringify('stop after this file'));
+    await tick();
+    expect(aborted).toEqual(['t1', 't2']);
+    expect(prompts).toEqual([
+      { text: 'also check the tests', asUser: true },
+      { text: 'stop after this file', asUser: true },
+    ]);
+  });
+});
 
 describe('a Claude Code run on the mod', () => {
   it("merges the harness's --settings and --append-system-prompt into Looper's, and passes neither on", async () => {
@@ -278,6 +503,29 @@ describe('a Claude Code run on the mod', () => {
     expect(end.reason).toBe('done');
     expect(end.body).toBe('The report.');
     expect(end.durationMs).toBeLessThan(10_000);
+  }, 30_000);
+
+  it('deletes each live file whose row the transcript has, with nobody reading the conversation, and the folder when the session ends', async () => {
+    const id = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
+    const row = (n: number) => JSON.stringify({ type: 'assistant', uuid: id(n), message: { role: 'assistant', content: [{ type: 'text', text: 'x' }] } });
+    const ctx = makeCtx(
+      [
+        MOD_READY,
+        `printf '{"session_id":"s","transcript_path":"%s"}' "$LOOPER_RUN_DIR/t.jsonl" > "$LOOPER_RUN_DIR/session.json"`,
+        'mkdir -p "$LOOPER_RUN_DIR/live"',
+        `printf '%s' '${row(1)}' > "$LOOPER_RUN_DIR/live/1-000000001-${id(1)}.json"`,
+        `printf '%s' '${row(2)}' > "$LOOPER_RUN_DIR/live/1-000000002-${id(2)}.json"`,
+        `printf '%s\\n' '${row(1)}' > "$LOOPER_RUN_DIR/t.jsonl"`,
+        'sleep 30',
+      ].join('\n'),
+    );
+    const handle = await startAgent(ctx, { onData: () => {} });
+    const live = path.join(ctx.runDir, 'live');
+    const first = path.join(live, `1-000000001-${id(1)}.json`);
+    for (let i = 0; i < 100 && !(fs.existsSync(live) && !fs.existsSync(first)); i++) await new Promise((r) => setTimeout(r, 100));
+    expect(fs.readdirSync(live)).toEqual([`1-000000002-${id(2)}.json`]);
+    await handle.stop();
+    expect(fs.existsSync(live)).toBe(false);
   }, 30_000);
 
   it("takes the report from the mod's record when the session exits before its Stop hook", async () => {

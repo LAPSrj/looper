@@ -53,7 +53,7 @@ async function setUp(): Promise<{ engine: Engine; id: string; check: string; pro
   engine.updateSettings({
     environments: engine.settings.environments.map((e) =>
       e.id === 'local'
-        ? { ...e, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(cwd, check) }] }
+        ? { ...e, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(cwd, check) }] }
         : e,
     ),
   });

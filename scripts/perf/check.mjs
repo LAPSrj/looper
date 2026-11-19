@@ -50,10 +50,15 @@ async function resolveIds(app, page, chats) {
     return { task, run, project: projects[0]?.id, template: templates[0]?.id, folder, projectFolder, env: env?.id, harness: env?.harnesses[0]?.id };
   });
   ids.chat = chats[0];
-  const addon = await page.evaluate(async () => (await window.looper.addons.list())[0] ?? null).catch(() => null);
+  // The demo's Servers addon: the screens below are its (Git, which Looper comes with, sorts first).
+  const addon = await page.evaluate(async () => {
+    const all = await window.looper.addons.list();
+    return all.find((a) => a.id === 'servers') ?? all[0] ?? null;
+  }).catch(() => null);
   if (addon) {
     ids.addon = addon.id;
-    ids.addonView = addon.screens?.[0]?.id ?? addon.tab?.view ?? addon.panes?.[0]?.id;
+    // Format 2: an addon's main-window tabs are a list; the first one's view is a screen it draws.
+    ids.addonView = addon.tabs?.[0]?.view ?? addon.panes?.[0]?.id;
   }
   // A message image: the PNG the seed put in the demo projects' folder, as a file an agent sent.
   const home = execFileSync('wsl.exe', ['-e', 'sh', '-c', 'echo $HOME'], { encoding: 'utf8' }).trim();
@@ -171,6 +176,16 @@ async function openDocument(app, page, kind) {
 const VIA = {
   'import-task': (app, page) => openDocument(app, page, 'task'),
   'import-template': (app, page) => openDocument(app, page, 'template'),
+  // As the Templates window's Add: the template exists first, and closing its editor without Create deletes it again.
+  'new-template': (_app, page) =>
+    page.evaluate(async () => {
+      const L = window.looper;
+      const copy = { ...structuredClone((await L.templates.list())[0]), id: `tpl-perf-${Date.now()}`, name: 'New template' };
+      delete copy.createdAt;
+      delete copy.updatedAt;
+      await L.templates.save(copy);
+      void L.openTemplateEditor(copy.id, true);
+    }),
   mcp: (_app, page) =>
     page.evaluate(() => {
       const server = { scope: 'user', name: 'perf', transport: 'stdio', command: 'cat', args: [], env: {}, url: '', headers: {}, raw: {} };
@@ -258,6 +273,7 @@ async function measureMain(app, page, chats, terminal) {
         await page.click(`.main .tab:has-text("${s.detail === 'runs' ? 'Runs' : 'Status'}")`, { timeout: 5000 });
       }
       if (s.project) await page.locator('.sidebar .task-item').first().click({ timeout: 5000 });
+      if (s.projectTab) await page.locator('.main .tab').last().click({ timeout: 5000 });
     };
     if (s.terminal && !terminal) {
       broken.push(`${s.name}: couldn't start a terminal session`);

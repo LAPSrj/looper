@@ -3255,6 +3255,23 @@
    "err": "boom addons:render"
   }
  },
+ "addons.projectTab": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "addons:projectTab",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom addons:projectTab"
+  }
+ },
  "addons.reportSlowDraw": {
   "arity": 3,
   "calls": [

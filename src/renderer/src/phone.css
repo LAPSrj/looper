@@ -3395,3 +3395,40 @@ html.phone-window[data-platform='ios'] details[open] > :not(summary) {
     transition-timing-function: ease;
   }
 }
+
+/* A checklist on Android: Material's check boxes, not the switches a single check box is. */
+html.phone-window[data-platform='android'] .addon-checklist .checkbox-field input[type='checkbox'],
+html.phone-window[data-platform='android'] .addon-checklist .checkbox-field input[type='checkbox']:checked {
+  -webkit-appearance: auto;
+  appearance: auto;
+  width: 18px;
+  height: 18px;
+  margin: 0 3px;
+  border: none;
+  background: none;
+  accent-color: var(--pg-tint);
+}
+html.phone-window[data-platform='android'] .addon-checklist .checkbox-field input[type='checkbox']::after {
+  content: none;
+}
+html.phone-window .addon-fill-part {
+  padding: 0 16px;
+}
+/* An Android checklist row's description sits right under its label, as a two-line list item's does. */
+html.phone-window[data-platform='android'] .addon-checklist .checkbox-with-note > .checkbox-field {
+  min-height: 0;
+  margin-bottom: 0;
+  padding-top: 12px;
+}
+html.phone-window[data-platform='android'] .addon-checklist .checkbox-with-note > .checkbox-note {
+  margin: 2px 0 8px;
+  color: var(--pg-label-2);
+}
+/* A phone's page scrolls, so the rows are part of it instead of a box of their own. */
+html.phone-window .addon-checklist-box {
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+  border: none;
+  background: none;
+}

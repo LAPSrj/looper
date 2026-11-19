@@ -255,7 +255,7 @@ export function gitTabLabel(changes: GitChange[] | undefined): string {
 export function branchText(s: GitStatus): string {
   const where = s.branch ? `On ${s.branch}` : s.detachedAt ? `Detached at ${s.detachedAt}` : 'Detached';
   if (s.initial) return `${where} · no commits yet`;
-  if (!s.upstream) return `${where} · no remote`;
+  if (!s.upstream) return `${where} · not tracking a remote branch`;
   if (!s.ahead && !s.behind) return `${where} · up to date with ${s.upstream}`;
   if (s.ahead && s.behind) return `${where} · ${s.ahead} ahead of and ${s.behind} behind ${s.upstream}`;
   return `${where} · ${s.ahead ? `${s.ahead} ahead of` : `${s.behind} behind`} ${s.upstream}`;

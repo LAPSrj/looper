@@ -191,12 +191,11 @@ describe('Logger.rotateOver', () => {
     const file = path.join(dir, 'perf.log');
     const log = new Logger(file);
     log.info('x'.repeat(200));
-    await new Promise((r) => setTimeout(r, 20));
     expect(await log.rotateOver(1000)).toBe(false);
     expect(await log.rotateOver(100)).toBe(true);
     log.info('after');
     log.close();
-    await new Promise((r) => setTimeout(r, 20));
+    for (let i = 0; i < 100 && !/after\n$/.test(fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''); i++) await new Promise((r) => setTimeout(r, 20));
     expect(fs.readFileSync(`${file}.1`, 'utf8')).toContain('x'.repeat(200));
     expect(fs.readFileSync(file, 'utf8')).toMatch(/\[info\] after\n$/);
     fs.rmSync(dir, { recursive: true, force: true });

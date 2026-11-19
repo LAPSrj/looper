@@ -177,7 +177,7 @@ describe('terminal launcher hooks', () => {
     SettingsSchema.parse({
       ...settings,
       environments: settings.environments.map((e) =>
-        e.id === 'local' ? { ...e, harnesses: [{ id: 'h', name: 'H', kind, command: kind === 'codex' ? 'codex' : 'claude' }] } : e,
+        e.id === 'local' ? { ...e, shell: 'bash -c', harnesses: [{ id: 'h', name: 'H', kind, command: kind === 'codex' ? 'codex' : 'claude' }] } : e,
       ),
     });
 

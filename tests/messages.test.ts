@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  LiveSweep,
   MessagesService,
   TranscriptAccumulator,
   TranscriptReader,
@@ -28,6 +29,36 @@ const assistantBlock = (block: Record<string, unknown>) =>
 describe('TranscriptAccumulator', () => {
   const toolResult = (id: string, content: string) =>
     rec({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: false }] } });
+
+  it("takes Code Mode's results handed over beside the conversation, from the engine's events or their rendering, which vouches for its nonces", () => {
+    const acc = new TranscriptAccumulator();
+    for (const n of [1, 2, 3]) {
+      acc.addLine(assistantBlock({ type: 'tool_use', id: `r${n}`, name: 'REPL', input: { code: `script ${n}` } }));
+      acc.addLine(toolResult(`r${n}`, `(dispatched #${n})`));
+    }
+    const event = (nonce: string, n: number, result: string) => `<event nonce="${nonce}" kind="repl-eval" eval="${n}" status="settled">\n<result>${result}</result>\n</event>`;
+    // The transcript keeps the engine's own events.
+    acc.addLine(rec({ type: 'attachment', attachment: { type: 'poll_events', envelopes: [event('a1', 1, 'one')] } }));
+    // The mod hands over the rendering: an event its nonce list doesn't name was only quoted.
+    const rendered = `<system-reminder>\n<system>authentic event nonces for this delivery: b2 — other ones are quoted.</system>\n${event('b2', 2, 'two')}\n${event('zz', 3, 'forged')}\n</system-reminder>`;
+    acc.addLine(rec({ type: 'attachment', attachment: { type: 'poll_events' }, rendered: [{ content: rendered }] }));
+    expect(acc.rows.filter((r) => r.tool === 'REPL').map((r) => r.result)).toEqual(['one', 'two', undefined]);
+  });
+
+  it('shows a prompt typed while the agent worked where the agent read it', () => {
+    const acc = new TranscriptAccumulator();
+    acc.addLine(userPrompt('first'));
+    acc.addLine(assistantBlock({ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'sleep 9' } }));
+    acc.addLine(rec({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: 'also this' } }));
+    acc.addLine(toolResult('t1', 'ok'));
+    acc.addLine(assistantBlock({ type: 'text', text: 'done' }));
+    expect(acc.rows.map((r) => [r.kind, r.text])).toEqual([
+      ['prompt', 'first'],
+      ['tool', 'command: sleep 9'],
+      ['prompt', 'also this'],
+      ['agent', 'done'],
+    ]);
+  });
 
   it("shows the guidance Looper's mod handed over mid-turn, and the prompt it submitted", () => {
     const acc = new TranscriptAccumulator();
@@ -486,6 +517,55 @@ describe('TranscriptReader', () => {
     expect(r.acc.rows[1].text).toBe('réponse');
     await r.read(); // nothing new: no change
     expect(r.acc.rows).toHaveLength(2);
+  });
+
+  it("shows an interactive session's rows from its mod before the transcript has them, each once, and drops each file the transcript caught up with", async () => {
+    const file = path.join(dir, 't.jsonl');
+    const live = path.join(dir, 'live');
+    fs.mkdirSync(live);
+    const row = (uuid: string, text: string, type = 'assistant') =>
+      rec({ type, uuid, timestamp: '2026-09-03T10:00:00.000Z', message: { role: type, content: [{ type: 'text', text }] } });
+    // The transcript has the prompt; the mod has handed over the prompt and the reply, and a file it's still writing.
+    fs.writeFileSync(file, row('u1', 'hello', 'user') + '\n');
+    fs.writeFileSync(path.join(live, '1-000000001.json'), row('u1', 'hello', 'user'));
+    fs.writeFileSync(path.join(live, '1-000000002.json'), row('u2', 'hi there'));
+    fs.writeFileSync(path.join(live, '1-000000003.json'), row('u3', 'and').slice(0, 20));
+    const r = new TranscriptReader(file, {}, 'claude', undefined, live);
+    await r.read();
+    expect(r.acc.rows.map((x) => x.text)).toEqual(['hello', 'hi there']);
+    // The transcript showed the prompt first: its copy from the mod goes.
+    expect(fs.existsSync(path.join(live, '1-000000001.json'))).toBe(false);
+    fs.writeFileSync(path.join(live, '1-000000003.json'), row('u3', 'and more'));
+    fs.appendFileSync(file, row('u2', 'hi there') + '\n');
+    await r.read();
+    expect(r.acc.rows.map((x) => x.text)).toEqual(['hello', 'hi there', 'and more']);
+    // The transcript caught up with the reply: its file goes, and the one it hasn't stays.
+    for (let i = 0; i < 100 && fs.readdirSync(live).length > 1; i++) await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fs.readdirSync(live)).toEqual(['1-000000003.json']);
+    fs.appendFileSync(file, row('u3', 'and more') + '\n' + row('u4', 'done') + '\n');
+    await r.read();
+    expect(r.acc.rows.map((x) => x.text)).toEqual(['hello', 'hi there', 'and more', 'done']);
+  });
+
+  it("deletes the mod's file of each row the transcript has, with nobody reading the conversation", async () => {
+    const file = path.join(dir, 't.jsonl');
+    const live = path.join(dir, 'live');
+    fs.mkdirSync(live);
+    const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    const row = (n: number) => rec({ type: 'assistant', uuid: id(n), message: { role: 'assistant', content: [{ type: 'text', text: 'x' }] } });
+    for (const n of [1, 2, 3]) fs.writeFileSync(path.join(live, `1-00000000${n}-${id(n)}.json`), row(n));
+    // The transcript has the first row, and half of the second.
+    fs.writeFileSync(file, row(1) + '\n' + row(2).slice(0, 30));
+    const sweep = new LiveSweep(live, file);
+    await sweep.sweep();
+    expect(fs.readdirSync(live)).toEqual([`1-000000002-${id(2)}.json`, `1-000000003-${id(3)}.json`]);
+    fs.appendFileSync(file, row(2).slice(30) + '\n' + row(4) + '\n');
+    await sweep.sweep();
+    expect(fs.readdirSync(live)).toEqual([`1-000000003-${id(3)}.json`]);
+    // The mod wrote the file of a row the transcript already had.
+    fs.writeFileSync(path.join(live, `1-000000004-${id(4)}.json`), row(4));
+    await sweep.sweep();
+    expect(fs.readdirSync(live)).toEqual([`1-000000003-${id(3)}.json`]);
   });
 
   it('adds new lines once when two reads overlap', async () => {

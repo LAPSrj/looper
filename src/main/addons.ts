@@ -8,7 +8,6 @@ import {
   addonAdditions,
   AddonLocalRunSchema,
   findAddonAction,
-  readAddonManifest,
   runCommand,
   sideName,
   usesAddonDir,
@@ -19,10 +18,13 @@ import {
   type AddonEvent,
   type AddonInfo,
   type AddonUiEvent,
+  type AddonValue,
 } from '../shared/addons';
 import { REPORT_INPUT, issueLines } from '../shared/issues';
 import { forAddonSide, type AddonHost } from './addon-host';
 import { addonIconError } from './addon-icons';
+import type { AddonRequestParams } from './addon-requests';
+import { readAddonPackage, type ReadPackageResult } from './addon-package';
 import { allWindows, ipc, showMessageBox, showOpenDialog, windowOf, WindowSlots, writeClipboard, type AppWindow, type MessageBoxOptions } from './platform';
 import type { WindowRole } from '../shared/remote-access';
 
@@ -88,6 +90,45 @@ function trackWindow(addonId: string, w: AppWindow): void {
   w.on('closed', () => set.delete(w));
 }
 
+/** The windows an addon opened with `looper/openWindow`, by addon id: they wait for an answer, so the addon's process ending closes them. */
+const requestedWindows = new Map<string, Set<AppWindow>>();
+
+/** The addon's process stopped, restarted or crashed: its `looper/openWindow` windows have no one to answer, and close. */
+export function closeRequestedWindows(addonId: string): void {
+  for (const w of [...(requestedWindows.get(addonId) ?? [])]) if (!w.isDestroyed()) w.close();
+}
+
+/**
+ * `looper/openWindow`: the addon's screen as a dialog over the window that
+ * sent the event `p.request` (a phone's remote window opens it on the phone),
+ * else over the main window, else as a window of its own. Resolves once it
+ * has closed, however it closed.
+ */
+export function openRequestedWindow(deps: AddonUiDeps, addonId: string, p: AddonRequestParams<'looper/openWindow'>): Promise<Record<string, never>> {
+  const origin = p.request === undefined ? undefined : (deps.host.originOf(addonId, p.request) as AppWindow | undefined);
+  const parent = [origin, deps.mainWindow()].find((w): w is AppWindow => !!w && !w.isDestroyed()) ?? null;
+  const width = p.width ?? 520;
+  const height = p.height ?? 460;
+  return new Promise((resolve) => {
+    const child = deps.openWindow(addonWindowHash(addonId, p.view, p.params ?? {}, p.title), p.title, width, height, parent, {
+      role: addonWindowRole(width, height),
+      minWidth: Math.min(width, 520),
+      minHeight: Math.min(height, 420),
+      contentSize: true,
+      resizable: false,
+    });
+    if (parent) openers.set(child, openers.get(parent) ?? parent);
+    trackWindow(addonId, child);
+    const set = requestedWindows.get(addonId) ?? new Set<AppWindow>();
+    set.add(child);
+    requestedWindows.set(addonId, set);
+    child.on('closed', () => {
+      set.delete(child);
+      resolve({});
+    });
+  });
+}
+
 /** A command's `opens`: the screen in a window of its own, titled as the command, or the open one brought forward. */
 function openCommandWindow(deps: AddonUiDeps, addon: AddonInfo, command: AddonCommand | AddonEntry): void {
   const opens = command.opens;
@@ -135,7 +176,8 @@ async function runAction(deps: AddonUiDeps, sender: AppWindow | null, addonId: s
       sendAddonEvent({ type: 'refresh', addonId });
       return;
     case 'message':
-      await messageBox(sender, { type: a.kind, title: 'Looper', message: a.message, detail: a.detail, buttons: ['OK'], defaultId: 0, cancelId: 0 });
+      // The title names the feature the message comes from (Win32: error messages' titles).
+      await messageBox(sender, { type: a.kind, title: deps.host.get(addonId)?.name ?? 'Looper', message: a.message, detail: a.detail, buttons: ['OK'], defaultId: 0, cancelId: 0 });
       return;
     case 'copy':
       writeClipboard(a.text);
@@ -163,11 +205,11 @@ async function runEvent(
   addonId: string,
   ev: AddonEvent,
   confirm?: string,
-): Promise<{ value?: string; values?: Record<string, string | number | boolean> }> {
+): Promise<{ value?: string; values?: Record<string, AddonValue>; errors?: Record<string, string> }> {
   if (confirm && !(await ask(sender, confirm))) return {};
   let result;
   try {
-    result = await deps.host.event(addonId, ev);
+    result = await deps.host.event(addonId, ev, sender ?? undefined);
   } catch (e) {
     await errorBox(sender, errMsg(e));
     return {};
@@ -177,21 +219,21 @@ async function runEvent(
     if (result.value !== undefined) writeClipboard(result.value);
     return { values: result.values };
   }
-  return { value: result.value, values: result.values };
+  return { value: result.value, values: result.values, errors: result.errors };
 }
 
-/** Read a .looperaddon file, ask, and install it. */
+/** Read a .looperaddon package (a zip, read and unpacked off the main process's thread), ask, and install it. */
 export async function installAddonFile(deps: AddonUiDeps, file: string, parent: AppWindow | null): Promise<void> {
-  let input: unknown;
+  let r: ReadPackageResult;
   try {
-    input = JSON.parse(fs.readFileSync(file, 'utf8'));
+    r = await readAddonPackage(await fs.promises.readFile(file));
   } catch (e) {
     await errorBox(parent, 'Could not read the file.', errMsg(e));
     return;
   }
-  const r = readAddonManifest(input);
   if (!r.ok) {
     if (r.reason === 'newer') await errorBox(parent, 'This addon needs a newer version of Looper.', 'Update Looper to install it.');
+    else if (r.reason === 'older') await errorBox(parent, 'This addon was made for an older version of Looper.', 'It needs an update from its author before it can be installed.');
     else if (r.reason === 'invalid') await errorBox(parent, 'The addon file has errors.', r.error);
     else await errorBox(parent, 'Could not install the file.', 'The file does not contain a Looper addon.');
     return;
@@ -201,20 +243,20 @@ export async function installAddonFile(deps: AddonUiDeps, file: string, parent: 
     await errorBox(parent, 'The addon file has errors.', iconError);
     return;
   }
-  // ${addonDir} becomes the folder the file is installed from, so the addon runs wherever its program is.
-  const m = usesAddonDir(r.manifest.run)
-    ? {
-        ...r.manifest,
-        run: withAddonDir(r.manifest.run, await forAddonSide(deps.host.launchOf(r.manifest), deps.hostKind, path.dirname(file))),
-      }
-    : r.manifest;
+  const m = r.manifest;
   const existing = deps.host.get(m.id);
   const changed = deps.host.runOf(m.id) !== undefined;
-  const { run, environment } = deps.host.launchOf(m);
+  const launch = deps.host.launchOf(m);
+  const { environment } = launch;
+  // ${addonDir} as the addon gets it: the folder it's installed in.
+  const run = usesAddonDir(launch.run) ? withAddonDir(launch.run, await forAddonSide(launch, deps.hostKind, deps.host.folder(m.id))) : launch.run;
   const adds = addonAdditions(m);
-  const where = environment
-    ? `${m.name} is a program that Looper starts in your "${environment.name}" environment, and it can do anything you can do on this computer:\n${runCommand(run)}`
-    : `${m.name} is a ${sideName(run.on)} program, and no environment in Settings → Environments runs ${sideName(run.on)} programs yet, so it won’t start until you add one. It runs:\n${runCommand(run)}`;
+  const where =
+    run.on === 'looper'
+      ? `${m.name} is a program that Looper runs with its own Node, and it can do anything you can do on this computer:\n${runCommand(run)}`
+      : environment
+        ? `${m.name} is a program that Looper starts in your "${environment.name}" environment, and it can do anything you can do on this computer:\n${runCommand(run)}`
+        : `${m.name} is a ${sideName(run.on)} program, and no environment in Settings → Environments runs ${sideName(run.on)} programs yet, so it won’t start until you add one. It runs:\n${runCommand(run)}`;
   const detail = [
     m.description ?? '',
     adds.length ? `It adds:\n${adds.map((a) => `•  ${a}`).join('\n')}` : '',
@@ -245,7 +287,7 @@ export async function installAddonFile(deps: AddonUiDeps, file: string, parent: 
   });
   if (response !== 0) return;
   try {
-    deps.host.install(m);
+    await deps.host.install(r);
   } catch (e) {
     await errorBox(parent, 'Could not install the addon.', errMsg(e));
   }
@@ -256,6 +298,7 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
   ipc.handle('addons:list', () => host.list());
   ipc.handle('addons:pane', (_e, id: string, pane: string) => host.pane(id, pane));
   ipc.handle('addons:render', (_e, id: string, view: string, params: Record<string, unknown>) => host.render(id, view, params));
+  ipc.handle('addons:projectTab', (_e, id: string, tab: string, projectId: string) => host.projectTab(String(id), String(tab), String(projectId)));
   ipc.on('addons:slowDraw', (_e, id: string, view: string, ms: number) => host.logSlowDraw(id, view, ms));
   ipc.on('addons:overflow', (_e, id: string, view: string, tab: string, height: number) => host.logOverflow(id, view, tab, height));
   ipc.handle('addons:event', (e, id: string, ev: AddonEvent, confirm?: string) =>
@@ -310,13 +353,13 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
       type: 'question',
       title: 'Looper',
       message: `Remove the addon "${m.name}"?`,
-      detail: m.tabs.length || m.panes.length || m.commands.length ? 'What it added to Looper’s tabs, menus and toolbars goes with it.' : undefined,
+      detail: m.tabs.length || m.projectTabs.length || m.panes.length || m.commands.length ? 'What it added to Looper’s tabs, menus and toolbars goes with it.' : undefined,
       buttons: ['Remove', 'Cancel'],
       noLink: true,
       defaultId: 0,
       cancelId: 1,
     });
-    if (response === 0) host.remove(id);
+    if (response === 0) await host.remove(id, true);
   });
   ipc.handle('addons:install', async (e) => {
     const sender = windowOf(e);

@@ -81,6 +81,33 @@ describe('WatcherPool environment errors', () => {
     await w.restarting;
     expect(w.crashLoops).toEqual(['watcher failed 1 times in a row: boom']);
   });
+
+  it("a Node crash reports the error's line, not Node's version footer", async () => {
+    const w = setup((root) => {
+      fs.writeFileSync(
+        path.join(root, 'crash.txt'),
+        [
+          'node:fs:624',
+          '    return binding.readFileUtf8(path, stringToFlags(options.flag));',
+          '                   ^',
+          '',
+          "Error: ENOENT: no such file or directory, open '/home/u/.config/app/token'",
+          '    at Object.readFileSync (node:fs:624:20)',
+          '    at file:///home/u/watch.mjs:54:19 {',
+          "  code: 'ENOENT',",
+          '}',
+          '',
+          'Node.js v26.13.1',
+          '',
+        ].join('\n'),
+      );
+      return `cat '${path.join(root, 'crash.txt')}' >&2; exit 1`;
+    });
+    await w.restarting;
+    expect(w.crashLoops).toEqual([
+      "watcher failed 1 times in a row: Error: ENOENT: no such file or directory, open '/home/u/.config/app/token'",
+    ]);
+  });
 });
 
 describe('WatcherPool batches', () => {

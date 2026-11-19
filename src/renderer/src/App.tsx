@@ -381,13 +381,18 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
       </SessionsStatusBar>
     ) : (
       <StatusBar end={computerStatus}>
-        <span>{counts.enabled} enabled</span>
-        <span>{counts.disabled} disabled</span>
-        <span>{counts.completed} completed</span>
-        <span>{counts.paused} paused</span>
-        <span>{counts.running} running</span>
-        {remoteOpen && <span>{remoteOpen.length} Remote Control conversation{remoteOpen.length === 1 ? '' : 's'}</span>}
-        {addons.length > 0 && <span>{m.runningAddons} addon{m.runningAddons === 1 ? '' : 's'} running</span>}
+        {/* The task counts are the tasks' status: an addon's tab shows none of them. */}
+        {!tabDef?.addon && (
+          <>
+            <span>{counts.enabled} enabled</span>
+            <span>{counts.disabled} disabled</span>
+            <span>{counts.completed} completed</span>
+            <span>{counts.paused} paused</span>
+            <span>{counts.running} running</span>
+            {remoteOpen && <span>{remoteOpen.length} Remote Control conversation{remoteOpen.length === 1 ? '' : 's'}</span>}
+          </>
+        )}
+        {m.stoppedAddons.length > 0 && <span>{m.stoppedAddons.length === 1 ? `${m.stoppedAddons[0]} addon stopped` : `${m.stoppedAddons.length} addons stopped`}</span>}
       </StatusBar>
     ));
 

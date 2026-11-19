@@ -14,8 +14,8 @@ import { UI_PLATFORMS } from './ui-platform';
  */
 
 export const ADDON_TYPE = 'looper/addon';
-/** The addon format: the manifest and the protocol together. */
-export const ADDON_FORMAT = 1;
+/** The addon format: the package, the manifest and the protocol together. */
+export const ADDON_FORMAT = 2;
 
 const id = z.string().regex(/^[a-z0-9][a-z0-9._:-]*$/i, 'use letters, digits, ".", "_", ":" or "-"');
 /** An addon's own id names its manifest file, so it keeps to what every file system accepts. */
@@ -38,13 +38,18 @@ const RunBase = {
 /**
  * How the addon's file says to run it. `on` is the side its program is for;
  * which WSL distro or shell runs it is the user's environment's business.
+ * `looper`: a JavaScript program Looper runs with its own Node (Looper's
+ * executable with ELECTRON_RUN_AS_NODE), on the side Looper itself runs, with
+ * no environment; `command` is the script and its arguments, such as
+ * `["${addonDir}/addon.js"]`.
  */
-export const AddonRunSchema = z.object({ on: z.enum(['wsl', 'windows']), ...RunBase }).strict();
+export const AddonRunSchema = z.object({ on: z.enum(['wsl', 'windows', 'looper']), ...RunBase }).strict();
 export type AddonRun = z.infer<typeof AddonRunSchema>;
-export type AddonSide = AddonRun['on'];
+/** The sides an environment runs programs on; a `looper` addon needs none. */
+export type AddonSide = Exclude<AddonRun['on'], 'looper'>;
 
-/** How this user runs the addon (Advanced → Addons… → Edit…): an environment from Settings → Environments, and the command. */
-export const AddonLocalRunSchema = z.object({ environmentId: z.string().min(1), ...RunBase }).strict();
+/** How this user runs the addon (Advanced → Addons… → Edit…): an environment from Settings → Environments (none for a `looper` addon), and the command. */
+export const AddonLocalRunSchema = z.object({ environmentId: z.string().min(1).optional(), ...RunBase }).strict();
 export type AddonLocalRun = z.infer<typeof AddonLocalRunSchema>;
 
 type EnvironmentKind = 'local' | 'wsl' | 'windows';
@@ -86,6 +91,34 @@ export const AddonTabSchema = z
   })
   .strict();
 export type AddonTab = z.infer<typeof AddonTabSchema>;
+
+/**
+ * A tab inside each project (its view in the main window and a phone's
+ * project screen, and the Sessions window's activity pane for the session's
+ * project), after Looper's own. The screen `view` fills it, drawn with
+ * `{ projectId }` as its params. The `projectTab` request says, per project,
+ * whether it shows and the title it has now.
+ */
+export const AddonProjectTabSchema = z
+  .object({
+    id,
+    title: z.string().min(1),
+    view: id,
+    icon: iconName.optional(),
+  })
+  .strict();
+export type AddonProjectTab = z.infer<typeof AddonProjectTabSchema>;
+
+/** How a project tab is for one project now: the answer to `projectTab`. */
+export const AddonProjectTabStateSchema = z
+  .object({
+    /** Left out of this project's tabs (a git tab for a folder that isn't a repository). */
+    hidden: z.boolean().optional(),
+    /** The title it has now, such as "Git (+2 ~3 −1)"; unset: the manifest's. */
+    title: z.string().min(1).optional(),
+  })
+  .strict();
+export type AddonProjectTabState = z.infer<typeof AddonProjectTabStateSchema>;
 
 // ---------- Commands ----------
 
@@ -189,6 +222,12 @@ export const AddonCommandSchema = z
         /** While that tab shows: in the main window and in the tab's own window (the Chats window, for `chats`). */
         dashboard: PlacementSchema.optional(),
         projects: PlacementSchema.optional(),
+        /**
+         * A project: its right-click menu in the Projects tab, and the Projects tab's
+         * menus and toolbar while one is selected (off while none is). The event's
+         * `project` is that project's id.
+         */
+        project: PlacementSchema.optional(),
         tasks: PlacementSchema.optional(),
         chats: PlacementSchema.optional(),
         /** The addon's panes tab: its menus and toolbar while it shows, and a pane header's right-click menu. */
@@ -279,6 +318,8 @@ export const AddonManifestSchema = z
     panesIcon: iconName.optional(),
     /** Tabs in the main window, after Looper's own (not on a phone, whose tab bar has room for Looper's only). */
     tabs: z.array(AddonTabSchema).default([]),
+    /** Tabs inside each project, after Looper's own. */
+    projectTabs: z.array(AddonProjectTabSchema).default([]),
     /** The addon's own icons by name: SVG text, or "library:<name>" for a library icon only a state names. */
     icons: z.record(z.string().regex(OWN_ICON_NAME, 'use letters, digits, ".", "_" or "-"'), z.string()).default({}),
     /** Everything it can do, each once, in the order its menus and toolbars list them. */
@@ -294,13 +335,14 @@ export type AddonManifest = z.infer<typeof AddonManifestSchema>;
 export type ReadManifestResult =
   | { ok: true; manifest: AddonManifest }
   /** newer: a format this Looper doesn't know yet. */
-  | { ok: false; reason: 'not-addon' | 'newer' | 'invalid'; error?: string };
+  | { ok: false; reason: 'not-addon' | 'newer' | 'older' | 'invalid'; error?: string };
 
 /** Every icon name the manifest's fields use, with the field for an error. */
-export function manifestIconNames(m: Pick<AddonManifest, 'panesIcon' | 'tabs' | 'commands'>): { name: string; where: string }[] {
+export function manifestIconNames(m: Pick<AddonManifest, 'panesIcon' | 'tabs' | 'commands'> & { projectTabs?: AddonProjectTab[] }): { name: string; where: string }[] {
   const out: { name: string; where: string }[] = [];
   if (m.panesIcon) out.push({ name: m.panesIcon, where: 'panesIcon' });
   for (const t of m.tabs) if (t.icon) out.push({ name: t.icon, where: `tabs: "${t.id}"` });
+  for (const t of m.projectTabs ?? []) if (t.icon) out.push({ name: t.icon, where: `projectTabs: "${t.id}"` });
   for (const c of m.commands) {
     for (const action of [c, ...commandEntries(c)]) if (action.icon) out.push({ name: action.icon, where: `commands: "${action.id}"` });
   }
@@ -329,6 +371,7 @@ export function readAddonManifest(input: unknown): ReadManifestResult {
   const obj = input as Record<string, unknown>;
   if (obj.$type !== ADDON_TYPE) return { ok: false, reason: 'not-addon' };
   if (typeof obj.$version === 'number' && obj.$version > ADDON_FORMAT) return { ok: false, reason: 'newer' };
+  if (typeof obj.$version === 'number' && obj.$version < ADDON_FORMAT) return { ok: false, reason: 'older' };
   const parsed = AddonManifestSchema.safeParse(input, REPORT_INPUT);
   if (!parsed.success) return { ok: false, reason: 'invalid', error: issueLines(parsed.error, 4) };
   const ids = new Set<string>();
@@ -341,6 +384,11 @@ export function readAddonManifest(input: unknown): ReadManifestResult {
     if (tabIds.has(t.id)) return { ok: false, reason: 'invalid', error: `tabs: duplicate id "${t.id}"` };
     if (t.id === PANES_TAB) return { ok: false, reason: 'invalid', error: `tabs: "${PANES_TAB}" is the id of the panes' own tab` };
     tabIds.add(t.id);
+  }
+  const projectTabIds = new Set<string>();
+  for (const t of parsed.data.projectTabs) {
+    if (projectTabIds.has(t.id)) return { ok: false, reason: 'invalid', error: `projectTabs: duplicate id "${t.id}"` };
+    projectTabIds.add(t.id);
   }
   const commandIds = new Set<string>();
   const keys = new Set<string>();
@@ -399,7 +447,12 @@ export function toolCallTitle(title: string, input: Record<string, unknown>): st
   });
 }
 
-/** In `run.command`, `run.cwd` and `run.env`: the folder the `.looperaddon` file was installed from. */
+/**
+ * In `run.command`, `run.cwd` and `run.env` (the manifest's or the user's):
+ * the addon's installed folder, <dataDir>/addons/<id>, where its package's
+ * files are, in the path form the side it runs on uses. Kept as written in
+ * the installed addon.json and replaced each time the addon starts.
+ */
 export const ADDON_DIR_VAR = '${addonDir}';
 
 export const usesAddonDir = (run: AddonRun): boolean => JSON.stringify(run).includes(ADDON_DIR_VAR);
@@ -429,14 +482,16 @@ function listText(items: string[]): string {
 }
 
 /** The places of Looper's own windows a command can be in; the others are the addon's own panes and screens. */
-const LOOPER_PLACES = ['new', 'app', 'dashboard', 'projects', 'tasks', 'chats'] as const;
+const LOOPER_PLACES = ['new', 'app', 'dashboard', 'projects', 'project', 'tasks', 'chats'] as const;
 const MENU_TITLES: Record<AddonMenuName, string> = { file: 'File', edit: 'Edit', view: 'View', tools: 'Tools', help: 'Help' };
 
 /** What installing the addon adds to Looper, one line per place, for the install confirmation. */
-export function addonAdditions(m: Pick<AddonManifest, 'panes' | 'commands'> & { tabs?: AddonTab[]; toolCalls?: AddonToolCall[] }): string[] {
+export function addonAdditions(m: Pick<AddonManifest, 'panes' | 'commands'> & { tabs?: AddonTab[]; projectTabs?: AddonProjectTab[]; toolCalls?: AddonToolCall[] }): string[] {
   const lines: string[] = [];
   const tabs = (m.tabs ?? []).map((t) => t.title);
   if (tabs.length) lines.push(`${tabs.length === 1 ? 'A ' : ''}${listText(tabs)} tab${tabs.length === 1 ? '' : 's'} in the main window`);
+  const projectTabs = (m.projectTabs ?? []).map((t) => t.title);
+  if (projectTabs.length) lines.push(`${projectTabs.length === 1 ? 'A ' : ''}${listText(projectTabs)} tab${projectTabs.length === 1 ? '' : 's'} in each project`);
   const panes = m.panes.map((p) => p.title);
   if (panes.length) lines.push(`${panes.length === 1 ? 'A ' : ''}${listText(panes)} pane${panes.length === 1 ? '' : 's'} in a tab of ${panes.length === 1 ? 'its' : 'their'} own`);
   // Only what joins Looper's own windows: the rest is in the addon's tabs and panes, listed above.
@@ -499,9 +554,10 @@ const FieldSchema = z
     type: z.literal('field'),
     id,
     label: z.string().min(1),
-    input: z.enum(['text', 'password', 'textarea', 'number', 'checkbox', 'select', 'list', 'file', 'folder']),
-    value: z.union([z.string(), z.number(), z.boolean()]).optional(),
-    /** `list`: its rows, each with `description` as the line under it. `select`: the chosen option's `description` shows under it. */
+    /** `checklist`: its `options` as rows with a check box each; its value is the checked options' values. */
+    input: z.enum(['text', 'password', 'textarea', 'number', 'checkbox', 'select', 'list', 'checklist', 'file', 'folder']),
+    value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]).optional(),
+    /** `list` and `checklist`: its rows, each with `description` as the line under it. `select`: the chosen option's `description` shows under it. */
     options: z.array(z.object({ value: z.string(), label: z.string(), description: z.string().optional() }).strict()).optional(),
     /** `list`: what it shows with no options. */
     placeholder: z.string().optional(),
@@ -517,16 +573,53 @@ const FieldSchema = z
       .optional(),
     /** The window's primary button stays off while this is empty. */
     required: z.boolean().optional(),
+    /** `select`: choosing another option sends a `change` event with the field's id, and the answer's `values` fill the screen's fields. */
+    change: z.boolean().optional(),
+    /** A problem with what's in it, under it with an error icon (Windows' in-place error); an event answer's `errors` replace these. */
+    error: z.string().min(1).optional(),
     autofocus: z.boolean().optional(),
   })
   .strict();
 export type AddonField = z.infer<typeof FieldSchema>;
 
+/** A value a screen's field holds: a checklist's is the checked options' values. */
+export type AddonValue = string | number | boolean | string[];
+const ValueSchema = z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]);
+
+/** One row of a `listDetail` node. */
+const ListRowSchema = z
+  .object({
+    id,
+    title: z.string(),
+    /** The line under the title, such as a file's folder or a commit's author and date. */
+    subtitle: z.string().optional(),
+    /** The subtitle in a monospace font (a path, an id). */
+    mono: z.boolean().optional(),
+    /** Plain text at the row's end, such as "Modified" (never a badge). */
+    value: z.string().optional(),
+    /** The screen beside the list (pushed on a phone) while the row is selected; drawn by `render` like any screen. */
+    detail: z.object({ view: id, params: ParamsSchema.optional() }).strict().optional(),
+  })
+  .strict();
+export type AddonListRow = z.infer<typeof ListRowSchema>;
+
+/** One changed region of a `diff` node: unified diff lines, each starting with " ", "+" or "-". */
+const DiffHunkSchema = z
+  .object({
+    oldStart: z.number().int().min(0),
+    oldLines: z.number().int().min(0),
+    newStart: z.number().int().min(0),
+    newLines: z.number().int().min(0),
+    lines: z.array(z.string()),
+  })
+  .strict();
+
 export type AddonNode =
   | { type: 'props'; items: AddonProp[] }
   | { type: 'text'; text: string; muted?: boolean }
   | { type: 'markdown'; text: string }
-  | { type: 'infobar'; title: string; message: string; button?: AddonButton }
+  | { type: 'infobar'; title: string; message: string; button?: AddonButton; level?: 'info' | 'warning' | 'error' }
+  | { type: 'empty'; text: string; level?: 'info' | 'warning' | 'error'; button?: AddonButton }
   | { type: 'buttons'; items: AddonButton[] }
   | AddonField
   | { type: 'row'; items: AddonField[] }
@@ -534,7 +627,46 @@ export type AddonNode =
   /** Looper's tab control: one tab's body shows at a time, and the selected tab outlasts redraws. */
   | { type: 'tabs'; id: string; items: { id: string; title: string; body: AddonNode[] }[] }
   | { type: 'footer'; primary: AddonButton; apply?: AddonButton }
-  | { type: 'footer'; wizard: AddonWizard };
+  | { type: 'footer'; wizard: AddonWizard }
+  /**
+   * A list whose selected row's `detail` screen shows beside it (below it in a
+   * narrow place, pushed on a phone), like the Git tab's changes and history.
+   * The selection outlasts redraws, by row id. `menu` is each row's
+   * right-click menu (on a phone, its pushed screen's More menu): a click event
+   * with the button's id and the row's id in `item`. `more`: the list has
+   * more rows than it sent; scrolling near its end sends a `more` event with
+   * the node's id, and the addon answers with a `refresh` that sends more.
+   */
+  | {
+      type: 'listDetail';
+      id: string;
+      /** The list's name for a screen reader, and a phone's back button on the detail. */
+      label: string;
+      items: AddonListRow[];
+      /** The row selected when the node first shows; unset: the first on the desktop, none on a phone. */
+      selected?: string;
+      /** Shown instead of the list when it has no rows. */
+      empty?: string;
+      /** Shown beside the list while no row (or one without `detail`) is selected. */
+      detailEmpty?: string;
+      more?: boolean;
+      menu?: AddonButton[];
+    }
+  /** A file's changes as Looper shows an edit's: line numbers, colors and highlighting by `file`'s extension. */
+  | {
+      type: 'diff';
+      /** The heading, such as the file's path. */
+      title?: string;
+      /** Muted text after the heading, such as "Modified, staged". */
+      subtitle?: string;
+      /** The file's name, for the highlighting language; unset: `title`. */
+      file?: string;
+      hunks: z.infer<typeof DiffHunkSchema>[];
+      /** A binary file: no lines to compare, and Looper says so. */
+      binary?: boolean;
+      /** The diff stops early, and Looper says so after it. */
+      truncated?: boolean;
+    };
 
 /**
  * A wizard page's buttons, Back | Next | Cancel. `back` and `next` are the ids
@@ -555,8 +687,22 @@ export const AddonNodeSchema: z.ZodType<AddonNode> = z.lazy(() =>
     z.object({ type: z.literal('text'), text: z.string(), muted: z.boolean().optional() }).strict(),
     z.object({ type: z.literal('markdown'), text: z.string() }).strict(),
     z
-      .object({ type: z.literal('infobar'), title: z.string().min(1), message: z.string(), button: ButtonSchema.optional() })
+      .object({
+        type: z.literal('infobar'),
+        title: z.string().min(1),
+        message: z.string(),
+        button: ButtonSchema.optional(),
+        /** Its icon; unset: `info`. A problem that keeps the screen from showing its content is an `empty` node instead. */
+        level: z.enum(['info', 'warning', 'error']).optional(),
+      })
       .strict(),
+    /**
+     * What the screen shows in place of the content it can't show: with a
+     * `level`, a problem (normal text after a 16x16 icon, Windows' in-place
+     * error), and `button` the action that fixes it; without one, that there's
+     * nothing to show.
+     */
+    z.object({ type: z.literal('empty'), text: z.string().min(1), level: z.enum(['info', 'warning', 'error']).optional(), button: ButtonSchema.optional() }).strict(),
     z.object({ type: z.literal('buttons'), items: z.array(ButtonSchema) }).strict(),
     FieldSchema,
     z.object({ type: z.literal('row'), items: z.array(FieldSchema) }).strict(),
@@ -575,6 +721,30 @@ export const AddonNodeSchema: z.ZodType<AddonNode> = z.lazy(() =>
       .object({ type: z.literal('footer'), primary: ButtonSchema.optional(), apply: ButtonSchema.optional(), wizard: WizardSchema.optional() })
       .strict()
       .refine((f) => (f.wizard ? !f.primary && !f.apply : !!f.primary), { error: 'a footer has "primary" (and "apply") or "wizard"' }),
+    z
+      .object({
+        type: z.literal('listDetail'),
+        id,
+        label: z.string().min(1),
+        items: z.array(ListRowSchema).refine((rows) => new Set(rows.map((r) => r.id)).size === rows.length, 'row ids must differ'),
+        selected: id.optional(),
+        empty: z.string().optional(),
+        detailEmpty: z.string().optional(),
+        more: z.boolean().optional(),
+        menu: z.array(ButtonSchema).optional(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal('diff'),
+        title: z.string().optional(),
+        subtitle: z.string().optional(),
+        file: z.string().optional(),
+        hunks: z.array(DiffHunkSchema),
+        binary: z.boolean().optional(),
+        truncated: z.boolean().optional(),
+      })
+      .strict(),
   ]),
 ) as z.ZodType<AddonNode>;
 
@@ -628,6 +798,8 @@ export const AddonPaneItemSchema = z
     id,
     label: z.string().min(1),
     description: z.string().optional(),
+    /** The description in a monospace font: a path, as the Projects tab shows a project's folder. */
+    mono: z.boolean().optional(),
     /** The screen the main window shows while the item is selected. */
     view: id,
     params: ParamsSchema.optional(),
@@ -677,8 +849,13 @@ export function matchesSearch(item: AddonPaneItem, query: string): boolean {
 
 // ---------- Events ----------
 
-/** `click`: a screen's button; `command`: one of the manifest's commands; `open`: a pane item double-clicked. */
-export type AddonEventKind = 'click' | 'open' | 'command' | 'reveal' | 'copy';
+/**
+ * `click`: a screen's button, or a `listDetail` row's menu item; `command`: one
+ * of the manifest's commands; `open`: a pane item double-clicked; `more`: a
+ * `listDetail` scrolled near the end of the rows it has; `change`: a field
+ * with `change` given another value.
+ */
+export type AddonEventKind = 'click' | 'open' | 'command' | 'reveal' | 'copy' | 'more' | 'change';
 
 /**
  * Where it happened: a pane (with the item a command acts on in `item`), a
@@ -692,10 +869,12 @@ export interface AddonEvent {
   kind: AddonEventKind;
   /** The button, command, secret, or (open) pane item. */
   id: string;
-  /** The pane item it acts on: a command placed on items, or the one opened. */
+  /** The pane item it acts on (a command placed on items, or the one opened), or the `listDetail` row whose menu was used. */
   item?: string;
+  /** The project it acts on: a command placed in `project`, or picked while the Projects tab has one selected. */
+  project?: string;
   /** The screen's field values, by field id. */
-  values?: Record<string, string | number | boolean>;
+  values?: Record<string, AddonValue>;
 }
 
 export const AddonActionSchema = z.discriminatedUnion('type', [
@@ -732,10 +911,159 @@ export const AddonEventResultSchema = z
     /** A `reveal` or `copy` event's secret. */
     value: z.string().optional(),
     /** New values for the screen's fields, by field id. */
-    values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+    values: z.record(z.string(), ValueSchema).optional(),
+    /**
+     * Problems with what was typed, by field id: each shows under its field
+     * with an error icon (Windows' in-place errors), the first field gets the
+     * focus, and a field's problem goes when it's changed. Prefer this to a
+     * `message` for anything one field can fix.
+     */
+    errors: z.record(z.string(), z.string().min(1)).optional(),
   })
   .strict();
 export type AddonEventResult = z.infer<typeof AddonEventResultSchema>;
+
+// ---------- What the addon can ask Looper, and what Looper tells it ----------
+
+/**
+ * The addon's own requests to Looper: JSON-RPC requests (with an `id`) the
+ * addon writes to its stdout, which Looper answers on its stdin. An error
+ * answer's `message` says why. Each method's params are checked with its schema.
+ */
+export const ADDON_REQUESTS = {
+  /** Looper's projects, in the Projects tab's order. Result: AddonProjectInfo[]. */
+  'looper/projects': z.object({}).strict(),
+  /** Settings → Environments. Result: AddonEnvironmentInfo[]. */
+  'looper/environments': z.object({}).strict(),
+  /**
+   * Run a program, without a shell, in a project's environment (a WSL project's
+   * inside its distro) and folder, or in an environment and folder: the way
+   * Looper runs its own git. Result: AddonExecResult. Rejects only when the
+   * program can't start or runs past the timeout.
+   */
+  'looper/exec': z
+    .object({
+      /** The project whose environment and folder it runs in. */
+      projectId: z.string().min(1).optional(),
+      /** Without `projectId`: the environment it runs in; unset: the default. */
+      environmentId: z.string().min(1).optional(),
+      /** The working folder, in the environment's own path form; with `projectId`, unset means the project's folder. */
+      cwd: z.string().min(1).optional(),
+      argv: z.array(z.string()).min(1),
+      env: z.record(z.string(), z.string()).optional(),
+      /** Text written to its stdin, which then closes. */
+      stdin: z.string().optional(),
+      /** 1 to 600; unset: 60. */
+      timeoutSec: z.number().int().min(1).max(600).optional(),
+    })
+    .strict()
+    .refine((p) => p.projectId || p.cwd, { error: 'give "projectId" or "cwd"' }),
+  /** Add a project, as New Project does. Result: `{ id }`; rejects with the reason it isn't valid. */
+  'looper/createProject': z
+    .object({
+      name: z.string().min(1),
+      /** The project's folder, in the environment's own path form. */
+      cwd: z.string().min(1),
+      /** Unset: the default environment. */
+      environmentId: z.string().min(1).optional(),
+    })
+    .strict(),
+  /**
+   * Run a command in a Looper terminal in the project's environment and folder,
+   * where Looper shows terminals, so a program that asks for input (a password,
+   * a passphrase) can. Result: `{}` once it starts.
+   */
+  'looper/openTerminal': z
+    .object({
+      /** The project whose environment and folder it runs in. */
+      projectId: z.string().min(1).optional(),
+      /** Without `projectId`: the environment it runs in; unset: the default. */
+      environmentId: z.string().min(1).optional(),
+      /** The working folder, in the environment's own path form; with `projectId`, unset means the project's folder. */
+      cwd: z.string().min(1).optional(),
+      command: z.array(z.string()).min(1),
+      /** The terminal's title; unset: the command. */
+      title: z.string().min(1).optional(),
+    })
+    .strict()
+    .refine((p) => p.projectId || p.cwd, { error: 'give "projectId" or "cwd"' }),
+  /** The projects an agent is working in now. Result: `{ working: string[] }`; the `activity` notification follows each change. */
+  'looper/activity': z.object({}).strict(),
+  /**
+   * One of the addon's screens in a window of its own, opened when the addon
+   * needs it rather than as an event's answer: a password git asks for in the
+   * middle of a pull. It opens as a dialog over the window that sent `request`
+   * (the id of a Looper `event` request the addon is still answering), on the
+   * device that sent it; without one, or once that window has closed, over the
+   * main window. Result: `{}` once the window has closed, however it closed.
+   */
+  'looper/openWindow': z
+    .object({
+      view: id,
+      params: ParamsSchema.optional(),
+      title: z.string().min(1),
+      width: z.number().int().min(320).max(2000).optional(),
+      height: z.number().int().min(200).max(1400).optional(),
+      request: z.number().int().min(1).optional(),
+    })
+    .strict(),
+} as const;
+export type AddonRequestMethod = keyof typeof ADDON_REQUESTS;
+
+export interface AddonProjectInfo {
+  id: string;
+  name: string;
+  /** Its folder, in its environment's own path form (`/home/…` for a WSL project, `C:\…` for a Windows one). */
+  cwd: string;
+  environmentId: string;
+  /** Where its programs run: `looper/exec` with its id runs there. */
+  side: AddonSide;
+}
+
+export interface AddonEnvironmentInfo {
+  id: string;
+  name: string;
+  side: AddonSide;
+  /** The default environment (Settings → Environments). */
+  default: boolean;
+}
+
+export interface AddonExecResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * Looper's notifications to the addon (JSON-RPC without an `id`):
+ * `projectsChanged` (`{}`) when a project is added, removed or changed, and
+ * `activity` (`{ projectId, working }`) when an agent starts or stops working
+ * in a project.
+ */
+export type AddonNotification = { method: 'projectsChanged'; params: Record<string, never> } | { method: 'activity'; params: { projectId: string; working: boolean } };
+
+/**
+ * The addon's `refresh` notification's params: what to draw again. Unset, or
+ * none of these given: every pane, screen and project tab title of the addon.
+ */
+export const AddonRefreshSchema = z
+  .object({
+    /** The screens of these views, wherever they show. */
+    views: z.array(id).optional(),
+    /** These panes. */
+    panes: z.array(id).optional(),
+    /** Every project tab's title and whether it shows (`projectTab` again). */
+    projectTabs: z.boolean().optional(),
+  })
+  .strict();
+export type AddonRefresh = z.infer<typeof AddonRefreshSchema>;
+
+/**
+ * Looper's requests to the addon, besides `initialize` (`{ protocol: 2, looper,
+ * host, dataDir, locale }`, `locale` the BCP 47 tag Looper formats dates and numbers with), `pane`, `render` and `event`: `projectTab`
+ * (`{ tab, projectId }`), answered with an AddonProjectTabState.
+ */
+export const ADDON_PROTOCOL = ADDON_FORMAT;
 
 // ---------- What the renderer sees ----------
 
@@ -751,6 +1079,7 @@ export interface AddonInfo {
   panes: { id: string; title: string }[];
   panesIcon?: string;
   tabs: AddonTab[];
+  projectTabs: AddonProjectTab[];
   commands: AddonCommand[];
   /** Each own or library icon name the manifest uses, as a surface draws it (addonIconKey). */
   icons: Record<string, string>;
@@ -777,8 +1106,8 @@ export const addonPaneKey = (addonId: string, paneId: string): string => `${addo
 
 export type AddonUiEvent =
   | { type: 'addons'; addons: AddonInfo[] }
-  /** Draw the addon's panes and screens again. */
-  | { type: 'refresh'; addonId: string }
+  /** Draw the addon's panes, screens and project tab titles again: only what `only` names, when it's given. */
+  | { type: 'refresh'; addonId: string; only?: AddonRefresh }
   /** Select a pane item, in the window the action came from (or the one that opened it). */
   | { type: 'select'; addonId: string; pane: string; item: string };
 

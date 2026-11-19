@@ -305,6 +305,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       list: () => t.invoke('addons:list'),
       pane: (id, pane) => t.invoke('addons:pane', id, pane).catch(plainError),
       render: (id, view, params) => t.invoke('addons:render', id, view, params).catch(plainError),
+      projectTab: (id, tab, projectId) => t.invoke('addons:projectTab', id, tab, projectId).catch(plainError),
       reportSlowDraw: (id, view, ms) => t.send('addons:slowDraw', id, view, ms),
       reportOverflow: (id, view, tab, height) => t.send('addons:overflow', id, view, tab, height),
       event: (id, ev, confirm) => t.invoke('addons:event', id, ev, confirm),

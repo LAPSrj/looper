@@ -10,15 +10,16 @@ import { resultTone } from '../phone-lists';
 import { gitTabLabel } from '@shared/git';
 import { DataTable, type DataCol } from './DataTable';
 import { GitView, useGitStatus } from './GitView';
+import { AddonProjectTabView, useAddonProjectTabs, type AddonProjectTabId } from './AddonProjectTabs';
 import { DetailStatus, DetailView } from './DetailView';
 import { useDialogKeys, useGitRepo } from './hooks';
 import { useSessionsState } from '../live-state';
 import { RunLog } from './RunLog';
 import { useRunRecords } from '../useRunRecords';
 
-type ProjectTab = 'status' | 'tasks' | 'sessions' | 'git';
+type ProjectTab = 'status' | 'tasks' | 'sessions' | 'git' | AddonProjectTabId;
 
-/** A project's tabs, in order (Ctrl+Tab steps through them), before Git, which a project in a repository adds. */
+/** A project's tabs, in order (Ctrl+Tab steps through them), before Git, which a project in a repository adds, and the started addons' project tabs. */
 export const PROJECT_TABS: readonly (readonly [ProjectTab, string])[] = [
   ['status', 'Status'],
   ['tasks', 'Tasks'],
@@ -46,7 +47,10 @@ export function ProjectDetail({
 }) {
   const [shownTab, setTab] = useState<ProjectTab>('status');
   const gitRepo = useGitRepo(project.id);
-  const tab = shownTab === 'git' && !gitRepo ? 'status' : shownTab;
+  const addonTabs = useAddonProjectTabs(project.id);
+  const addonTab = addonTabs.find((t) => t.id === shownTab);
+  // A tab that went (the folder stopped being a repository, the addon stopped or hid its tab) leaves the Status tab showing.
+  const tab = (shownTab === 'git' && !gitRepo) || (shownTab.startsWith('addon:') && !addonTab) ? 'status' : shownTab;
   const sessions = useSessionsState();
   const git = useGitStatus(gitRepo ? project.id : undefined, !!sessions?.sessions.some((s) => s.projectId === project.id && s.status === 'working'));
   const [picked, setPicked] = useState<string | null>(null);
@@ -58,7 +62,11 @@ export function ProjectDetail({
   const { records: byTask } = useRunRecords(ids);
   const records = useMemo(() => ids.flatMap((id) => (byTask[id] ?? []).filter((r: RunRecord) => id === standIn || isSessionRun(r))), [ids, byTask, standIn]);
 
-  const tabs = gitRepo ? [...PROJECT_TABS, ['git', gitTabLabel(git.status?.repo ? git.status.changes : undefined)] as const] : PROJECT_TABS;
+  const tabs: (readonly [ProjectTab, string])[] = [
+    ...PROJECT_TABS,
+    ...(gitRepo ? [['git', gitTabLabel(git.status?.repo ? git.status.changes : undefined)] as const] : []),
+    ...addonTabs.map((t) => [t.id, t.title] as const),
+  ];
   // Ctrl+Tab and Ctrl+PageUp/PageDown step through the tabs, as they do a task's.
   useDialogKeys<ProjectTab>({ tabs: tabs.map(([id]) => id), tab, onTab: setTab });
 
@@ -140,6 +148,7 @@ export function ProjectDetail({
       )}
       {tab === 'sessions' && <RunLog records={records} sessions />}
       {tab === 'git' && <GitView projectId={project.id} watch={git} />}
+      {addonTab && tab === addonTab.id && <AddonProjectTabView shown={addonTab} projectId={project.id} />}
     </DetailView>
   );
 }

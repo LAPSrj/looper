@@ -24,6 +24,7 @@ function fakeClaude(dir: string): string {
     `
 import readline from 'node:readline';
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+// It ends with its input, so a test that stops early leaves nothing running.
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const m = JSON.parse(line);
   if (m.type === 'control_request') return out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id } });
@@ -32,7 +33,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   out({ ...m, parent_tool_use_id: null, isReplay: true });
   out({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'ok' }] } });
   out({ type: 'result', subtype: 'success', result: 'ok' });
-});
+}).on('close', () => process.exit(0));
 `,
   );
   const sh = path.join(dir, 'fake-claude');
@@ -89,7 +90,7 @@ describe('a run opened in a chat', { timeout: 30_000 }, () => {
     e.start();
     e.updateSettings({
       environments: e.settings.environments.map((env) =>
-        env.id === 'local' ? { ...env, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : env,
+        env.id === 'local' ? { ...env, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : env,
       ),
     });
     e.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual', sendRelatedEvents: true }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } }));

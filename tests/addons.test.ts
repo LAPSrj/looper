@@ -3,7 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Logger } from '../src/engine/log';
-import { AddonHost, addonEnv, addonLaunch, addonSpawnLine } from '../src/main/addon-host';
+import { AddonHost, SLOW_REQUEST_MS, addonEnv, addonLaunch, addonSpawnLine, compareVersions, migrateAddonFiles, type AddonHostDeps } from '../src/main/addon-host';
+import { readAddonPackage, zipEntries, PACKAGE_LIMITS } from '../src/main/addon-package';
+import { zipSync, strToU8, type Zippable } from 'fflate';
 import type { Environment } from '../src/shared/types';
 import {
   addonAdditions,
@@ -27,7 +29,7 @@ import { addonTabId, mainTabs } from '../src/shared/main-tabs';
 
 const MANIFEST = {
   $type: 'looper/addon',
-  $version: 1,
+  $version: 2,
   id: 'demo',
   name: 'Demo',
   version: '0.1.0',
@@ -67,8 +69,9 @@ describe('readAddonManifest', () => {
     for (const old of ['toolbar', 'tools', 'new']) expect(readAddonManifest({ ...MANIFEST, [old]: [] }).ok).toBe(false);
   });
 
-  it('tells a newer format from a file that is not an addon', () => {
-    expect(readAddonManifest({ ...MANIFEST, $version: 2 })).toEqual({ ok: false, reason: 'newer' });
+  it('tells a newer or older format from a file that is not an addon', () => {
+    expect(readAddonManifest({ ...MANIFEST, $version: 3 })).toEqual({ ok: false, reason: 'newer' });
+    expect(readAddonManifest({ ...MANIFEST, $version: 1 })).toEqual({ ok: false, reason: 'older' });
     expect(readAddonManifest({ $type: 'looper/task', $version: 1 })).toEqual({ ok: false, reason: 'not-addon' });
     expect(readAddonManifest([])).toEqual({ ok: false, reason: 'not-addon' });
   });
@@ -500,6 +503,132 @@ describe('AddonPaneContentSchema', () => {
   });
 });
 
+
+/** A .looperaddon package: a zip of these files (string contents, or bytes with zip options). */
+function zipOf(files: Record<string, string | Uint8Array | [Uint8Array, object]>): Uint8Array {
+  const z: Zippable = {};
+  for (const [name, v] of Object.entries(files)) z[name] = typeof v === 'string' ? strToU8(v) : (v as never);
+  return zipSync(z);
+}
+
+const ADDON_JSON = (over: object = {}) => JSON.stringify({ ...MANIFEST, ...over });
+
+describe('addon packages', () => {
+  it('reads the manifest at the root and every file beside it', async () => {
+    const big = new Uint8Array(600 * 1024).fill(7);
+    const r = await readAddonPackage(zipOf({ 'addon.json': ADDON_JSON(), 'addon.js': 'run()', 'bin/tool': [strToU8('#!/bin/sh'), { attrs: (0o100755 << 16) >>> 0, os: 3 }], 'data/big.bin': big }));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.manifest.id).toBe('demo');
+    expect(r.files.map((f) => [f.name, f.executable])).toEqual([
+      ['addon.json', false],
+      ['addon.js', false],
+      ['bin/tool', true],
+      ['data/big.bin', false],
+    ]);
+    expect(r.files[3].data).toEqual(big);
+  }, 20_000);
+
+  it('tells an older, newer or invalid manifest, a zip without one and a file that is no zip', async () => {
+    expect(await readAddonPackage(zipOf({ 'addon.json': ADDON_JSON({ $version: 3 }) }))).toEqual({ ok: false, reason: 'newer' });
+    expect(await readAddonPackage(zipOf({ 'addon.json': ADDON_JSON({ $version: 1 }) }))).toEqual({ ok: false, reason: 'older' });
+    expect(await readAddonPackage(zipOf({ 'addon.json': '{' }))).toMatchObject({ ok: false, reason: 'invalid', error: expect.stringMatching(/^addon\.json: /) });
+    expect(await readAddonPackage(zipOf({ 'addon.json': ADDON_JSON({ run: { on: 'looper', command: [] } }) }))).toMatchObject({ ok: false, reason: 'invalid' });
+    expect(await readAddonPackage(zipOf({ 'sub/addon.json': ADDON_JSON() }))).toEqual({ ok: false, reason: 'not-addon' });
+    expect(await readAddonPackage(strToU8('hello'))).toEqual({ ok: false, reason: 'not-addon' });
+    // Format 1's file was the manifest alone, as JSON.
+    expect(await readAddonPackage(strToU8(ADDON_JSON({ $version: 1 })))).toEqual({ ok: false, reason: 'older' });
+    expect(await readAddonPackage(strToU8(ADDON_JSON()))).toEqual({ ok: false, reason: 'not-addon' });
+  });
+
+  it('refuses a path that leaves its folder, a link, a name twice and a package over the limits, before reading any', () => {
+    const bad = (name: string) => zipEntries(zipOf({ 'addon.json': '{}', [name]: 'x' }));
+    expect(bad('../evil.js')).toBe('"../evil.js" leaves the addon\'s folder.');
+    expect(bad('a/../../evil.js')).toMatch(/leaves the addon's folder/);
+    expect(bad('/etc/passwd')).toMatch(/is an absolute path/);
+    expect(bad('C:/Windows/x.dll')).toMatch(/starts with a drive letter/);
+    expect(bad('a\\b.js')).toMatch(/has a backslash/);
+    expect(bad('addon.js:stream')).toMatch(/a character a file name can't have/);
+    const link = zipOf({ 'addon.json': '{}', 'link': [strToU8('/etc/passwd'), { attrs: (0o120777 << 16) >>> 0, os: 3 }] });
+    expect(zipEntries(link)).toBe('"link" is a link.');
+    expect(zipEntries(zipOf({ 'addon.json': '{}', 'A.js': 'x', 'a.js': 'y' }))).toBe('"a.js" is in the package twice.');
+    expect(zipEntries(zipOf({ 'addon.json': '{}', 'lib': 'x', 'lib/a.js': 'y' }))).toBe('"lib/a.js" is inside "lib", which is a file.');
+    const three = zipOf({ 'addon.json': '{}', 'a.js': 'x', 'b.js': 'y' });
+    expect(zipEntries(three, { ...PACKAGE_LIMITS, entries: 2 })).toBe('The package has 3 files; an addon can have 2.');
+    expect(zipEntries(three, { entries: 10, bytes: 3 })).toMatch(/^The package's files take more than/);
+    expect(zipEntries(strToU8('not a zip'))).toBeNull();
+  });
+});
+
+describe('the looper runtime', () => {
+  const run: AddonRun = { on: 'looper', command: ['${addonDir}/addon.js', '--flag'] };
+
+  it("runs Looper's own executable with the script first, in the addon's folder unless it names one", () => {
+    expect(addonSpawnLine(withAddonDir(run, '/data/addons/x'), 'windows', undefined, '/data/addons/x')).toEqual({
+      command: process.execPath,
+      args: ['/data/addons/x/addon.js', '--flag'],
+      cwd: '/data/addons/x',
+    });
+    expect(addonSpawnLine({ ...run, cwd: '/elsewhere' }, 'wsl', undefined, '/data/addons/x').cwd).toBe('/elsewhere');
+  });
+
+  it('gives ELECTRON_RUN_AS_NODE to its process alone, under its own variables', () => {
+    expect(addonEnv({ ...run, env: { A: '1' } }, 'windows', { PATH: 'p' })).toEqual({ PATH: 'p', ELECTRON_RUN_AS_NODE: '1', A: '1' });
+    expect(addonEnv(MANIFEST.run as AddonRun, 'windows', { PATH: 'p' })).not.toHaveProperty('ELECTRON_RUN_AS_NODE');
+  });
+
+  it('needs no environment', () => {
+    const envs = { environments: [ENV({ id: 'ubuntu', kind: 'wsl' })], defaultEnvironmentId: 'ubuntu' };
+    expect(addonLaunch(run, undefined, envs, 'windows')).toEqual({ run });
+    expect(addonLaunch(run, { command: ['x.js'] }, envs, 'windows')).toEqual({ run: { on: 'looper', command: ['x.js'] } });
+  });
+});
+
+describe('compareVersions', () => {
+  it('compares dot-separated numbers', () => {
+    expect(compareVersions('1.10.0', '1.9.2')).toBe(1);
+    expect(compareVersions('1.0', '1.0.0')).toBe(0);
+    expect(compareVersions('0.9.9', '1.0.0')).toBe(-1);
+  });
+});
+
+describe('migrateAddonFiles', () => {
+  it("moves each format 1 file to its own folder as addon.json with $version 2, and leaves the rest", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-addon-migrate-'));
+    cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const old = { ...MANIFEST, $version: 1, run: { on: 'wsl', command: ['node', '/home/sam/addons/demo/addon.mjs'] } };
+    fs.writeFileSync(path.join(dir, 'demo.looperaddon'), JSON.stringify(old));
+    fs.writeFileSync(path.join(dir, 'odd.looperaddon'), JSON.stringify({ $type: 'looper/addon', $version: 1, id: '../x' }));
+    fs.writeFileSync(path.join(dir, 'notes.looperaddon'), 'not json');
+    fs.mkdirSync(path.join(dir, 'kept'));
+    fs.writeFileSync(path.join(dir, 'kept', 'addon.json'), ADDON_JSON({ id: 'kept' }));
+    const log = new MemoryLogger();
+    expect(await migrateAddonFiles(dir, log)).toBe(1);
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'demo', 'addon.json'), 'utf8'))).toEqual({ ...old, $version: 2 });
+    expect(fs.existsSync(path.join(dir, 'demo.looperaddon'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'odd.looperaddon'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'x'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'notes.looperaddon'))).toBe(true);
+    expect(fs.readFileSync(path.join(dir, 'kept', 'addon.json'), 'utf8')).toBe(ADDON_JSON({ id: 'kept' }));
+    expect(log.lines.some((l) => l.includes('odd.looperaddon'))).toBe(true);
+    // Once moved, there's nothing left to move.
+    expect(await migrateAddonFiles(dir, log)).toBe(0);
+    expect(await migrateAddonFiles(path.join(dir, 'none'), log)).toBe(0);
+  });
+
+  it('runs before the host reads its addons', async () => {
+    const { root, deps, manifest } = setup();
+    fs.mkdirSync(path.join(root, 'addons'));
+    fs.writeFileSync(path.join(root, 'addons', 'demo.looperaddon'), JSON.stringify({ ...manifest, $version: 1 }));
+    const host = new AddonHost(deps);
+    cleanups.push(() => host.dispose());
+    await host.start();
+    expect(host.list().map((a) => a.id)).toEqual(['demo']);
+    // A login bash and node starting on a loaded machine can take more than the usual wait.
+    await until(() => host.list()[0]?.status === 'running', 30_000);
+  }, 40_000);
+});
+
 // A real addon process through the real launcher (a login bash on this host).
 
 const FAKE_ADDON = String.raw`
@@ -508,9 +637,22 @@ console.log('profile noise that is not JSON');
 const send = (m) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\n');
 let n = 0;
 let init;
+const asked = {};
+const notes = [];
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const msg = JSON.parse(line);
   const p = msg.params;
+  // An answer to one of its own requests to Looper: the event that asked gets it.
+  if (msg.method === undefined && asked[msg.id] !== undefined) {
+    const eventId = asked[msg.id];
+    delete asked[msg.id];
+    return send({ id: eventId, result: { value: JSON.stringify(msg.error ? { error: msg.error } : { result: msg.result }) } });
+  }
+  if (msg.method === 'projectsChanged' || msg.method === 'activity') return notes.push({ method: msg.method, params: p });
+  if (msg.method === 'projectTab') {
+    if (p.projectId === 'bad') return send({ id: msg.id, result: { title: '' } });
+    return send({ id: msg.id, result: { title: 'Tab ' + p.tab + ' ' + p.projectId } });
+  }
   if (msg.method === 'initialize') {
     init = p;
     return send({ id: msg.id, result: {} });
@@ -522,6 +664,24 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   }
   if (msg.method === 'event') {
     if (p.id === 'init') return send({ id: msg.id, result: { value: JSON.stringify(init) } });
+    if (p.id === 'cwd') return send({ id: msg.id, result: { value: JSON.stringify({ cwd: process.cwd(), runAsNode: process.env.ELECTRON_RUN_AS_NODE ?? null }) } });
+    if (p.id === 'ask') {
+      const qid = 'q' + ++n;
+      asked[qid] = msg.id;
+      return send({ id: qid, method: p.values.method, ...(p.values.params ? { params: JSON.parse(p.values.params) } : {}) });
+    }
+    if (p.id === 'open-self') {
+      const qid = 'q' + ++n;
+      asked[qid] = msg.id;
+      return send({ id: qid, method: 'looper/openWindow', params: { view: 'v', title: 'T', request: msg.id } });
+    }
+    if (p.id === 'notes') return send({ id: msg.id, result: { value: JSON.stringify(notes) } });
+    if (p.id === 'refresh-only') {
+      send({ method: 'refresh', params: { views: ['thing'], projectTabs: true } });
+      send({ method: 'refresh', params: { views: 3 } });
+      send({ method: 'refresh', params: {} });
+      return send({ id: msg.id, result: {} });
+    }
     if (p.id === 'boom') return send({ id: msg.id, error: { code: 1, message: 'It broke.' } });
     if (p.id === 'crash') { process.stderr.write('fatal: gone\n'); process.exit(3); }
     if (p.id === 'slow') return setTimeout(() => send({ id: msg.id, result: { value: 'secret-value' } }), 300);
@@ -542,7 +702,8 @@ afterEach(() => {
 });
 
 /** The test host (Linux) runs WSL-side addons in its local environment. */
-const LOCAL_ENVS = () => ({ environments: [ENV({ id: 'local', kind: 'local' })], defaultEnvironmentId: 'local' });
+// A plain shell: an interactive login one reads the machine's ~/.bashrc, seconds of each addon's start.
+const LOCAL_ENVS = () => ({ environments: [ENV({ id: 'local', kind: 'local', shell: 'bash -c' })], defaultEnvironmentId: 'local' });
 
 /** Keeps what's logged, as "[level] message". */
 class MemoryLogger extends Logger {
@@ -558,16 +719,24 @@ function setup() {
   fs.writeFileSync(script, FAKE_ADDON);
   const changes: AddonInfo[][] = [];
   const refreshes: string[] = [];
-  // Stands in for settings.disabledAddons.
-  const store = { disabled: [] as string[], runs: {} as Record<string, AddonLocalRun> };
+  const onlys: unknown[] = [];
+  const requests: { addonId: string; method: string; params: unknown }[] = [];
+  /** What host.originOf gave for each looper/openWindow's `request`, as it arrived. */
+  const openOrigins: unknown[] = [];
+  const stopped: string[] = [];
+  // Stands in for settings.disabledAddons, addonRuns and removedBundledAddons.
+  const store = { disabled: [] as string[], runs: {} as Record<string, AddonLocalRun>, removed: [] as string[] };
   const log = new MemoryLogger();
-  const host = new AddonHost({
+  const deps: AddonHostDeps = {
     dir: path.join(root, 'addons'),
     host: 'linux',
     appVersion: '0.0.0',
     log,
     onChange: (list) => changes.push(list),
-    onRefresh: (id) => refreshes.push(id),
+    onRefresh: (id, only) => {
+      refreshes.push(id);
+      onlys.push(only);
+    },
     disabled: () => store.disabled,
     setDisabled: (ids) => {
       store.disabled = ids;
@@ -577,14 +746,30 @@ function setup() {
       store.runs = runs;
     },
     environments: LOCAL_ENVS,
-  });
+    request: async (addonId, method, params) => {
+      requests.push({ addonId, method, params });
+      if (method === 'looper/openWindow') {
+        openOrigins.push(host.originOf(addonId, (params as { request: number }).request));
+        await new Promise((r) => setTimeout(r, SLOW_REQUEST_MS + 100)); // a window stays open a while
+        return {};
+      }
+      if ((params as { projectId?: string }).projectId === 'boom') throw new Error('No such project.');
+      return { asked: method };
+    },
+    onStopped: (id) => stopped.push(id),
+    removedBundled: () => store.removed,
+    setRemovedBundled: (ids) => {
+      store.removed = ids;
+    },
+  };
+  const host = new AddonHost(deps);
   cleanups.push(() => {
     host.dispose();
     fs.rmSync(root, { recursive: true, force: true });
   });
   const manifest = readAddonManifest({ ...MANIFEST, run: { on: 'wsl', command: [process.execPath, script] } });
   if (!manifest.ok) throw new Error('bad test manifest');
-  return { root, host, changes, refreshes, store, log, manifest: manifest.manifest };
+  return { root, host, deps, changes, refreshes, onlys, requests, openOrigins, stopped, store, log, manifest: manifest.manifest };
 }
 
 async function until(cond: () => boolean, ms = 10_000): Promise<void> {
@@ -598,8 +783,8 @@ async function until(cond: () => boolean, ms = 10_000): Promise<void> {
 describe('AddonHost', () => {
   it('installs, starts and talks to an addon', async () => {
     const { root, host, refreshes, manifest } = setup();
-    host.install(manifest);
-    expect(fs.existsSync(path.join(root, 'addons', 'demo.looperaddon'))).toBe(true);
+    await host.install({ manifest });
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'addons', 'demo', 'addon.json'), 'utf8'))).toMatchObject({ $version: 2, id: 'demo' });
     await until(() => host.list()[0]?.status === 'running');
 
     expect((await host.pane('demo', 'things')).items[0]).toMatchObject({ id: 'a', view: 'thing' });
@@ -610,13 +795,13 @@ describe('AddonHost', () => {
     expect(r).toEqual({ value: 'reveal:pw', actions: [{ type: 'refresh' }] });
     expect(refreshes).toEqual(['demo']);
     const init = await host.event('demo', { source: { pane: 'things' }, kind: 'click', id: 'init' });
-    expect(JSON.parse(String(init.value))).toEqual({ protocol: 1, looper: '0.0.0', host: 'linux', dataDir: root });
+    expect(JSON.parse(String(init.value))).toEqual({ protocol: 2, looper: '0.0.0', host: 'linux', dataDir: root, locale: expect.any(String) });
     await expect(host.event('demo', { source: { pane: 'things' }, kind: 'click', id: 'boom' })).rejects.toThrow('It broke.');
   }, 20_000);
 
   it('logs its startup, slow and failed requests, and its stderr, never values or replies', async () => {
     const { host, log, manifest } = setup();
-    host.install(manifest);
+    await host.install({ manifest });
     await until(() => host.list()[0]?.status === 'running');
     expect(log.lines).toContainEqual(expect.stringMatching(/^\[info\] addon demo: running after \d+ ms$/));
 
@@ -651,9 +836,51 @@ describe('AddonHost', () => {
     expect(log.lines.join('\n')).not.toMatch(/hunter2|secret-value/);
   }, 20_000);
 
+  it("remembers what sent an event until the addon has answered it, and doesn't log a window open for a while as slow", async () => {
+    const { host, log, openOrigins, manifest } = setup();
+    await host.install({ manifest });
+    await until(() => host.list()[0]?.status === 'running');
+    const window = { name: 'the window that sent it' };
+    const ev = { source: { pane: 'things' }, kind: 'click' as const, id: 'open-self' };
+    const r = await host.event('demo', ev, window);
+    // The addon asked for a window while the event was pending: its `request` led back to the sender.
+    expect(openOrigins).toEqual([window]);
+    expect(JSON.parse(String(r.value))).toEqual({ result: {} });
+    // Answered: nothing is remembered. An event without an origin, or an id nothing is answering, has none.
+    expect(host.originOf('demo', 2)).toBeUndefined();
+    for (let id = 1; id < 12; id++) expect(host.originOf('demo', id)).toBeUndefined();
+    expect(host.originOf('nobody', 1)).toBeUndefined();
+    await host.event('demo', ev);
+    expect(openOrigins[1]).toBeUndefined();
+    expect(log.lines.some((l) => l.includes('looper/openWindow'))).toBe(false);
+  }, 20_000);
+
+  it('forgets the origin of an event that fails, and tells when its process stops, restarts or crashes', async () => {
+    const { host, stopped, manifest } = setup();
+    await host.install({ manifest });
+    await until(() => host.list()[0]?.status === 'running');
+    const sender = {};
+    const slow = host.event('demo', { source: { pane: 'things' }, kind: 'click', id: 'slow' }, sender);
+    const originOf = () => [1, 2, 3, 4, 5, 6].map((id) => host.originOf('demo', id)).find((o) => o === sender);
+    expect(originOf()).toBe(sender);
+    host.restart('demo');
+    await expect(slow).rejects.toThrow('Demo stopped.');
+    expect(originOf()).toBeUndefined();
+    expect(stopped).toEqual(['demo']);
+    await until(() => host.list()[0]?.status === 'running');
+    await expect(host.event('demo', { source: { pane: 'things' }, kind: 'click', id: 'crash' }, sender)).rejects.toThrow('Demo stopped.');
+    await until(() => host.list()[0]?.status === 'stopped');
+    expect(originOf()).toBeUndefined();
+    expect(stopped).toEqual(['demo', 'demo']);
+    host.setEnabled('demo', true);
+    await until(() => host.list()[0]?.status === 'running');
+    host.setEnabled('demo', false);
+    expect(stopped).toEqual(['demo', 'demo', 'demo']);
+  }, 20_000);
+
   it("runs the addon the way the user changed it, keeps that over a reinstall, and forgets it on remove", async () => {
     const { host, store, manifest } = setup();
-    host.install(manifest);
+    await host.install({ manifest });
     await until(() => host.list()[0]?.status === 'running');
     expect(host.list()[0]).toMatchObject({ localRun: undefined, environmentId: 'local', ownRun: manifest.run });
 
@@ -664,7 +891,7 @@ describe('AddonHost', () => {
     expect((await host.pane('demo', 'things')).items[0].id).toBe('mine');
     expect(host.list()[0]).toMatchObject({ localRun: changed, environmentId: 'local', ownRun: manifest.run });
 
-    host.install(manifest);
+    await host.install({ manifest });
     await until(() => host.list()[0]?.status === 'running');
     expect((await host.pane('demo', 'things')).items[0].id).toBe('mine');
 
@@ -673,17 +900,17 @@ describe('AddonHost', () => {
     expect((await host.pane('demo', 'things')).items[0].id).toBe('a');
 
     host.setRun('demo', changed);
-    host.remove('demo');
+    await host.remove('demo');
     expect(store.runs).toEqual({});
   }, 20_000);
 
   it('reports why an addon stopped and restarts it', async () => {
     const { host, manifest } = setup();
-    host.install(manifest);
+    await host.install({ manifest });
     await until(() => host.list()[0]?.status === 'running');
     await expect(host.event('demo', { source: { pane: 'things' }, kind: 'click', id: 'crash' })).rejects.toThrow('Demo stopped.');
     await until(() => host.list()[0]?.status === 'stopped');
-    expect(host.list()[0].error).toBe('It exited with code 3.\nfatal: gone');
+    expect(host.list()[0].error).toBe('It stopped unexpectedly.\nError code: 3\nfatal: gone');
     await expect(host.pane('demo', 'things')).rejects.toThrow("Demo isn't running.");
 
     host.restart('demo');
@@ -693,33 +920,21 @@ describe('AddonHost', () => {
 
   it('loads installed addons on start and removes them', async () => {
     const first = setup();
-    first.host.install(first.manifest);
+    await first.host.install({ manifest: first.manifest });
     first.host.dispose();
-    const again = new AddonHost({
-      dir: path.join(first.root, 'addons'),
-      host: 'linux',
-      appVersion: '0.0.0',
-      log: new Logger(),
-      onChange: () => undefined,
-      onRefresh: () => undefined,
-      disabled: () => [],
-      setDisabled: () => undefined,
-      runs: () => ({}),
-      setRuns: () => undefined,
-      environments: LOCAL_ENVS,
-    });
+    const again = new AddonHost({ ...first.deps, log: new Logger(), onChange: () => undefined, onRefresh: () => undefined, disabled: () => [], runs: () => ({}) });
     cleanups.push(() => again.dispose());
-    again.start();
+    await again.start();
     expect(again.list().map((a) => a.id)).toEqual(['demo']);
     await until(() => again.list()[0]?.status === 'running');
-    again.remove('demo');
+    await again.remove('demo');
     expect(again.list()).toEqual([]);
-    expect(fs.existsSync(path.join(first.root, 'addons', 'demo.looperaddon'))).toBe(false);
+    expect(fs.existsSync(path.join(first.root, 'addons', 'demo'))).toBe(false);
   }, 20_000);
 
   it('stops an addon for good and starts it again', async () => {
-    const { root, host, store, manifest } = setup();
-    host.install(manifest);
+    const { host, deps, store, manifest } = setup();
+    await host.install({ manifest });
     await until(() => host.list()[0]?.status === 'running');
 
     host.setEnabled('demo', false);
@@ -730,25 +945,9 @@ describe('AddonHost', () => {
     expect(host.list()[0].status).toBe('stopped');
 
     // The next time Looper starts, it stays stopped.
-    const again = new AddonHost({
-      dir: path.join(root, 'addons'),
-      host: 'linux',
-      appVersion: '0.0.0',
-      log: new Logger(),
-      onChange: () => undefined,
-      onRefresh: () => undefined,
-      disabled: () => store.disabled,
-      setDisabled: (ids) => {
-        store.disabled = ids;
-      },
-      runs: () => store.runs,
-      setRuns: (runs) => {
-        store.runs = runs;
-      },
-      environments: LOCAL_ENVS,
-    });
+    const again = new AddonHost({ ...deps, log: new Logger(), onChange: () => undefined, onRefresh: () => undefined });
     cleanups.push(() => again.dispose());
-    again.start();
+    await again.start();
     expect(again.list()[0]).toMatchObject({ enabled: false, status: 'stopped' });
 
     again.setEnabled('demo', true);
@@ -756,4 +955,116 @@ describe('AddonHost', () => {
     await until(() => again.list()[0]?.status === 'running');
     expect(again.list()[0].enabled).toBe(true);
   }, 20_000);
+});
+
+describe('AddonHost, format 2', () => {
+  const looperManifest = (over: object = {}) => ({ ...MANIFEST, run: { on: 'looper', command: ['${addonDir}/addon.js'] }, ...over });
+
+  it("unpacks a package into the addon's folder, runs a looper addon from it, and swaps in a new version", async () => {
+    const { root, host, deps } = setup();
+    const pkg = await readAddonPackage(zipOf({ 'addon.json': JSON.stringify(looperManifest()), 'addon.js': FAKE_ADDON, 'old.txt': 'v1' }));
+    if (!pkg.ok) throw new Error('bad package');
+    await host.install(pkg);
+    const folder = path.join(root, 'addons', 'demo');
+    // The stored manifest keeps ${addonDir} as written.
+    expect(JSON.parse(fs.readFileSync(path.join(folder, 'addon.json'), 'utf8')).run.command).toEqual(['${addonDir}/addon.js']);
+    await until(() => host.list()[0]?.status === 'running');
+    expect(host.list()[0].run).toBe(`${folder}/addon.js\nwith Looper’s Node`);
+    const r = await host.event('demo', { source: { pane: 'things' }, kind: 'click', id: 'cwd' });
+    expect(JSON.parse(String(r.value))).toEqual({ cwd: folder, runAsNode: '1' });
+    // ELECTRON_RUN_AS_NODE reaches only the addon.
+    expect(process.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+
+    const next = await readAddonPackage(zipOf({ 'addon.json': JSON.stringify(looperManifest({ version: '0.2.0' })), 'addon.js': FAKE_ADDON }));
+    if (!next.ok) throw new Error('bad package');
+    await host.install(next);
+    expect(fs.existsSync(path.join(folder, 'old.txt'))).toBe(false);
+    // The old version's folder, set aside, goes after.
+    await until(() => fs.readdirSync(path.join(root, 'addons')).join() === 'demo');
+    await until(() => host.list()[0]?.status === 'running' && host.list()[0].version === '0.2.0');
+
+    const again = new AddonHost({ ...deps, log: new Logger() });
+    cleanups.push(() => again.dispose());
+    host.dispose();
+    await again.start();
+    expect(again.list().map((a) => [a.id, a.version])).toEqual([['demo', '0.2.0']]);
+    await again.remove('demo');
+    expect(fs.existsSync(folder)).toBe(false);
+  }, 20_000);
+
+  it("answers the addon's requests: checked params, the handler's result or error, and unknown methods", async () => {
+    const { host, manifest, requests } = setup();
+    await host.install({ manifest });
+    await until(() => host.list()[0]?.status === 'running');
+    const ask = async (method: string, params?: unknown) =>
+      JSON.parse(String((await host.event('demo', { source: { pane: 'things' }, kind: 'click', id: 'ask', values: { method, ...(params ? { params: JSON.stringify(params) } : {}) } })).value));
+    expect(await ask('looper/projects')).toEqual({ result: { asked: 'looper/projects' } });
+    expect(await ask('looper/exec', { projectId: 'p1', argv: ['git', 'status'] })).toEqual({ result: { asked: 'looper/exec' } });
+    expect(requests.map((r) => [r.addonId, r.method, r.params])).toEqual([
+      ['demo', 'looper/projects', {}],
+      ['demo', 'looper/exec', { projectId: 'p1', argv: ['git', 'status'] }],
+    ]);
+    expect(await ask('looper/exec', { projectId: 'boom', argv: ['git'] })).toEqual({ error: { code: 1, message: 'No such project.' } });
+    const invalid = await ask('looper/exec', { argv: [] });
+    expect(invalid.error.code).toBe(-32602);
+    expect(invalid.error.message).toMatch(/^Invalid params for looper\/exec:\n/);
+    expect(await ask('looper/nothing')).toEqual({ error: { code: -32601, message: 'Looper has no method "looper/nothing"' } });
+    expect(requests).toHaveLength(3);
+  }, 20_000);
+
+  it('tells running addons, asks for project tabs, and reads what a refresh names', async () => {
+    const { host, manifest, refreshes, onlys, log } = setup();
+    await host.install({ manifest });
+    await until(() => host.list()[0]?.status === 'running');
+    host.notify({ method: 'projectsChanged', params: {} });
+    host.notify({ method: 'activity', params: { projectId: 'p1', working: true } });
+    const notes = JSON.parse(String((await host.event('demo', { source: { pane: 'things' }, kind: 'click', id: 'notes' })).value));
+    expect(notes).toEqual([
+      { method: 'projectsChanged', params: {} },
+      { method: 'activity', params: { projectId: 'p1', working: true } },
+    ]);
+
+    expect(await host.projectTab('demo', 'git', 'p1')).toEqual({ title: 'Tab git p1' });
+    await expect(host.projectTab('demo', 'git', 'bad')).rejects.toThrow(/a project tab Looper can't show/);
+
+    await host.event('demo', { source: { pane: 'things' }, kind: 'click', id: 'refresh-only' });
+    await until(() => refreshes.length >= 3);
+    expect(onlys).toEqual([{ views: ['thing'], projectTabs: true }, undefined, {}]);
+    expect(log.lines.some((l) => l.startsWith("[warn] addon demo: refresh with params Looper can't read"))).toBe(true);
+  }, 20_000);
+
+  it('installs the packages Looper comes with, updates them, and keeps one the user removed away until installed by hand', async () => {
+    const { root, deps, store } = setup();
+    const bundled = path.join(root, 'bundled');
+    fs.mkdirSync(bundled);
+    const writeBundled = (version: string) =>
+      fs.writeFileSync(path.join(bundled, 'demo.looperaddon'), zipOf({ 'addon.json': JSON.stringify(looperManifest({ version })), 'addon.js': FAKE_ADDON }));
+    writeBundled('0.1.0');
+    let host = new AddonHost({ ...deps, bundledDir: bundled });
+    cleanups.push(() => host.dispose());
+    await host.start();
+    await host.installBundled();
+    expect(host.list().map((a) => [a.id, a.version])).toEqual([['demo', '0.1.0']]);
+    // Stopped by the user, it stays stopped through an update.
+    host.setEnabled('demo', false);
+
+    writeBundled('0.2.0');
+    host.dispose();
+    host = new AddonHost({ ...deps, bundledDir: bundled });
+    cleanups.push(() => host.dispose());
+    await host.start();
+    await host.installBundled();
+    expect(host.list()[0]).toMatchObject({ version: '0.2.0', enabled: false });
+
+    await host.remove('demo', true);
+    expect(store.removed).toEqual(['demo']);
+    await host.installBundled();
+    expect(host.list()).toEqual([]);
+
+    const pkg = await readAddonPackage(fs.readFileSync(path.join(bundled, 'demo.looperaddon')));
+    if (!pkg.ok) throw new Error('bad package');
+    await host.install(pkg);
+    expect(store.removed).toEqual([]);
+    expect(host.list()[0]).toMatchObject({ version: '0.2.0', enabled: true });
+  }, 30_000);
 });

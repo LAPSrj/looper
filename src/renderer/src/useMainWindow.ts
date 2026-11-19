@@ -57,7 +57,8 @@ export function useMainWindow(menuTab?: string) {
   // What each addon's Search box holds, by addon: one box filters all of an addon's searchable panes.
   const [addonQueries, setAddonQueries] = useState<Record<string, string>>({});
   const setAddonQuery = useCallback((addonId: string, query: string) => setAddonQueries((all) => ({ ...all, [addonId]: query })), []);
-  const runningAddons = addons.filter((a) => a.status === 'running').length;
+  // An addon the user left on that isn't running: the one addon status worth a place in the status bar.
+  const stoppedAddons = addons.filter((a) => a.enabled && a.status === 'stopped').map((a) => a.name);
 
   const allAttention = useMemo(() => attentionRows(tasks, runtimes), [tasks, runtimes]);
   const attentionCleared = info?.settings.view.attentionCleared;
@@ -327,7 +328,7 @@ export function useMainWindow(menuTab?: string) {
     addonPanes,
     addonQueries,
     setAddonQuery,
-    runningAddons,
+    stoppedAddons,
     reloadAddon,
     // What is selected and shown.
     selected,

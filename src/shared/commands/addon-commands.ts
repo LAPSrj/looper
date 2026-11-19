@@ -23,6 +23,7 @@ const VIEW_OF: Record<Exclude<AddonPlace, 'new'>, CommandView> = {
   app: 'app',
   dashboard: 'dashboard',
   projects: 'projects',
+  project: 'project',
   tasks: 'tasks',
   chats: 'chats',
   panes: 'addonPanes',
@@ -31,7 +32,21 @@ const VIEW_OF: Record<Exclude<AddonPlace, 'new'>, CommandView> = {
 };
 
 /** The places in Looper's own windows: a command placed there always has something to act on. */
-const LOOPER_PLACES: readonly AddonPlace[] = ['new', 'app', 'dashboard', 'projects', 'tasks', 'chats'];
+const LOOPER_PLACES: readonly AddonPlace[] = ['new', 'app', 'dashboard', 'projects', 'project', 'tasks', 'chats'];
+
+/**
+ * The project the Projects tab acts on: the one selected there, a project row right-clicked, or the
+ * project a phone's screen shows (all with `projectSelected`); unset while none is.
+ */
+const projectOf = (c: CommandContext): string | undefined => (inProjects(c) && c.projectSelected && c.project ? c.project.id : undefined);
+
+/**
+ * Where the `project` place shows: the Projects tab (a project's own window too), a project row's
+ * menu, and a phone's project screen. Not the project of the task a Tasks or Dashboard tab shows.
+ */
+function inProjects(c: CommandContext): boolean {
+  return c.tab === undefined ? !!c.projectSelected : c.tab === 'projects';
+}
 
 export const addonCommandId = (addonId: string, commandId: string): string => `addon:${addonId}:${commandId}`;
 
@@ -44,13 +59,24 @@ function stateOf(c: CommandContext, addonId: string, id: string): AddonCommandSt
 
 const screenMatches = (cmd: AddonCommand, view: string): boolean => !cmd.in.screen?.views || cmd.in.screen.views.includes(view);
 
-/** What it acts on here: the item picked, the screen showing, the pane, or Looper's window; null when it's placed nowhere that shows. */
-function targetOf(c: CommandContext, addonId: string, cmd: AddonCommand): { item?: { pane: string; id: string }; screen?: true; source?: AddonEventSource } | null {
+/**
+ * What it acts on here: the item picked, the screen showing, the pane, or Looper's window (with the
+ * project selected in the Projects tab, which a command placed only in `project` needs); null when it's
+ * placed nowhere that shows.
+ */
+export function targetOf(
+  c: CommandContext,
+  addonId: string,
+  cmd: AddonCommand,
+): { item?: { pane: string; id: string }; screen?: true; source?: AddonEventSource; project?: string } | null {
   const own = c.addon?.id === addonId ? c.addon : undefined;
   if (cmd.in.item && own?.item) return { item: own.item };
   if (cmd.in.screen && own?.screen && screenMatches(cmd, own.screen.view)) return { screen: true };
   if (cmd.in.panes && own?.panes) return { source: { pane: own.panes.pane } };
-  if (LOOPER_PLACES.some((p) => cmd.in[p])) return { source: { app: true } };
+  const project = projectOf(c);
+  const withProject = project ? { project } : {};
+  if (LOOPER_PLACES.some((p) => p !== 'project' && cmd.in[p])) return { source: { app: true }, ...withProject };
+  if (cmd.in.project && project) return { source: { app: true }, project };
   return null;
 }
 
@@ -76,7 +102,11 @@ function run(c: CommandContext, a: AddonInfo, cmd: AddonCommand, action: AddonCo
     return;
   }
   const source = target.item ? { pane: target.item.pane } : target.source!;
-  void c.looper.addons.event(a.id, { source, kind: 'command', id: action.id, ...(target.item ? { item: target.item.id } : {}) }, action.confirm);
+  void c.looper.addons.event(
+    a.id,
+    { source, kind: 'command', id: action.id, ...(target.item ? { item: target.item.id } : {}), ...(target.project ? { project: target.project } : {}) },
+    action.confirm,
+  );
 }
 
 const where = (menu: Where['menu'], p: AddonPlacement): Where =>
@@ -129,6 +159,7 @@ function toCommand(a: AddonInfo, cmd: AddonCommand, keyOf: KeyOf): Command {
     { view: 'addonPanes', if: (c) => !own(c)?.panes, why: 'Only its own panes tab has it.' },
     { view: 'addonItem', if: (c) => own(c)?.item === undefined, why: 'Only its own pane items have it.' },
     { view: 'addonScreen', if: (c) => !own(c)?.screen || (!!views && !views.includes(own(c)!.screen!.view)), why: 'Only the addon’s screens it names have it.' },
+    { view: 'project', if: (c) => !inProjects(c), why: 'Only the Projects tab and a project’s own row or screen have it.' },
   ];
   const elsewhere = cmd.platforms ? UI_PLATFORMS.filter((p) => !cmd.platforms!.includes(p)) : [];
   if (elsewhere.length) hide.push({ on: elsewhere, why: 'Its addon offers it only on some devices.' });
@@ -201,7 +232,7 @@ export function hasToolbarIn(a: AddonInfo, tab: string | undefined): boolean {
       if (!p?.toolbar) return false;
       if (tab === undefined) return true;
       if (tab.startsWith(addonTabId(a.id, ''))) return place === 'new' || place === 'panes' || place === 'item' || place === 'screen';
-      return place === tab;
+      return place === tab || (tab === 'projects' && place === 'project');
     }),
   );
 }

@@ -162,10 +162,21 @@ export function MainInstruction({ children }: { children: ReactNode }) {
 }
 
 /** A label and its control, tied together so the control is named by the label (and a click on the label focuses it). */
-export function Field({ label, help, children }: { label: string; help?: ReactNode; children: ReactNode }) {
+/** A problem with what's in a field, under it: Windows' in-place error, normal text after a 16x16 error icon. */
+export function FieldError({ id, children }: { id?: string; children: ReactNode }) {
+  return (
+    <p className="field-error" id={id} role="alert">
+      <StatusGlyph level="error" />
+      <span>{children}</span>
+    </p>
+  );
+}
+
+export function Field({ label, help, error, children }: { label: string; help?: ReactNode; /** A problem with what's in it: under it, and its control marked invalid. */ error?: string; children: ReactNode }) {
   const id = useId();
   const labelId = `${id}-label`;
-  const bound = bindField(children, id);
+  const errorId = `${id}-error`;
+  const bound = bindField(children, id, error ? { 'aria-invalid': true, 'aria-describedby': errorId } : undefined);
   const labelEl = (
     <label id={labelId} className="field-label" htmlFor={bound.controlId}>
       {label}
@@ -189,6 +200,7 @@ export function Field({ label, help, children }: { label: string; help?: ReactNo
           {bound.children}
         </>
       )}
+      {error && <FieldError id={errorId}>{error}</FieldError>}
       {help && <p className="help">{help}</p>}
     </div>
   );

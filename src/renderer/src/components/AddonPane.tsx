@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { addonPaneKey, matchesSearch, type AddonInfo, type AddonPaneContent, type AddonPaneItem } from '@shared/addons';
+import { addonPaneKey, matchesSearch, type AddonInfo, type AddonPaneContent, type AddonPaneItem, type AddonRefresh } from '@shared/addons';
 import { contextMenu } from '@shared/commands/build';
 import type { CommandContext } from '@shared/commands/context';
 import { useAddonList } from '../live-state';
 import { platform } from '../platform';
 import { isPhone } from '../web/page-nav';
+import { refreshes } from './addon-screen-model';
 import { popupCommands } from './command-surfaces';
 import { GROUP_INDENT, GroupHeader } from './GroupHeader';
 import { ItemText, useGroupedTree, type TreeRow } from './GroupedTree';
 import { Icon } from './Icon';
 import { ICONS } from './icons';
 import { Row } from './phone/PhoneList';
-import { InfoBar } from './ui';
+import { EmptyState } from './EmptyState';
 
 export type AddonPaneState = { status: 'ready'; content: AddonPaneContent } | { status: 'error'; error: string };
 
@@ -28,9 +29,11 @@ export function useAddons(): { addons: AddonInfo[]; panes: Record<string, AddonP
   const [panes, setPanes] = useState<Record<string, AddonPaneState>>({});
   const current = useRef<AddonInfo[]>([]);
 
-  const load = useCallback((a: AddonInfo) => {
+  /** The addon's panes, or with `only` (a refresh's) the ones it names. */
+  const load = useCallback((a: AddonInfo, only?: AddonRefresh) => {
     if (a.status !== 'running') return;
     for (const p of a.panes) {
+      if (!refreshes(only, { pane: p.id })) continue;
       const key = addonPaneKey(a.id, p.id);
       void window.looper.addons
         .pane(a.id, p.id)
@@ -53,7 +56,7 @@ export function useAddons(): { addons: AddonInfo[]; panes: Record<string, AddonP
       window.looper.addons.onEvent((e) => {
         if (e.type !== 'refresh') return;
         const a = current.current.find((x) => x.id === e.addonId);
-        if (a) load(a);
+        if (a) load(a, e.only);
       }),
     [load],
   );
@@ -181,35 +184,33 @@ export function AddonPaneList({
 
   if (addon.status === 'stopped') {
     return (
-      <div className="addon-pane-note">
-        <InfoBar
-          stacked
-          title={`${addon.name} stopped`}
-          message={addon.error ?? ''}
-          action={
-            <button className="btn" onClick={() => void window.looper.addons.restart(addon.id)}>
-              Restart
-            </button>
-          }
-        />
-      </div>
+      <EmptyState
+        level="error"
+        title={`${addon.name} stopped`}
+        action={
+          <button className="btn" onClick={() => void window.looper.addons.restart(addon.id)}>
+            Restart
+          </button>
+        }
+      >
+        {addon.error}
+      </EmptyState>
     );
   }
   if (addon.status === 'starting' || !state) return <div className="addon-pane-note muted">Starting…</div>;
   if (state.status === 'error') {
     return (
-      <div className="addon-pane-note">
-        <InfoBar
-          stacked
-          title={`${addon.name} couldn't list its items`}
-          message={state.error}
-          action={
-            <button className="btn" onClick={onRetry}>
-              Try Again
-            </button>
-          }
-        />
-      </div>
+      <EmptyState
+        level="error"
+        title={`${addon.name} can't list its items`}
+        action={
+          <button className="btn" onClick={onRetry}>
+            Try Again
+          </button>
+        }
+      >
+        {state.error}
+      </EmptyState>
     );
   }
   if (!total) return <div className="addon-pane-note muted">{state.content.empty ?? 'Nothing here.'}</div>;
@@ -239,7 +240,7 @@ export function AddonPaneList({
             <Row
               key={r.key}
               title={r.item.label}
-              sub={r.item.description || undefined}
+              sub={r.item.mono && r.item.description ? <span className="mono">{r.item.description}</span> : r.item.description || undefined}
               tone={r.item.dimmed ? 'muted' : undefined}
               chevron
               selected={r.key === selected}
@@ -266,7 +267,7 @@ export function AddonPaneList({
             className={`task-item${r.key === selected ? ' selected' : ''}${r.item.dimmed ? ' disabled' : ''}`}
             style={r.depth ? { marginLeft: GROUP_INDENT } : undefined}
           >
-            <ItemText name={r.item.label} sub={compact ? undefined : r.item.description} />
+            <ItemText name={r.item.label} sub={compact ? undefined : r.item.description} subClass={r.item.mono ? 'mono' : undefined} />
           </li>
         ),
       )}

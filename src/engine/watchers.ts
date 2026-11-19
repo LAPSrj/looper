@@ -107,9 +107,10 @@ function timingOf(task: Task): Timing {
   };
 }
 
-function lastLine(text: string): string {
+/** Node and Bun end a crash with their version, so the error's own line says more than the last one. */
+function crashLine(text: string): string {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-  return lines.length ? lines[lines.length - 1] : '';
+  return lines.findLast((l) => /^[\w.]*error\b( \[[^\]]*\])?:/i.test(l)) ?? lines.at(-1) ?? '';
 }
 
 export class WatcherPool {
@@ -373,7 +374,7 @@ export class WatcherPool {
           looksLikeEnvironmentError(`${entry.stderrTail}\n${this.pendingLines(entry).join('\n')}\n${entry.stdoutBuf}`)));
     // Whatever is still held came from wsl.exe, not from a watcher that ran.
     if (environment) this.dropPending(entry);
-    const last = error ?? lastLine(entry.stderrTail);
+    const last = error ?? crashLine(entry.stderrTail);
     const detail = last || (code === null ? 'no exit code' : `exit code ${code}`);
     this.d.log.warn(
       `[${entry.taskId}] watcher exited (${code === null ? 'no exit code' : `code ${code}`})${last ? `: ${last}` : ''}` +

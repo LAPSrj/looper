@@ -30,6 +30,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 const dir = ${JSON.stringify(dir)};
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+// It ends with its input, so a test that stops early leaves nothing running.
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const m = JSON.parse(line);
   if (m.type !== 'control_request') return;
@@ -40,7 +41,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     return;
   }
   out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response: {} } });
-});
+}).on('close', () => process.exit(0));
 const wait = setInterval(() => {
   if (!fs.existsSync(path.join(dir, 'app-message'))) return;
   clearInterval(wait);
@@ -75,7 +76,7 @@ describe('a chat on a harness that starts conversations with Remote Control', { 
     e.updateSettings({
       environments: e.settings.environments.map((env) =>
         env.id === 'local'
-          ? { ...env, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir), options: { remoteControl } }] }
+          ? { ...env, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir), options: { remoteControl } }] }
           : env,
       ),
       remote: { ...e.settings.remote, enabled: true },

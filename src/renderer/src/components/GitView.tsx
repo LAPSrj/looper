@@ -17,7 +17,7 @@ import { RowList, type PhoneRowModel } from './DataTable';
 import { EmptyState } from './EmptyState';
 import { ListDetail, selectsFirstRow } from './ListDetail';
 import { Group } from './phone/PhoneList';
-import { DiffView } from './ToolContent';
+import { DiffPane } from './DiffPane';
 import { TabBar } from './ui';
 import { reportError } from '../report-error';
 
@@ -53,27 +53,6 @@ const filePhoneRow = ({ path, origPath, status }: FileLine): PhoneRowModel => ({
   sub: <span className="pg-oneline mono">{origPath ? `from ${origPath}` : dirName(path) || '/'}</span>,
   value: status,
 });
-
-/** A file's diff, or why there's none to show. */
-function DiffPane({ title, subtitle, diff }: { title: string; subtitle?: string; diff: GitFileDiff | null }) {
-  let body;
-  if (!diff) body = <div className="muted git-diff-note">Loading…</div>;
-  else if (diff.binary) body = <div className="muted git-diff-note">This is a binary file, so there are no lines to compare.</div>;
-  else if (diff.hunks.length === 0) body = <div className="muted git-diff-note">No changed lines.</div>;
-  else body = <DiffView hunks={diff.hunks} file={title} />;
-  return (
-    <div className="git-diff">
-      <div className="git-diff-head">
-        <span className="mono">{title}</span>
-        {subtitle && <span className="muted">{subtitle}</span>}
-      </div>
-      <div className="git-diff-body">
-        {body}
-        {diff?.truncated && <div className="muted git-diff-note">The diff is too long to show in full, so it stops here.</div>}
-      </div>
-    </div>
-  );
-}
 
 /** Uncommitted changes: the files, and the selected one's diff against HEAD. */
 function ChangesView({ projectId, status, narrow, note, onDetail }: { projectId: string; status: GitStatus; narrow: boolean; note?: ReactNode; onDetail: (pushed: boolean) => void }) {

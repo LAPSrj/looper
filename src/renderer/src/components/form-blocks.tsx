@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { Harness, Task, TaskFolder } from '@shared/types';
 import { folderTree } from '@shared/folders';
 import { lineToEnv, tokenize } from '@shared/cmdline';
-import { CheckboxField, Field, FormGroup, InputRow, NumberField, onIos, StepFields, TextArea, TextInput } from './ui';
+import { CheckboxField, Field, FieldError, FormGroup, InputRow, NumberField, onIos, StepFields, TextArea, TextInput } from './ui';
 import { Icon } from './Icon';
 import { WindowActions } from './WindowActions';
 import { isPhone } from '../web/page-nav';
@@ -35,10 +35,13 @@ export function PathField({
   code,
   placeholder,
   autoFocus,
+  error,
   children,
 }: {
   label: string;
   value: string;
+  /** A problem with the path: under it (Field's in-place error). */
+  error?: string;
   onChange?: (value: string) => void;
   onBrowse: () => void;
   disabled?: boolean;
@@ -57,6 +60,7 @@ export function PathField({
           <span className="field-label">{label}</span>
           <span className={`path-row-value${value ? '' : ' empty'}${code ? ' mono' : ''}`}>{name || placeholder || 'Not Set'}</span>
         </button>
+        {error && <FieldError>{error}</FieldError>}
         {children}
       </>
     );
@@ -75,7 +79,7 @@ export function PathField({
     />
   );
   return (
-    <Field label={label}>
+    <Field label={label} error={error}>
       {isPhone ? (
         // Android: Material's text field with a trailing icon button.
         <InputRow className="path-input">

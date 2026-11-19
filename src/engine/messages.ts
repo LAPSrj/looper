@@ -17,6 +17,7 @@ import { parseTaskNotification, type SlashCommand } from '../shared/sessions';
 import { compactRow, compactRows, proseRows, slimCall, withoutCompacted } from '../shared/compact';
 import { readCodexLastResponse, readContextTokens, readSubagentStats, type SubagentStats } from './context';
 import { readPendingGuidance } from './guidance';
+import { MOD_FILES } from './claude-mod';
 import { writeJsonAtomicAsync } from './store/fsutil';
 import type { Settings, Task } from '../shared/types';
 import type { HostKind } from './host';
@@ -24,6 +25,126 @@ import { convertWslPath } from './host';
 import { errMsg, type Logger } from './log';
 import type { WorkflowRun } from '../shared/workflows';
 import { SessionWorkflows, workflowAgentTranscript, type WorkflowLaunch } from './workflows';
+
+/** The most transcript row ids kept to tell a row whose copy from the mod comes after it (LiveRows). */
+const TRANSCRIPT_IDS_KEPT = 2000;
+
+/**
+ * The rows an interactive Claude Code session's mod hands over as they are
+ * made (MOD_FILES.live), for one reader of the conversation, which reads its
+ * transcript too: each row shows from whichever copy comes first. A file goes
+ * once the transcript has its row, and the session step removes what's left
+ * when the session ends, so a reader that hasn't read a file yet gets its row
+ * from the transcript.
+ */
+export class LiveRows {
+  /** The rows shown from the mod's copy, by id, with their files, until the transcript has them. */
+  private readonly shown = new Map<string, string>();
+  /** The transcript's newest row ids, for a copy from the mod that comes after the row showed. */
+  private readonly fromTranscript = new Set<string>();
+  /** The last file read: the names sort in the order the rows were made. */
+  private last = '';
+
+  constructor(private readonly dir: string) {}
+
+  /** Whether the transcript's record with `uuid` shows: not when the mod's copy did. */
+  transcriptRow(uuid: unknown): boolean {
+    if (typeof uuid !== 'string') return true;
+    const file = this.shown.get(uuid);
+    if (file !== undefined) {
+      this.shown.delete(uuid);
+      void fs.promises.rm(file, { force: true }).catch(() => undefined);
+      return false;
+    }
+    this.fromTranscript.add(uuid);
+    if (this.fromTranscript.size > TRANSCRIPT_IDS_KEPT) this.fromTranscript.delete(this.fromTranscript.values().next().value as string);
+    return true;
+  }
+
+  /** Hands each record the mod wrote since the last read to `add`, in order, but one the transcript showed first. Whether it added any. */
+  async read(add: (rec: Rec, line: string) => void): Promise<boolean> {
+    const names = (await fs.promises.readdir(this.dir).catch(() => [] as string[])).filter((n) => n.endsWith('.json') && n > this.last).sort();
+    let added = false;
+    for (const name of names) {
+      const file = path.join(this.dir, name);
+      const line = await fs.promises.readFile(file, 'utf8').catch(() => null);
+      let rec: unknown = null;
+      try {
+        rec = line === null ? null : JSON.parse(line);
+      } catch {
+        /* still being written */
+      }
+      // A file still being written: it and the files after it wait for the next read.
+      if (line === null || rec === null || typeof rec !== 'object' || Array.isArray(rec)) break;
+      this.last = name;
+      const uuid = (rec as Rec).uuid;
+      if (typeof uuid === 'string' && this.fromTranscript.delete(uuid)) {
+        await fs.promises.rm(file, { force: true }).catch(() => undefined);
+        continue;
+      }
+      if (typeof uuid === 'string') this.shown.set(uuid, file);
+      add(rec as Rec, line);
+      added = true;
+    }
+    return added;
+  }
+}
+
+/** The transcript bytes the live folder's sweep reads at a time; a longer line doubles it. */
+const SWEEP_CHUNK = 4 * 1024 * 1024;
+const ROW_ID = /"uuid":"([0-9a-f-]{36})"/g;
+const LIVE_FILE_ID = /-([0-9a-f-]{36})\.json$/;
+
+/**
+ * Keeps an interactive Claude Code session's live folder (LiveRows) down to the
+ * rows its transcript doesn't have yet, whether or not anyone reads the
+ * conversation: a file goes once the transcript has the row its name ends in.
+ */
+export class LiveSweep {
+  private offset = 0;
+  private chunk = SWEEP_CHUNK;
+  /** The transcript's newest row ids, for a file the mod writes after the transcript has its row. */
+  private readonly ids = new Set<string>();
+
+  constructor(
+    private readonly dir: string,
+    private readonly transcript: string,
+  ) {}
+
+  async sweep(): Promise<void> {
+    const fh = await fs.promises.open(this.transcript, 'r').catch(() => null);
+    if (!fh) return;
+    try {
+      const { size } = await fh.stat();
+      if (size < this.offset) this.offset = 0;
+      while (size > this.offset) {
+        const buf = Buffer.alloc(Math.min(size - this.offset, this.chunk));
+        const { bytesRead } = await fh.read(buf, 0, buf.length, this.offset);
+        const end = bytesRead > 0 ? buf.lastIndexOf(10, bytesRead - 1) : -1;
+        if (end < 0) {
+          // A line still being written, or one longer than a chunk.
+          if (bytesRead === this.chunk) this.chunk *= 2;
+          break;
+        }
+        this.offset += end + 1;
+        this.chunk = SWEEP_CHUNK;
+        for (const m of buf.toString('utf8', 0, end).matchAll(ROW_ID)) {
+          this.ids.add(m[1]);
+          if (this.ids.size > TRANSCRIPT_IDS_KEPT) this.ids.delete(this.ids.values().next().value as string);
+        }
+      }
+    } finally {
+      await fh.close();
+    }
+    const names = await fs.promises.readdir(this.dir).catch(() => [] as string[]);
+    await Promise.all(
+      names.map(async (name) => {
+        const id = LIVE_FILE_ID.exec(name)?.[1];
+        if (id && this.ids.has(id)) await fs.promises.rm(path.join(this.dir, name), { force: true }).catch(() => undefined);
+      }),
+    );
+  }
+}
 
 /** Oldest rows past this are dropped; a looper run rarely gets near it. */
 const MAX_ROWS = 1000;
@@ -473,6 +594,11 @@ export class TranscriptAccumulator {
     } catch {
       return; // torn or foreign line
     }
+    this.addParsed(rec);
+  }
+
+  /** A record addLine has parsed, or one the mod handed over (LiveRows). */
+  addParsed(rec: Rec): void {
     this.recordUuid = typeof rec.uuid === 'string' && rec.uuid ? rec.uuid : undefined;
     try {
       this.addRecord(rec);
@@ -508,6 +634,16 @@ export class TranscriptAccumulator {
         this.takeNotification(att.prompt);
       }
       if (att?.type === 'skill_listing' && typeof att.content === 'string') this.takeSkills(skillsListed(att.content));
+      // Code Mode hands scripts' results over beside the conversation when no Poll call waits for them (claude 2.1.328):
+      // the transcript keeps each event as the engine made it, and the mod hands over the rendering, which lists their nonces.
+      if (att?.type === 'poll_events') {
+        if (Array.isArray(att.envelopes)) for (const e of att.envelopes) if (typeof e === 'string') this.takeReplEvent(e);
+        if (Array.isArray(rec.rendered)) this.takeReplResults(rec.rendered.map((r) => (r as Rec | null)?.content).filter((c) => typeof c === 'string').join('\n'));
+      }
+      // A prompt typed while the agent worked reaches it inside the running turn: it shows where the agent read it.
+      if (att?.type === 'queued_command' && att.commandMode === 'prompt' && typeof att.prompt === 'string' && att.prompt.trim()) {
+        if (!this.pushGuidance(att.prompt, ts)) this.pushPrompt(att.prompt, ts);
+      }
       return;
     }
     if (rec.type !== 'user' && rec.type !== 'assistant') return;
@@ -755,6 +891,16 @@ export class TranscriptAccumulator {
     }
   }
 
+  /** One event the engine delivered (a poll_events record's own): nothing quoted it, so no nonce list vouches for it. */
+  private takeReplEvent(envelope: string): void {
+    const m = /^<event nonce="[^"]+" kind="repl-eval"([^>]*)>\s*<result>([\s\S]*)<\/result>\s*<\/event>$/.exec(envelope.trim());
+    const evalNo = m ? /\beval="(\d+)"/.exec(m[1])?.[1] : undefined;
+    const row = evalNo !== undefined ? this.replByEval.get(evalNo) : undefined;
+    if (!m || !row) return;
+    this.replByEval.delete(evalNo!);
+    row.result = cap(m[2].trim(), MAX_TEXT);
+  }
+
   /** The image a tool call's result carried, by the call's tool_use id. */
   toolImage(toolUseId: string): MessageImage | null {
     const row = this.byToolId.get(toolUseId);
@@ -977,14 +1123,20 @@ export class TranscriptReader {
    * transcript): the first that exists wins. `sink`: each line goes there
    * instead of into `acc` (an interactive chat folds them into its own).
    */
+  /** An interactive Claude Code session's rows from its mod, ahead of the transcript (LiveRows). */
+  private readonly live: LiveRows | null;
+
+  /** `liveDir`: the session's MOD_FILES.live folder, whose rows show before the transcript has them. */
   constructor(
     file: string | string[],
     opts: AccumulatorOpts = {},
     format: 'claude' | 'codex' = 'claude',
     private readonly sink?: (line: string) => void,
+    liveDir?: string,
   ) {
     this.candidates = Array.isArray(file) ? file : [file];
     this.acc = format === 'codex' ? new CodexAccumulator(opts) : new TranscriptAccumulator(opts);
+    this.live = liveDir && format === 'claude' && !opts.raw ? new LiveRows(liveDir) : null;
   }
 
   /** Read from the transcript's end as it is now: what it already holds is left out (none yet: all of it). */
@@ -1016,7 +1168,10 @@ export class TranscriptReader {
   private queue: Promise<unknown> = Promise.resolve();
 
   read(): Promise<boolean> {
-    const next = this.queue.then(() => this.readNew());
+    const next = this.queue.then(async () => {
+      const grew = await this.readNew();
+      return this.live ? (await this.live.read((rec) => this.acc.addParsed(rec))) || grew : grew;
+    });
     this.queue = next.catch(() => undefined);
     return next;
   }
@@ -1043,6 +1198,7 @@ export class TranscriptReader {
         data = data.subarray(nl + 1);
         if (!line) continue;
         if (this.sink) this.sink(line);
+        else if (this.live) this.addTranscriptLine(line, this.live);
         else this.acc.addLine(line);
       }
       this.remainder = Buffer.from(data);
@@ -1050,6 +1206,17 @@ export class TranscriptReader {
       await fh.close();
     }
     return true;
+  }
+
+  private addTranscriptLine(line: string, live: LiveRows): void {
+    let rec: unknown;
+    try {
+      rec = JSON.parse(line);
+    } catch {
+      return; // torn or foreign line
+    }
+    if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) return;
+    if (live.transcriptRow((rec as Rec).uuid)) this.acc.addParsed(rec as Rec);
   }
 }
 
@@ -1458,7 +1625,8 @@ export class MessagesService {
       return this.cached(`${taskId} ${runId} ${source} ${raw} ${targetPath}`, async () => {
         const hostPath = await this.toHostPath(targetPath, taskId);
         if (!hostPath || !(await exists(hostPath))) return null; // not written yet; retried on the next poll
-        return new TranscriptReader(hostPath, accOpts);
+        // The running session's rows come from its mod first, when it's an interactive one.
+        return new TranscriptReader(hostPath, accOpts, 'claude', undefined, source === 'agent' ? path.join(runDir, MOD_FILES.live) : undefined);
       });
     }
     const codexRef = readCodexRef(runDir, prefix);

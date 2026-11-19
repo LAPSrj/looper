@@ -834,6 +834,8 @@ export const SettingsSchema = z.object({
   disabledAddons: z.array(z.string()).default([]),
   /** How the user changed where and how an addon runs (Advanced → Addons… → Edit…), by id. */
   addonRuns: z.record(z.string(), AddonLocalRunSchema).default({}),
+  /** Addons Looper comes with that the user removed in Advanced → Addons…, by id: they aren't installed again until the user installs one by hand. */
+  removedBundledAddons: z.array(z.string()).default([]),
   /** Advanced → Remote Control: the conversations it keeps open for the Claude app. */
   remote: RemoteSettingsSchema,
   remoteAccess: RemoteAccessSettingsSchema,

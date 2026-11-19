@@ -43,6 +43,7 @@ const pending = [];
 let busy = false;
 let interrupted = false;
 let n = 0;
+// It ends with its input, so a test that stops early leaves nothing running.
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const m = JSON.parse(line);
   if (m.type === 'control_request') {
@@ -54,7 +55,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   pending.push(m);
   fs.appendFileSync(path.join(dir, 'received'), text(m) + '\\n');
   if (!busy) void turn();
-});
+}).on('close', () => process.exit(0));
 const replay = (m) => out({ ...m, parent_tool_use_id: null, isReplay: true });
 async function turn() {
   busy = true;
@@ -97,14 +98,20 @@ async function setUp(): Promise<{ engine: Engine; dir: string; dataDir: string; 
   engine.start();
   engine.updateSettings({
     environments: engine.settings.environments.map((e) =>
-      e.id === 'local' ? { ...e, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : e,
+      e.id === 'local' ? { ...e, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : e,
     ),
   });
   engine.saveTask(
     TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } }),
   );
   const chatId = engine.startChat('t1').id;
-  await until(() => engine.getChat(chatId)?.status === 'ready', 'the chat to start');
+  try {
+    await until(() => engine.getChat(chatId)?.status === 'ready', 'the chat to start');
+  } catch (err) {
+    // The test never gets the engine to stop.
+    await engine.stop();
+    throw err;
+  }
   return { engine, dir, dataDir, chatId };
 }
 
@@ -369,7 +376,7 @@ describe("a chat's harness", { timeout: 30_000 }, () => {
       environments: engine.settings.environments.map((e) =>
         e.id === 'local'
           ? {
-              ...e,
+              ...e, shell: 'bash -c',
               harnesses: [
                 { id: 'own', name: 'Own', kind: 'claude-code' as const, command: fakeClaude(ownDir) },
                 { id: 'other', name: 'Other', kind: 'claude-code' as const, command: fakeClaude(otherDir) },

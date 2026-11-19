@@ -79,7 +79,7 @@ describe('git output parsers', () => {
     expect(branchText({ ...base, ahead: 2, behind: 0 })).toBe('On main · 2 ahead of origin/main');
     expect(branchText({ ...base, ahead: 0, behind: 3 })).toBe('On main · 3 behind origin/main');
     expect(branchText({ ...base, ahead: 2, behind: 3 })).toBe('On main · 2 ahead of and 3 behind origin/main');
-    expect(branchText({ ...base, upstream: undefined, ahead: 0, behind: 0 })).toBe('On main · no remote');
+    expect(branchText({ ...base, upstream: undefined, ahead: 0, behind: 0 })).toBe('On main · not tracking a remote branch');
   });
 
   it('reads log records whose subject has the field separators of a plain format', () => {

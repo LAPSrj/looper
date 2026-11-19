@@ -1,6 +1,6 @@
 {
   "$type": "looper/addon",
-  "$version": 1,
+  "$version": 2,
   "id": "servers",
   "name": "Servers",
   "version": "1.0.0",

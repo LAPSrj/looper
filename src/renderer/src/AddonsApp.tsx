@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { environmentsFor, sideName, type AddonInfo, type AddonLocalRun, type AddonSide } from '@shared/addons';
+import { environmentsFor, sideName, type AddonInfo, type AddonLocalRun, type AddonRun } from '@shared/addons';
 import { envToLine, joinTokens } from '@shared/cmdline';
 import { PropertyList } from './components/PropertyList';
 import { ListActions, ListButton, SelectList } from './components/SelectList';
@@ -104,14 +104,14 @@ const toDraft = (environmentId: string | undefined, r: { command: string[]; cwd?
   env: envToLine(r.env ?? {}),
 });
 
-/** The draft as this user's run settings, or why it can't be one. */
-function fromDraft(d: RunDraft, side: AddonSide): AddonLocalRun | string {
-  if (!d.environmentId) return `Environment: add one that runs ${sideName(side)} programs in Settings → Environments.`;
+/** The draft as this user's run settings, or why it can't be one. A `looper` addon runs with Looper's own Node, in no environment. */
+function fromDraft(d: RunDraft, side: AddonRun['on']): AddonLocalRun | string {
+  if (side !== 'looper' && !d.environmentId) return `Environment: add one that runs ${sideName(side)} programs in Settings → Environments.`;
   const parsed = parseArgsEnv({ label: 'Command', text: d.command }, { label: 'Environment variables', text: d.env });
   if ('problem' in parsed) return parsed.problem;
   if (!parsed.args.length) return 'Command: enter the program to run.';
   return {
-    environmentId: d.environmentId,
+    ...(side !== 'looper' && d.environmentId ? { environmentId: d.environmentId } : {}),
     command: parsed.args,
     ...(d.cwd.trim() ? { cwd: d.cwd.trim() } : {}),
     ...(Object.keys(parsed.env).length ? { env: parsed.env } : {}),
@@ -137,9 +137,10 @@ export function AddonEditApp({ addonId }: { addonId: string }) {
 
   if (!addon || !draft || !live || host === undefined) return <EmptyWindow gone={addon === null && 'This addon is no longer installed.'} />;
 
-  const environments = environmentsFor(addon.ownRun.on, live.environments, host);
+  const side = addon.ownRun.on;
+  const environments = side === 'looper' ? [] : environmentsFor(side, live.environments, host);
   const patch = (p: Partial<RunDraft>) => setDraft((d) => (d ? { ...d, ...p } : d));
-  const run = fromDraft(draft, addon.ownRun.on);
+  const run = fromDraft(draft, side);
   const defaults = toDraft(addon.defaultEnvironmentId, addon.ownRun);
   const isDefault = JSON.stringify(draft) === JSON.stringify(defaults);
 
@@ -156,17 +157,19 @@ export function AddonEditApp({ addonId }: { addonId: string }) {
       <div className="editor-body">
         <div className="form">
           <FormGroup>
-            {/* Only the environments that run programs on the addon's side (Settings → Environments). */}
-            <Field label="Environment">
-              <SelectInput value={draft.environmentId} onChange={(e) => patch({ environmentId: e.target.value })}>
-                {environments.length === 0 && <option value="">No environment runs {sideName(addon.ownRun.on)} programs</option>}
-                {environments.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.name}
-                  </option>
-                ))}
-              </SelectInput>
-            </Field>
+            {/* Only the environments that run programs on the addon's side (Settings → Environments); a `looper` addon runs with Looper's own Node. */}
+            {side !== 'looper' && (
+              <Field label="Environment">
+                <SelectInput value={draft.environmentId} onChange={(e) => patch({ environmentId: e.target.value })}>
+                  {environments.length === 0 && <option value="">No environment runs {sideName(side)} programs</option>}
+                  {environments.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+            )}
             <Field label="Command">
               <TextInput autoFocus code value={draft.command} onChange={(e) => patch({ command: e.target.value })} />
             </Field>

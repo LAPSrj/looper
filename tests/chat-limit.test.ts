@@ -30,6 +30,7 @@ import readline from 'node:readline';
 const dir = ${JSON.stringify(dir)};
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 let turns = 0;
+// It ends with its input, so a test that stops early leaves nothing running.
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const m = JSON.parse(line);
   if (m.type === 'control_request') {
@@ -58,7 +59,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     out({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'done' }] } });
     out({ type: 'result', subtype: 'success', result: 'done' });
   }
-});
+}).on('close', () => process.exit(0));
 `,
   );
   const sh = join(dir, 'fake-claude');
@@ -76,12 +77,18 @@ async function setUp(resetsAt: number, firstError?: string): Promise<{ engine: E
   engine.start();
   engine.updateSettings({
     environments: engine.settings.environments.map((e) =>
-      e.id === 'local' ? { ...e, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir, resetsAt, firstError) }] } : e,
+      e.id === 'local' ? { ...e, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir, resetsAt, firstError) }] } : e,
     ),
   });
   engine.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } }));
   const chatId = engine.startChat('t1').id;
-  await until(() => engine.getChat(chatId)?.status === 'ready', 'the chat to start');
+  try {
+    await until(() => engine.getChat(chatId)?.status === 'ready', 'the chat to start');
+  } catch (err) {
+    // The test never gets the engine to stop.
+    await engine.stop();
+    throw err;
+  }
   return { engine, dir, dataDir, chatId };
 }
 

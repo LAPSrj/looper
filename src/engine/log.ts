@@ -91,11 +91,14 @@ export class Logger {
   /** Over maxBytes, the file becomes `<file>.1` (replacing the last one) and logging starts a new file. */
   async rotateOver(maxBytes: number): Promise<boolean> {
     if (!this.file || this.held) return false;
+    let size = 0;
     try {
-      if (fs.statSync(this.file).size <= maxBytes) return false;
+      size = fs.statSync(this.file).size;
     } catch {
-      return false;
+      /* the stream hasn't created it yet */
     }
+    // Lines still on their way to the file count too.
+    if (size + (this.stream?.writableLength ?? 0) <= maxBytes) return false;
     this.held = [];
     if (this.stream) {
       const s = this.stream;

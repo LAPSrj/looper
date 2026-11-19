@@ -997,6 +997,7 @@ export function SessionsBody({ s, single = false, phone }: { s: SessionsWindow; 
                 background={activity?.background ?? []}
                 subagents={subagents}
                 gitProject={s.gitRepo ? summary.projectId : undefined}
+                projectId={summary.projectId}
                 following={s.follow}
                 onFollow={(id) => {
                   s.setFollow(id);

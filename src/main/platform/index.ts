@@ -271,6 +271,9 @@ export async function showMessageBox(win: AppWindow | null | undefined, opts: Me
   const t = dialogTarget(win);
   if (t === undefined) {
     const { destructiveId: _red, ...electron } = opts;
+    // Electron makes the message a task dialog's main instruction only when there's a detail (message_box_win.cc);
+    // without one it's plain content text, and every Windows dialog's message should be its main instruction.
+    if (process.platform === 'win32' && !electron.detail) electron.detail = ' ';
     return win ? dialog.showMessageBox(win as BrowserWindow, electron) : dialog.showMessageBox(electron);
   }
   const spec = messageBoxSpec(opts);

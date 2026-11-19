@@ -35,7 +35,7 @@ export const WINDOWS = [
   { name: 'New Task', hash: 'editor', size: [900, 760] },
   { name: 'Edit Task', hash: 'editor/{task}', size: [900, 760] },
   { name: 'New Task in project', hash: 'editor-in/{project}', size: [900, 760] },
-  { name: 'New Template', hash: 'template-editor', size: [900, 760] },
+  { name: 'New Template', hash: 'template-editor/{template}/new', via: 'new-template', size: [900, 760] },
   { name: 'Edit Template', hash: 'template-editor/{template}', size: [900, 760] },
   { name: 'New Task from template', hash: 'editor-from-template/{template}', size: [900, 760] },
   { name: 'Import Task', hash: 'editor-import/{key}', via: 'import-task', size: [900, 760] },
@@ -92,6 +92,8 @@ export const MAIN_SCREENS = [
   { name: 'Task status', tab: 'tasks', detail: 'status' },
   { name: 'Task runs', tab: 'tasks', detail: 'runs' },
   { name: 'Project', tab: 'projects', project: true },
+  // An addon's tab inside the project (the last of its tabs), drawn from the addon's screen.
+  { name: 'Project addon tab', tab: 'projects', project: true, projectTab: 'last' },
   { name: 'Chat', tab: 'chats', chat: true },
   { name: 'Terminal', tab: 'chats', terminal: true },
   { name: 'Addon tab', tab: 'addon', addon: true },

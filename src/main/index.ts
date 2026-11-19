@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, shell, Tray } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
-import { createEngine, type Engine } from '../engine/engine';
+import { createEngine, type CommandPlace, type Engine } from '../engine/engine';
 import { describeHolder, EngineLock, liveHolder, TAKEOVER_WAIT_MS, type LockHolder } from '../engine/lock';
 import { readWakeTimerPolicy } from '../engine/power-win';
 import type { PowerAdapter } from '../engine/rest';
@@ -20,8 +20,9 @@ import { messagesToMarkdown } from '../shared/messages-md';
 import type { MessageRow } from '../shared/messages';
 import { adjustImportedTaskPaths } from './import-paths';
 import { AddonHost } from './addon-host';
+import { addonRequestHandler, ProjectActivity } from './addon-requests';
 import { openAgentSettingsWindow, registerAgentSettingsIpc } from './agent-settings';
-import { installAddonFile, registerAddonIpc, sendAddonEvent, type AddonUiDeps } from './addons';
+import { closeRequestedWindows, installAddonFile, openRequestedWindow, registerAddonIpc, sendAddonEvent, type AddonUiDeps } from './addons';
 import { broadcastEvent, registerIpc } from './ipc';
 import {
   callerMainWindow,
@@ -68,6 +69,9 @@ import { mainSpan, startStallWatch } from './main-stalls';
 import { startMemoryTrim } from './memory-trim';
 import { isWebLink } from '../shared/links';
 import { NO_HISTORY_COMMANDS, RECENT_CHATS, recentChatLabel, type HistoryCommand } from '../shared/history';
+
+/** How long after the first window the addons Looper comes with are installed or updated (as the engine's deferred start work waits). */
+const BUNDLED_ADDONS_DELAY_MS = 2000;
 
 /** When this bundle had loaded, from the process's start: what's before it is Electron's own start. */
 const codeLoadedAt = performance.now();
@@ -150,13 +154,20 @@ if (!app.requestSingleInstanceLock()) {
     mark('engine');
     useWindowPlaces(path.join(dataDir, 'windows.json'));
     useMenuPopupPage({ preload: webPreferences().preload!, load: (w, hash) => loadRenderer(w, hash) });
+    // Which projects an agent is working in, for the addons' `activity` notifications.
+    const projectActivity = new ProjectActivity(engine.sessionsState().sessions);
     engine.on((event) => {
       if (event.type === 'notify') showTaskNotification(event);
       else if (event.type === 'logins') showLoginNotifications(event.logins);
-      else if (event.type === 'projects') tray?.setContextMenu(trayMenu());
-      // Task runs in the Chats window aren't pushed: their own notifications cover them.
-      else if (event.type === 'sessions')
+      else if (event.type === 'projects') {
+        tray?.setContextMenu(trayMenu());
+        addons?.notify({ method: 'projectsChanged', params: {} });
+      }
+      else if (event.type === 'sessions') {
+        // Task runs in the Chats window aren't pushed: their own notifications cover them.
         void remoteAccess?.sessionsChanged(event.state.sessions.filter((s) => s.kind !== 'run'), !!engine?.settings.notificationsEnabled);
+        for (const change of projectActivity.update(event.state.sessions)) addons?.notify({ method: 'activity', params: change });
+      }
       else if (event.type === 'settings') {
         applyRemoteAccess();
         tray?.setContextMenu(trayMenu());
@@ -286,6 +297,16 @@ if (!app.requestSingleInstanceLock()) {
     });
     applyRemoteAccess();
     mark('remote access');
+    // What an addon asks Looper for (ADDON_REQUESTS).
+    const addonRequest = addonRequestHandler({
+      host: eng.host,
+      settings: () => eng.settings,
+      projects: () => eng.listProjects(),
+      saveProject: (input) => eng.saveProject(input),
+      sessions: () => eng.sessionsState().sessions,
+      openTerminal: openCommandTerminal,
+      openWindow: (addonId, p) => openRequestedWindow(addonDeps(), addonId, p),
+    });
     addons = new AddonHost({
       dir: path.join(engine.dataDir, 'addons'),
       host: engine.host,
@@ -294,7 +315,7 @@ if (!app.requestSingleInstanceLock()) {
       onChange: (list) => {
         sendAddonEvent({ type: 'addons', addons: list });
       },
-      onRefresh: (addonId) => sendAddonEvent({ type: 'refresh', addonId }),
+      onRefresh: (addonId, only) => sendAddonEvent({ type: 'refresh', addonId, ...(only ? { only } : {}) }),
       disabled: () => engine?.settings.disabledAddons ?? [],
       setDisabled: (ids) => engine?.updateSettings({ disabledAddons: ids }),
       runs: () => engine?.settings.addonRuns ?? {},
@@ -303,10 +324,17 @@ if (!app.requestSingleInstanceLock()) {
         environments: engine?.settings.environments ?? [],
         defaultEnvironmentId: engine?.settings.defaultEnvironmentId ?? '',
       }),
+      request: (addonId, method, params) => addonRequest(method, params, addonId),
+      onStopped: closeRequestedWindows,
+      // The packages Looper comes with: out/addons, inside app.asar once packaged.
+      bundledDir: path.join(__dirname, '..', 'addons'),
+      removedBundled: () => engine?.settings.removedBundledAddons ?? [],
+      setRemovedBundled: (ids) => engine?.updateSettings({ removedBundledAddons: ids }),
     });
     registerAddonIpc(addonDeps());
     registerAgentSettingsIpc({ engine, openWindow: openChildWindow, mainWindow: mainWin });
-    addons.start();
+    // Read before the first window, so it shows the addons' tabs and panes at once.
+    await addons.start();
     mark('addons');
     // macOS keeps one global menu bar; elsewhere each window carries its own.
     if (process.platform === 'darwin') rebuildMenu();
@@ -321,6 +349,8 @@ if (!app.requestSingleInstanceLock()) {
         engine?.logPerf(`desktop | startup: ${startup.join(', ')}`);
       });
     }
+    // The addons Looper comes with: reading and unpacking them waits until the first window is up.
+    setTimeout(() => void addons?.installBundled(), BUNDLED_ADDONS_DELAY_MS);
     startMemoryTrim((ms) => engine?.logPerf(`desktop | memory handed back while no window had the focus, ${ms} ms`));
     startStallWatch((line) => engine?.logPerf(`desktop | ${line}`));
     // Launched by double-clicking a Looper document (file association).
@@ -1555,6 +1585,20 @@ async function openTerminal(taskId: string, runId?: string): Promise<void> {
   const sessionId = engine.startTerminalSession(taskId, runId);
   if (engine.isRemoteSession(sessionId)) openTerminalWindow(sessionId, `${engine.taskName(taskId) ?? taskId} – Remote Control`);
   else showChat(sessionId);
+}
+
+/**
+ * An addon's command in a terminal (`looper/openTerminal`): a Looper terminal
+ * session where showChat puts it, or the system's default terminal when the
+ * setting says so.
+ */
+async function openCommandTerminal(where: CommandPlace, command: string[], title: string): Promise<void> {
+  if (!engine) return;
+  if (engine.settings.terminal === 'system') {
+    await engine.openCommandTerminal(where, command);
+    return;
+  }
+  showChat(engine.startCommandTerminal(where, command, title));
 }
 
 /**

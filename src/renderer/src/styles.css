@@ -4657,6 +4657,130 @@ html.phone-window .workflow-text {
   font-size: var(--font-body);
 }
 
+/* ---------- an addon's screen that fills its place (a project tab, a list's detail) ---------- */
+
+.addon-fill {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* Nothing in it fills: it scrolls as the main window's screens do. */
+.addon-fill.status-pane {
+  display: block;
+  overflow-y: auto;
+}
+/* The parts around a list or a diff keep their size, padded as a status pane is. */
+.addon-fill-part {
+  flex: none;
+  max-height: 50%;
+  overflow-y: auto;
+  padding: 0 18px;
+}
+/* A page with nothing that fills (a tab of fields beside a tab with a list): the part is the page. */
+.addon-fill-part:only-child {
+  flex: 1;
+  max-height: none;
+  padding-bottom: 16px;
+}
+.addon-fill > .git-diff,
+.addon-fill > .empty-state {
+  flex: 1;
+  min-height: 0;
+}
+/* Tabs whose page fills: across the top as the Git tab's are, and the page takes the rest. */
+.addon-tabs.filled {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.addon-tabs.filled > .tabs {
+  flex: none;
+  --tabs-pad: 18px;
+  margin: 0;
+}
+.activity-body .addon-tabs.filled > .tabs {
+  --tabs-pad: 8px;
+}
+.addon-tab-body {
+  min-width: 0;
+}
+.addon-tabs.filled > .addon-tab-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* An in-place error under the field it's about (Windows: normal text after a 16x16 error icon). */
+.field-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  line-height: 20px;
+}
+.field-error > svg {
+  flex: none;
+  margin-top: 2px;
+}
+/* Under a list or a group of check boxes, which aren't in a .field's column. */
+:not(.field) > .field-error {
+  margin: 4px 0 10px;
+}
+
+/* A problem in place of the content (EmptyState with a level): normal text after its 16x16 icon, the fix under it. */
+.empty-state-problem {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--fg);
+}
+.empty-state-problem > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.empty-state-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 20px;
+  white-space: pre-line;
+}
+.empty-state-action {
+  margin: 12px 0 0 24px;
+  /* Not the muted text of "nothing to show": the button is as usable as any. */
+  color: var(--fg);
+}
+.empty-state.empty-inline {
+  flex: none;
+  margin: 14px 0;
+}
+
+/* An infobar's message keeps its own line breaks (an error code on its line). */
+.infobar-message {
+  white-space: pre-line;
+}
+
+/* A field under an addon screen's list takes only its own height, and the list the rest (as .picker-body's does). */
+.addon-screen .form.env-tab .form-group-rows > .field {
+  flex: none;
+}
+
+/* A checklist is a list box: a long one scrolls inside its box, so a dialog keeps its size and never scrolls. */
+.addon-checklist-box {
+  max-height: 216px;
+  overflow-y: auto;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg-2);
+}
+
 /* ---------- Remote Access ---------- */
 .pair-body {
   display: flex;

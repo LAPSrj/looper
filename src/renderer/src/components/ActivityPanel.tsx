@@ -16,6 +16,7 @@ import { changeRows, writtenLines, type EditorLine } from './editor-lines';
 import { gitTabLabel } from '@shared/git';
 import { GitView, useGitStatus } from './GitView';
 import { AddonScreenView } from './AddonScreen';
+import { AddonProjectTabView, useAddonProjectTabs, type AddonProjectTabId } from './AddonProjectTabs';
 import { RowList } from './DataTable';
 import { EmptyState } from './EmptyState';
 import { Markdown, MessageBody } from './Markdown';
@@ -25,7 +26,7 @@ import { Toolbar } from './Toolbar';
 import { CodeBlock, CodeText, DiffRows, ParamTable, ToolImage, ToolInputView, ToolResultView, gutterLines, useHighlight } from './ToolContent';
 import { TabBar } from './ui';
 
-export type ActivityTab = 'now' | 'background' | 'subagents' | 'files' | 'git';
+export type ActivityTab = 'now' | 'background' | 'subagents' | 'files' | 'git' | AddonProjectTabId;
 type Tab = ActivityTab;
 
 /** Tools that change a file (Delete and Patch are Codex's). */
@@ -497,6 +498,7 @@ export function ActivityPanel({
   pos,
   onPos,
   gitProject,
+  projectId,
   initialTab = 'now',
   only,
 }: {
@@ -524,13 +526,17 @@ export function ActivityPanel({
   onPos: (pos: number | null) => void;
   /** The session's project, when its folder is in a git repository: the Git tab shows it. */
   gitProject?: string;
+  /** The session's project: the started addons' project tabs show it, after Looper's own. */
+  projectId?: string;
   /** The tab it opens on (the phone's Subagents row opens it on Subagents). */
   initialTab?: Tab;
   /** The tabs it shows; unset: all of them. A past conversation (History) has nothing in the background. */
   only?: Tab[];
 }) {
   const [picked, setTab] = useState<Tab>(initialTab);
-  const tab = picked === 'git' && !gitProject ? 'now' : picked;
+  const addonTabs = useAddonProjectTabs(projectId).filter((t) => !only || only.includes(t.id));
+  const addonTab = addonTabs.find((t) => t.id === picked);
+  const tab = (picked === 'git' && !gitProject) || (picked.startsWith('addon:') && !addonTab) ? 'now' : picked;
   const git = useGitStatus(gitProject, !!working || background.some((b) => b.status === 'running') || subagents.some((a) => a.status === 'running'));
   const { addons } = useAddonList();
   const tools = rows.filter((r) => r.kind === 'tool');
@@ -664,6 +670,7 @@ export function ActivityPanel({
             ['subagents', subagents.length ? `Subagents (${subagents.length})` : 'Subagents'],
             ['files', 'Files'],
             ...(gitProject ? ([['git', gitTabLabel(git.status?.repo ? git.status.changes : undefined)]] as [Tab, string][]) : []),
+            ...addonTabs.map((t) => [t.id, t.title] as [Tab, string]),
           ] as [Tab, string][]
         ).filter(([t]) => !only || only.includes(t))}
         active={tab}
@@ -799,6 +806,7 @@ export function ActivityPanel({
           </div>
         )}
         {tab === 'git' && gitProject && <GitView projectId={gitProject} watch={git} narrow />}
+        {addonTab && projectId && tab === addonTab.id && <AddonProjectTabView shown={addonTab} projectId={projectId} narrow />}
       </div>
     </aside>
   );

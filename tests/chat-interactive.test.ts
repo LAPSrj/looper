@@ -48,7 +48,17 @@ if (args.includes('--remote-control')) {
 fs.writeFileSync(path.join(run, 'mod.json'), '{}');
 fs.writeFileSync(path.join(run, 'session.json'), JSON.stringify({ session_id: id, transcript_path: transcript }));
 let n = 0;
-const rec = (o) => fs.appendFileSync(transcript, JSON.stringify({ ...o, uuid: 'u' + ++n, timestamp: new Date().toISOString() }) + '\\n');
+// With slow-transcript, a row goes at once where the mod hands it over, and to the transcript later, as Claude Code writes it.
+const slow = fs.existsSync(path.join(dir, 'slow-transcript'));
+const rec = (o) => {
+  const line = JSON.stringify({ ...o, uuid: 'u' + ++n, timestamp: new Date().toISOString() });
+  if (!slow) return fs.appendFileSync(transcript, line + '\\n');
+  if (o.type === 'user' || o.type === 'assistant') {
+    fs.mkdirSync(path.join(run, 'live'), { recursive: true });
+    fs.writeFileSync(path.join(run, 'live', '1-' + String(n).padStart(9, '0') + '.json'), line);
+  }
+  setTimeout(() => fs.appendFileSync(transcript, line + '\\n'), 1500);
+};
 setInterval(() => {
   const inbox = path.join(run, 'message.json');
   if (!fs.existsSync(path.join(dir, 'go')) || !fs.existsSync(inbox)) return;
@@ -89,7 +99,7 @@ describe('an interactive chat on Claude Code', { timeout: 30_000 }, () => {
     e.start();
     e.updateSettings({
       environments: e.settings.environments.map((env) =>
-        env.id === 'local' ? { ...env, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : env,
+        env.id === 'local' ? { ...env,shell: 'bash -c',  harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : env,
       ),
     });
     // The task's session type, which its chats follow.
@@ -121,6 +131,8 @@ describe('an interactive chat on Claude Code', { timeout: 30_000 }, () => {
     writeFileSync(join(dir, 'go'), '');
     await until(() => !!e.getChat(chatId)?.rows.some((r) => r.kind === 'agent' && r.text === 'echo: hello there'), 'the reply');
     await until(() => e.getChat(chatId)?.status === 'ready', 'the turn to end');
+    // The chat reads the mod's usage record after the turn's end, in the same pass.
+    await until(() => !!e.getChat(chatId)?.context, "the session's usage");
 
     const chat = e.getChat(chatId)!;
     expect(chat.rows.filter((r) => r.kind === 'prompt').map((r) => r.text)).toEqual(['hello there']);
@@ -139,6 +151,37 @@ describe('an interactive chat on Claude Code', { timeout: 30_000 }, () => {
     expect(e.getChat(chatId)?.settings.mode).toBe('interactive');
   });
 
+  it('shows the rows the mod hands over before the transcript has them, and each row once', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'looper-engine-'));
+    const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
+    const e = (engine = createEngine({ dataDir, authStatus: async () => Promise.reject(new Error('not asked in tests')) }));
+    e.start();
+    e.updateSettings({
+      environments: e.settings.environments.map((env) =>
+        env.id === 'local' ? { ...env,shell: 'bash -c',  harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : env,
+      ),
+    });
+    e.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'interactive', prompt: 'x' } }));
+    writeFileSync(join(dir, 'slow-transcript'), '');
+    const chatId = e.startChat('t1').id;
+    await until(() => e.getChat(chatId)?.status === 'ready', 'the session to start');
+    e.sendChat(chatId, 'hello there', []);
+    await until(() => existsSync(join(e.runDir('t1', chatId), 'message.json')), 'the message in the inbox');
+    writeFileSync(join(dir, 'go'), '');
+    await until(() => !!e.getChat(chatId)?.rows.some((r) => r.kind === 'agent' && r.text === 'echo: hello there'), 'the reply');
+    const transcript = () => {
+      const id = JSON.parse(readFileSync(join(e.runDir('t1', chatId), 'session.json'), 'utf8')).session_id;
+      return existsSync(join(dir, id + '.jsonl')) ? readFileSync(join(dir, id + '.jsonl'), 'utf8') : '';
+    };
+    expect(transcript()).not.toContain('echo: hello there');
+    await until(() => transcript().includes('echo: hello there'), 'the transcript to have the reply');
+    // A read or two of the transcript after it caught up.
+    await new Promise((r) => setTimeout(r, 1000));
+    const rows = e.getChat(chatId)!.rows;
+    expect(rows.filter((r) => r.kind === 'prompt' || r.kind === 'agent').map((r) => r.text)).toEqual(['hello there', 'echo: hello there']);
+    expect(e.getChat(chatId)?.activeModel).toBe('claude-fake');
+  });
+
   it('goes back to its terminal when Claude Code refuses to go on with a Code Mode conversation headless, sending what it refused', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'looper-engine-'));
     const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
@@ -146,7 +189,7 @@ describe('an interactive chat on Claude Code', { timeout: 30_000 }, () => {
     e.start();
     e.updateSettings({
       environments: e.settings.environments.map((env) =>
-        env.id === 'local' ? { ...env, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : env,
+        env.id === 'local' ? { ...env,shell: 'bash -c',  harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : env,
       ),
     });
     e.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } }));
@@ -170,7 +213,7 @@ describe('an interactive chat on Claude Code', { timeout: 30_000 }, () => {
     e.updateSettings({
       environments: e.settings.environments.map((env) =>
         env.id === 'local'
-          ? { ...env, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir), options: { remoteControl: true } }] }
+          ? { ...env, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir), options: { remoteControl: true } }] }
           : env,
       ),
       remote: { ...e.settings.remote, enabled: true },

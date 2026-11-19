@@ -20,7 +20,7 @@ import {
   takeNotice,
   takePendingGuidance,
 } from '../guidance';
-import { findStepTranscript, transcriptHostPath } from '../messages';
+import { findStepTranscript, LiveSweep, transcriptHostPath } from '../messages';
 import { claudeModelWindows, modelWindows } from '../model-windows';
 import { CLAUDE_NETWORK_RE, CLAUDE_RETRY_RE, looksLikeEnvironmentError, looksLikeNetworkError } from '../network';
 import { FileSignalWatcher } from '../signals';
@@ -184,7 +184,7 @@ export interface SessionOpts {
   footer: string;
   /** Empty: the session starts at its prompt, and its messages come through `inbox` (an interactive chat's). */
   prompt: string;
-  /** Claude Code: the run-dir files the mod takes messages from, in this order, in place of the guidance ones (`guidance`). */
+  /** Claude Code: the run-dir files the mod takes the user's messages from, in this order, in place of the guidance ones (`guidance`). */
   inbox?: readonly string[];
   /** Claude Code: more settings for the session, after Looper's and before the user's --settings. */
   settings?: Record<string, unknown>;
@@ -646,6 +646,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   const claude = harness.kind === 'claude-code';
   const codex = harness.kind === 'codex';
   const f = (name: string): string => opts.prefix + name;
+  // Interactive Claude Code writes its transcript seconds late, and some rows later still: its mod hands each row over as it is made.
+  const liveDir = claude && !headless ? path.join(ctx.runDir, f(MOD_FILES.live)) : null;
   const signalCommands = [doneCommand, opts.completeCommand, opts.restartCommand].filter((c): c is string => !!c);
   // The ask and delegate commands must pass permissions and the sandbox too, but they don't end the session: a subagent may run them.
   const helperCommands = [...signalCommands, ...(opts.ask ? [opts.ask.command] : []), ...(opts.delegate ? [opts.delegate.command] : [])];
@@ -738,6 +740,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       );
       hooks.Stop = [{ hooks: [{ type: 'command', command: target.stopHookCommand(targetFile(ctx, 'bin', stopHookFile)) }] }];
     }
+    // What an earlier session handed over is in its transcript.
+    if (liveDir) await fs.promises.rm(liveDir, { recursive: true, force: true }).catch(() => undefined);
     // The mod hands guidance over, records each turn and keeps subagents from the signal helpers (engine/claude-mod.ts).
     writeClaudeMod(path.join(ctx.runDir, f(MOD_DIR)), {
       files: {
@@ -749,6 +753,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
         ...(relayPermissions ? { toolEnd: targetFile(ctx, f(MOD_FILES.toolEnd)) } : {}),
       },
       inbox: (opts.inbox ?? (opts.guidance ? [GUIDANCE_FILE, EVENTS_FILE, DELEGATE_FILE, NOTICE_FILE] : [])).map((name) => targetFile(ctx, name)),
+      userInbox: (opts.inbox ?? (opts.guidance ? [GUIDANCE_FILE] : [])).map((name) => targetFile(ctx, name)),
       signalCommands,
       guardMessage: subagentGuardMessage(signalCommands),
       ...(askBashMs ? { ask: { command: opts.ask!.command, timeoutMs: askBashMs } } : {}),
@@ -756,6 +761,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       headless,
       prompted: !!opts.prompt,
       windows: target.kind === 'windows',
+      ...(liveDir ? { live: targetFile(ctx, f(MOD_FILES.live)) } : {}),
     });
     writeJsonAtomic(
       path.join(ctx.runDir, f('settings.json')),
@@ -1151,6 +1157,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     watcher.stop();
     clearTimeout(maxTimer);
     if (contextTimer) clearInterval(contextTimer);
+    if (liveTimer) clearInterval(liveTimer);
     if (askTimer) clearInterval(askTimer);
     if (delegateTimer) clearInterval(delegateTimer);
     if (doneTimer) clearTimeout(doneTimer);
@@ -1166,6 +1173,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     // output.txt is read the moment `finished` resolves (run log, tests): let it land.
     if (cleanOut) await withTimeout(new Promise<boolean>((r) => cleanOut.end(() => r(true))), 2000);
     await host?.close();
+    // The transcript has every row now.
+    if (liveDir) await fs.promises.rm(liveDir, { recursive: true, force: true }).catch(() => undefined);
     resolveFinished({
       reason,
       exitCode,
@@ -1247,6 +1256,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
 
   /** The context watch's poll (see below); unset without a context limit. */
   let contextTimer: NodeJS.Timeout | null = null;
+  /** The live folder's sweep (see below); unset without one. */
+  let liveTimer: NodeJS.Timeout | null = null;
   /** The ask poll (see below); unset when the session cannot ask. */
   let askTimer: NodeJS.Timeout | null = null;
   /** The question waiting on an answer: its request id, its text, and when Looper took it. */
@@ -1508,16 +1519,40 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
    * the turn's end; an idle session gets it typed in), and again each time
    * the context grows another tenth of the limit.
    */
+  let distro: string | undefined;
+  try {
+    const env = resolveEnvironment(task, ctx.settings);
+    distro = env.kind === 'wsl' ? env.distro : undefined;
+  } catch {
+    /* no environment: the paths need no distro */
+  }
+
+  // The live folder keeps only the rows the transcript doesn't have yet, whether or not anyone reads the conversation.
+  if (liveDir) {
+    let sweep: LiveSweep | null = null;
+    let sweeping = false;
+    liveTimer = setInterval(() => {
+      if (sweeping || ended) return;
+      sweeping = true;
+      void (async () => {
+        if (!sweep) {
+          // An earlier session of a continued run may have left its own session.json.
+          const at = await mtimeOf('session.json');
+          if (at === null || at < started - 1000) return;
+          const transcript = await findStepTranscript(ctx.runDir, opts.prefix, (p) => transcriptHostPath(p, ctx.host, distro));
+          if (!transcript) return;
+          sweep = new LiveSweep(liveDir, transcript.file);
+        }
+        await sweep.sweep();
+      })()
+        .catch((e: Error) => ctx.log.warn(`[${task.id}] cannot clear the live folder: ${e.message}`))
+        .finally(() => (sweeping = false));
+    }, ctx.settings.signalPollMs * 2);
+  }
+
   if (opts.context && (claude || codex)) {
     const { limit, notice } = opts.context;
     const stepSize = Math.max(1, Math.round(limit / 10));
-    let distro: string | undefined;
-    try {
-      const env = resolveEnvironment(task, ctx.settings);
-      distro = env.kind === 'wsl' ? env.distro : undefined;
-    } catch {
-      /* no environment: the paths need no distro */
-    }
     let transcript: { file: string; kind: 'claude' | 'codex' } | null = null;
     let asked = 0;
     let busy = false;

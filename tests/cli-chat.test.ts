@@ -30,6 +30,7 @@ import readline from 'node:readline';
 const dir = ${JSON.stringify(dir)};
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 fs.appendFileSync(path.join(dir, 'argv'), process.argv.slice(2).join(' ') + '\\n');
+// It ends with its input, so a test that stops early leaves nothing running.
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const m = JSON.parse(line);
   if (m.type === 'control_request') {
@@ -42,7 +43,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   out({ ...m, parent_tool_use_id: null, isReplay: true });
   out({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'hello' }] } });
   out({ type: 'result', subtype: 'success', result: 'hello' });
-});
+}).on('close', () => process.exit(0));
 `,
   );
   const sh = join(dir, 'fake-claude');
@@ -112,7 +113,7 @@ describe('looper chat in the engine', { timeout: 30_000 }, () => {
     engine.start();
     engine.updateSettings({
       environments: engine.settings.environments.map((e) =>
-        e.id === 'local' ? { ...e, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : e,
+        e.id === 'local' ? { ...e, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : e,
       ),
     });
     engine.saveProject({ name: 'Work', environmentId: 'local', harnessId: 'fake', cwd: dir, mode: 'headless' });

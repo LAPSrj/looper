@@ -27,6 +27,7 @@ function fakeClaude(dir: string): string {
 import readline from 'node:readline';
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 let n = 0;
+// It ends with its input, so a test that stops early leaves nothing running.
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const m = JSON.parse(line);
   if (m.type !== 'user') return;
@@ -36,7 +37,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   out({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 't' + n, content: 'ok' }] } });
   out({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'reply ' + n }] } });
   out({ type: 'result', subtype: 'success', result: 'reply ' + n });
-});
+}).on('close', () => process.exit(0));
 `,
   );
   const sh = join(dir, 'fake-claude');
@@ -67,7 +68,7 @@ describe('a chat opened again', { timeout: 30_000 }, () => {
     const host = detectHost();
     const settings = loadSettings(dataDir, host);
     settings.environments = settings.environments.map((e) =>
-      e.id === 'local' ? { ...e, harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir), args: [], env: {} }] } : e,
+      e.id === 'local' ? { ...e, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir), args: [], env: {} }] } : e,
     );
     const task = TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } });
     manager = new ChatManager({

@@ -74,7 +74,7 @@ const shown = (n: ReactNode) => n !== undefined && n !== null && n !== '' && n !
  * Shows a row's menu as every page menu shows (commands.popup: a native menu at the pointer, a phone's action sheet)
  * and runs what's picked. Not popupEntries: its module brings the whole command list into every dialog with a list.
  */
-function showRowMenu(items: ListMenuItem[]): void {
+export function showRowMenu(items: ListMenuItem[]): void {
   const spec = items.flatMap((m, n): MenuItemSpec[] => [
     ...(m.separator ? [{ id: `-${n}`, type: 'separator' as const, enabled: true }] : []),
     { id: String(n), type: 'normal', label: m.label, enabled: m.enabled !== false, ...(m.destructive ? { destructive: true as const } : {}) },

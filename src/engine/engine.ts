@@ -25,7 +25,7 @@ import { setDetectedMountPrefix } from './target';
 import { Inbox } from './inbox';
 import { Logger, errMsg } from './log';
 import { MessagesService, readRunSessionId, transcriptHostPath } from './messages';
-import { openTaskTerminal, writeLoginLauncher, writeTerminalLauncher } from './open-terminal';
+import { openCommandTerminal, openTaskTerminal, writeCommandLauncher, writeLoginLauncher, writeTerminalLauncher } from './open-terminal';
 import { TerminalRuns } from './terminal-runs';
 import { TerminalSessions, type TerminalSessionsDeps } from './terminal-sessions';
 import { CODEX_CACHE_MS } from './context';
@@ -70,6 +70,9 @@ import {
   type VersionSource,
   type VersionSummary,
 } from '../shared/versions';
+
+/** Where a command's terminal runs: a project's environment and folder, or a folder (in the environment's own form) in an environment. */
+export type CommandPlace = { projectId: string } | { environmentId: string; cwd: string };
 
 export interface EngineOptions {
   dataDir: string;
@@ -246,6 +249,14 @@ export interface Engine {
    * one holds the run's conversation (it comes forward).
    */
   startTerminalSession(id: string, runId?: string): string;
+  /**
+   * A Looper terminal session in the project's environment and folder that
+   * runs `command` (no shell between its arguments) and ends with it: an
+   * addon's command that asks for input. Listed as `title`. Returns its id.
+   */
+  startCommandTerminal(where: CommandPlace, command: string[], title: string): string;
+  /** The same in a window of the system's own terminal, which stays open after it. */
+  openCommandTerminal(where: CommandPlace, command: string[]): Promise<void>;
   writeTerminalSession(sessionId: string, data: string): void;
   resizeTerminalSession(sessionId: string, cols: number, rows: number): void;
   /** The session's output so far and whether it ended; null once it's closed. */
@@ -581,6 +592,20 @@ export function createEngine(opts: EngineOptions): Engine {
     writeJsonAtomic(folderPlaceFile(id), { name: cwd, environmentId, cwd });
     return id;
   };
+  /** The stand-in a command's terminal runs as: the project's, or the folder's (its project's when one has that folder). */
+  const commandPlace = (where: CommandPlace): { id: string; task: Task } => {
+    let id: string;
+    if ('projectId' in where) id = projectTaskId(where.projectId);
+    else {
+      if (!settings.environments.some((e) => e.id === where.environmentId)) throw new Error(`There's no environment "${where.environmentId}".`);
+      const cwd = normalizeFolder(where.cwd);
+      const own = projects.list().find((p) => p.environmentId === where.environmentId && sameFolder(p.cwd, cwd));
+      id = own ? projectTaskId(own.id) : folderStandIn(where.environmentId, cwd);
+    }
+    const task = taskOrProject(id);
+    if (!task) throw new Error('The project no longer exists.');
+    return { id, task };
+  };
   /** Also a Remote Control helper's stand-in, from its run history. */
   const lookup = (id: string): Task | undefined => taskOrProject(id) ?? remote.standIn(id);
 
@@ -741,6 +766,8 @@ export function createEngine(opts: EngineOptions): Engine {
   });
   /** The open Log In session of each harness. */
   const loginSessions = new Map<string, string>();
+  /** The terminal sessions that run a command (startCommandTerminal), and the title each is listed as. */
+  const commandTerminals = new Map<string, string>();
   /** The sessions a terminal window's input, size and output go to. */
   const terminalsOf = (id: string): TerminalSessions => (loginTerminals.taskOf(id) !== undefined ? loginTerminals : terminals);
 
@@ -904,7 +931,11 @@ export function createEngine(opts: EngineOptions): Engine {
   let chatsWorking = false;
   const sessionHub = new SessionHub({
     chats: () => chats.list(),
-    terminals: () => terminals.list().filter((t) => !remote.owns(t.id)),
+    terminals: () =>
+      terminals
+        .list()
+        .filter((t) => !remote.owns(t.id))
+        .map((t) => (commandTerminals.has(t.id) ? { ...t, command: commandTerminals.get(t.id) } : t)),
     runs: () =>
       scheduler.list().flatMap((rt) => [
         ...(settings.view.sessions.showRuns
@@ -1122,6 +1153,7 @@ export function createEngine(opts: EngineOptions): Engine {
     const taskId = terminals.taskOf(sessionId);
     terminals.close(sessionId);
     terminalResume.delete(sessionId);
+    commandTerminals.delete(sessionId);
     if (taskId) fs.rmSync(path.join(runs.runDir(taskId, sessionId), TERMINAL_OUTPUT), { force: true });
     if (terminalRuns.openIds().has(sessionId)) terminalRuns.close(sessionId);
     // A custom harness's session records nothing: its folder only held the launcher.
@@ -1981,6 +2013,27 @@ export function createEngine(opts: EngineOptions): Engine {
       sessionHub.changed();
       saveConversations();
       return sessionId;
+    },
+    startCommandTerminal(where: CommandPlace, command: string[], title: string): string {
+      const { id, task } = commandPlace(where);
+      const runId = newRunId();
+      // Its run folder holds only the launcher, and goes when the session closes (closeTerminal).
+      const dir = runs.createRunDir(id, runId);
+      const sessionId = terminals.start(
+        id,
+        () => {
+          const { target, launcherHost } = writeCommandLauncher(task, { host, settings }, dir, command);
+          return { spec: target.spawnSpec(launcherHost), cwd: dir, launcher: launcherHost };
+        },
+        runId,
+      );
+      commandTerminals.set(sessionId, title);
+      sessionHub.changed();
+      return sessionId;
+    },
+    openCommandTerminal(where: CommandPlace, command: string[]): Promise<void> {
+      const { id, task } = commandPlace(where);
+      return openCommandTerminal(task, { host, settings, log }, runs.taskDir(id), command);
     },
     // An interactive chat's terminal shows as a terminal session's does.
     writeTerminalSession: (sessionId, data) => (chats.taskOf(sessionId) ? chats.writeTerminal(sessionId, data) : terminalsOf(sessionId).write(sessionId, data)),

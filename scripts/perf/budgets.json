@@ -219,6 +219,12 @@
     "nodes": 277,
     "mainFreezeMs": 115
   },
+  "main: Project addon tab": {
+    "worstFrameMs": 117,
+    "longestMs": 100,
+    "mainFreezeMs": 112,
+    "nodes": 550
+  },
   "main: Projects tab": {
     "worstFrameMs": 117,
     "longestMs": 100,
@@ -338,20 +344,20 @@
     "rendererMb": 102
   },
   "window: Edit Template": {
-    "readyMs": 310,
+    "readyMs": 314,
     "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 964,
-    "heapMb": 27,
-    "rendererMb": 105
+    "nodes": 148,
+    "heapMb": 26,
+    "rendererMb": 104
   },
   "window: Engine Log": {
     "readyMs": 346,
     "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 356,
-    "heapMb": 27,
-    "rendererMb": 114
+    "nodes": 385,
+    "heapMb": 25,
+    "rendererMb": 103
   },
   "window: Environment": {
     "readyMs": 290,
@@ -546,12 +552,12 @@
     "rendererMb": 103
   },
   "window: New Template": {
-    "readyMs": 348,
+    "readyMs": 362,
     "longestMs": 100,
     "blockingMs": 100,
-    "nodes": 1012,
-    "heapMb": 27,
-    "rendererMb": 105
+    "nodes": 147,
+    "heapMb": 26,
+    "rendererMb": 104
   },
   "window: Pair a device": {
     "readyMs": 366,

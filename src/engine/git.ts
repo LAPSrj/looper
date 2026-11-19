@@ -1,4 +1,5 @@
 import { resolveEnvironment } from '../shared/environments';
+import { envArgv } from './env-exec';
 import { execOffThread } from './exec-worker';
 import {
   LOG_FORMAT,
@@ -197,10 +198,7 @@ export class GitService {
   private exec(task: Task, cwd: string, args: string[]): Promise<GitRun> {
     const env = resolveEnvironment(task, this.d.settings());
     const git = ['--no-optional-locks', '-c', 'core.quotepath=false', '-c', 'color.ui=false', '-C', cwd, ...args];
-    let argv: string[];
-    if (env.kind === 'wsl' && this.d.host === 'windows') argv = ['wsl.exe', ...(env.distro ? ['-d', env.distro] : []), '--exec', 'git', ...git];
-    else if (env.kind === 'windows' && this.d.host !== 'windows') argv = ['git.exe', ...git];
-    else argv = ['git', ...git];
+    const argv = envArgv(env, this.d.host, ['git', ...git]);
     return execOffThread(argv[0], argv.slice(1), { timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true, env: { ...childEnv(), GIT_TERMINAL_PROMPT: '0' } }).then(
       ({ error: e, stdout, stderr }) => {
         if (e && e.code === 'ENOENT') throw new Error(`${argv[0]} isn't installed${argv[0] === 'wsl.exe' ? '' : ' on this machine'}.`);

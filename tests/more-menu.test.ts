@@ -276,7 +276,7 @@ describe('moreRow', () => {
 describe('an addon command’s marks', () => {
   const MANIFEST = {
     $type: 'looper/addon',
-    $version: 1,
+    $version: 2,
     id: 'demo',
     name: 'Demo',
     version: '0.1.0',
