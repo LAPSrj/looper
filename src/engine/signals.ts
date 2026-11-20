@@ -24,7 +24,8 @@ export class FileSignalWatcher {
   private lastTurnMtime = 0;
 
   constructor(
-    private readonly doneFile: string,
+    /** Unset: the session has no done command. */
+    private readonly doneFile: string | undefined,
     private readonly stopFile: string,
     private readonly intervalMs: number,
     private readonly turnFile?: string,
@@ -44,15 +45,16 @@ export class FileSignalWatcher {
     if (this.busy) return;
     this.busy = true;
     try {
-      if (!this.doneFired) {
-        const done = await fs.stat(this.doneFile).catch(() => null);
+      if (!this.doneFired && this.doneFile) {
+        const doneFile = this.doneFile;
+        const done = await fs.stat(doneFile).catch(() => null);
         // The done command writes with a plain redirect (cmd in two steps), so
         // the file is read once it looks the same on two polls in a row:
         // read mid-write, its status and headline would be lost.
         const seen = done ? `${done.mtimeMs}:${done.size}` : null;
         if (done && seen === this.doneSeen) {
           this.doneFired = true;
-          const text = await fs.readFile(this.doneFile, 'utf8').catch(() => '');
+          const text = await fs.readFile(doneFile, 'utf8').catch(() => '');
           cb.onDone(text.trim() || 'done', done.mtimeMs);
         }
         this.doneSeen = seen;

@@ -54,6 +54,25 @@ const IN_RUN_FOLDERS: Hide = { on: ON_PHONE, why: 'The Folders submenu has it.' 
 // ---------- submenus built from state ----------
 
 /**
+ * Chat → Watch Task Events: the tasks of the chat's project in the Tasks list's order. A task the chat watches for
+ * event ids has a checked item for each id, then its unchecked item, which asks for another id to watch; one it watches
+ * for all its events is checked alone. Unchecking an item stops that watch.
+ */
+const watchTaskEntries = (c: CommandContext): Entry[] => {
+  const chat = c.chats?.chat;
+  const tasks = chat?.watchTasks ?? [];
+  if (!chat || !tasks.length) return [{ id: 'none', label: 'No Tasks', enabled: false }];
+  return tasks.flatMap((t): Entry[] => {
+    const add: Entry = { id: t.id, label: menuText(t.name), checked: false, run: () => c.looper.chat.openWatch(chat.id, t.id) };
+    if (t.events.includes('')) return [{ ...add, checked: true, run: () => c.looper.chat.setWatch(chat.id, t.id, '', false) }];
+    const watched = t.events.map(
+      (e, i): Entry => ({ id: `${t.id}-event-${i}`, label: menuText(`${t.name} (${e})`), checked: true, run: () => c.looper.chat.setWatch(chat.id, t.id, e, false) }),
+    );
+    return [...watched, add];
+  });
+};
+
+/**
  * The projects as the Projects tab shows them: grouped, each group a submenu; or in their folders, each folder a
  * submenu of its own folders and projects in the list's order (a folder with no project anywhere inside is left out).
  */
@@ -465,6 +484,14 @@ export const COMMANDS: readonly Command[] = [
   },
 
   // ---------- a task ----------
+  {
+    id: 'removeFromAttention',
+    label: 'Remove from &Needs Attention',
+    group: 'attention',
+    hide: [{ if: (c) => !c.clearAttention, why: 'Only a Needs attention row has it.' }],
+    run: (c) => c.clearAttention?.(),
+    in: { task: { menu: 'task' } },
+  },
   {
     id: 'runNow',
     label: '&Run Now',
@@ -892,6 +919,14 @@ export const COMMANDS: readonly Command[] = [
     in: { conversation: { menu: 'chat' } },
   },
   {
+    id: 'watchTaskEvents',
+    label: 'Watch Task E&vents',
+    group: 'conversation',
+    hide: [{ if: (c) => !isChat(c), why: 'Only a chat’s agent watches the tasks of its project.' }],
+    entries: watchTaskEntries,
+    in: { conversation: { menu: 'chat' } },
+  },
+  {
     id: 'copySessionId',
     label: 'Copy Session &ID',
     group: 'conversation',
@@ -937,7 +972,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     id: 'openInNewWindow',
-    label: 'Open in &New Window',
+    label: 'O&pen in New Window',
     group: 'open',
     enabled: (c) => isChat(c) || isRun(c),
     hide: [{ on: ON_PHONE, why: 'Opens a window beside the others, and a phone or tablet shows one screen.' }, { if: inChatWindow, why: 'It’s already a window of its own.' }],
@@ -1170,210 +1205,6 @@ export const COMMANDS: readonly Command[] = [
     in: { projects: { menu: 'view' } },
   },
 
-  // ---------- a window's frame: last on File ----------
-  {
-    id: 'closeWindow',
-    label: 'Close &Window',
-    // With Close Conversation in a chat's window: both close what it shows.
-    group: 'close',
-    accelerator: 'Alt+F4',
-    pageKey: true,
-    hide: [{ on: ON_PHONE, why: 'Back or ✕ closes a screen.' }, { view: 'frame', if: (c) => !c.fixed && (!c.chats || c.chats.tab), why: 'The main window’s File has Exit.' }],
-    run: (c) => c.closeWindow(),
-    in: { frame: { menu: 'file' }, history: { menu: 'file' } },
-  },
-  {
-    id: 'exit',
-    label: 'E&xit',
-    group: 'quit',
-    role: 'quit',
-    hide: [{ on: ON_PHONE, why: 'Quitting from a phone would leave no way to start Looper again.' }],
-    in: { app: { menu: 'file' } },
-  },
-
-  // ---------- Tools: Looper's windows, the addons' tools, then the settings ----------
-  {
-    id: 'chatsHistory',
-    label: '&History',
-    group: 'tools',
-    toolbarGroup: 'views',
-    icon: 'history',
-    dropdown: 'Recent Conversations',
-    openDropdown: (c, x, y) => c.looper.sessions.showHistoryMenu(x, y),
-    run: (c) => c.looper.history.open(),
-    in: { chats: { menu: 'tools', toolbar: true }, app: { menu: 'tools' } },
-  },
-  {
-    id: 'recycleBin',
-    label: 'Recycle &Bin',
-    group: 'tools',
-    toolbarGroup: 'views',
-    icon: 'recycleBin',
-    run: (c) => c.host('recycle-bin'),
-    in: { app: { menu: 'tools' }, tasks: { toolbar: true } },
-  },
-  {
-    id: 'templates',
-    label: 'Temp&lates',
-    group: 'tools',
-    run: (c) => c.host('templates'),
-    in: { app: { menu: 'tools' }, tasks: { menu: 'view' } },
-    hide: [{ on: OFF_PHONE, view: 'tasks', why: 'The desktop has Templates in Tools.' }, { on: ON_PHONE, view: 'app', why: 'The Tasks tab has Templates, since templates make tasks.' }],
-  },
-  {
-    id: 'agentSettings',
-    label: 'A&gent Settings…',
-    group: 'settings',
-    run: (c) => c.host('agent-settings'),
-    in: { app: { menu: 'tools' } },
-  },
-  {
-    id: 'settings',
-    label: 'S&ettings',
-    group: 'settings',
-    icon: 'settings',
-    accelerator: (c) => (onChatsTab(c) ? undefined : 'CmdOrCtrl+,'),
-    run: (c) => c.host('settings'),
-    in: { app: { menu: 'tools' } },
-  },
-
-  // ---------- Advanced ----------
-  { id: 'remoteAccess', label: 'Remote Acc&ess', group: 'remote', entries: remoteAccessEntries, in: { app: { menu: 'advanced' } } },
-  { id: 'remoteControl', label: 'Remote &Control', group: 'remote', entries: remoteControlEntries, in: { app: { menu: 'advanced' } } },
-  { id: 'addons', label: '&Addons', group: 'remote', run: (c) => c.host('addons'), in: { app: { menu: 'advanced' } } },
-  {
-    id: 'restMode',
-    label: (c) => (c.rest?.armed ? 'Stop Res&t Mode' : 'Start Res&t Mode'),
-    group: 'power',
-    // A sleeping computer drops Remote Control's sessions, and a Prevent Sleep timer keeps it awake: Rest Mode waits until both are off.
-    enabled: (c) => !!c.rest?.armed || (!c.remoteRunning && String(c.preventSleep?.timer ?? 'off') === 'off'),
-    hide: [{ if: (c) => !c.windowsHost, why: 'Only a Windows computer has Rest Mode.' }],
-    run: (c) => c.host('rest-toggle'),
-    in: { app: { menu: 'advanced' } },
-  },
-  { id: 'preventSleep', label: 'Prevent &Sleep', group: 'power', entries: preventSleepEntries, in: { app: { menu: 'advanced' } } },
-  { id: 'updateModels', label: 'Update &Models…', group: 'maintenance', icon: 'refresh', run: (c) => c.host('update-models'), in: { app: { menu: 'advanced' } } },
-  { id: 'engineLog', label: 'Engine &Log', group: 'maintenance', run: (c) => c.host('engine-log'), in: { app: { menu: 'advanced' } } },
-  { id: 'openDataDirectory', label: 'Open &Data Directory', group: 'maintenance', run: (c) => c.host('open-data-directory'), in: { app: { menu: 'advanced' } } },
-  {
-    id: 'reloadUi',
-    label: '&Reload UI',
-    group: 'maintenance',
-    role: 'reload',
-    pageKey: (c) => !!c.chats,
-    hide: [{ on: ON_PHONE, why: 'A phone reloads Looper’s pages by itself when they lose their connection.' }],
-    in: { app: { menu: 'advanced' } },
-  },
-
-  // ---------- Window (its windows, panes and chats come with the chats' commands above) ----------
-  {
-    id: 'openWindows',
-    label: 'Open Windows',
-    group: 'open-windows',
-    provided: 'open-windows',
-    hide: [{ on: ['web', 'mobile'], why: 'They’re the computer’s own windows.' }],
-    in: { frame: { menu: 'window' } },
-  },
-
-  // ---------- Help ----------
-  { id: 'instructions', label: '&Instructions', group: 'help', accelerator: (c) => (onChatsTab(c) ? undefined : 'F1'), run: (c) => c.host('instructions'), in: { app: { menu: 'help' } } },
-  { id: 'about', label: '&About Looper', group: 'about', run: (c) => c.host('about'), in: { app: { menu: 'help' } } },
-
-  // ---------- the History window ----------
-  ...([
-    ['historyChat', 'Continue in &Chat', 'chat', 'chat', 'continue'],
-    ['historyCompact', 'Continue Co&mpacted', 'compact', 'compact', 'continue'],
-    ['historyTerminal', 'Continue in &Terminal', 'terminal', 'terminal', 'continue'],
-  ] as const).map(([id, label, icon, command, group]): Command => ({
-    id,
-    label,
-    group,
-    icon,
-    enabled: (c) => !!c.history?.commands[command],
-    run: (c) => c.history?.selected && void c.looper.history.run(c.history.selected, command).catch(failed(c)),
-    in: { historyItem: { menu: 'file', toolbar: true } },
-  })),
-  {
-    id: 'historyCopyId',
-    label: 'Copy Session &ID',
-    group: 'history-item',
-    icon: 'copy',
-    enabled: (c) => !!c.history?.commands.sessionId,
-    run: (c) => c.history?.selected && void c.looper.history.run(c.history.selected, 'copy-id').catch(failed(c)),
-    in: { historyItem: { menu: 'file', toolbar: true } },
-  },
-  {
-    id: 'historyWorkFolder',
-    label: 'Open &Working Directory',
-    toolbarLabel: workFolderToolbarLabel,
-    group: 'history-item',
-    icon: 'openFolder',
-    enabled: (c) => !!c.history?.commands.folder,
-    run: (c) => c.history?.selected && void c.looper.history.run(c.history.selected, 'open-folder').catch(failed(c)),
-    in: { historyItem: { menu: 'file', toolbar: true } },
-  },
-  {
-    id: 'historyGroupDate',
-    label: 'Group by &Date',
-    group: 'history-group',
-    radio: true,
-    checked: (c) => c.history?.shown.groupBy === 'date',
-    run: (c) => c.history?.setShown({ groupBy: 'date' }),
-    in: { history: { menu: 'view' } },
-  },
-  {
-    id: 'historyGroupFolder',
-    label: 'Group by Fo&lder',
-    group: 'history-group',
-    radio: true,
-    checked: (c) => c.history?.shown.groupBy === 'folder',
-    run: (c) => c.history?.setShown({ groupBy: 'folder' }),
-    in: { history: { menu: 'view' } },
-  },
-  {
-    id: 'historyFolderFilter',
-    label: 'Fold&er',
-    group: 'history-filter',
-    entries: (c) => {
-      const h = c.history;
-      if (!h) return [];
-      return [
-        { id: 'all', label: '&All Folders', radio: true, checked: h.folder === '', run: () => h.setFolder('') },
-        ...(c.projects.length ? [{ separator: true } as const] : []),
-        ...c.projects.map((p): Entry => ({ id: p.id, label: menuText(p.name), radio: true, checked: h.folder === `project:${p.id}`, run: () => h.setFolder(`project:${p.id}`) })),
-        { separator: true },
-        { id: 'other', label: '&Outside Projects', radio: true, checked: h.folder === 'other', run: () => h.setFolder('other') },
-      ];
-    },
-    in: { history: { menu: 'view' } },
-  },
-  {
-    id: 'historyShowRuns',
-    label: 'Show Task &Runs',
-    group: 'history-filter',
-    checked: (c) => !!c.history?.shown.showRuns,
-    run: (c) => c.history?.setShown({ showRuns: !c.history.shown.showRuns }),
-    in: { history: { menu: 'view' } },
-  },
-  {
-    id: 'historyActivity',
-    label: 'A&ctivity Pane',
-    group: 'history-panes',
-    icon: 'activity',
-    enabled: (c) => !!c.history?.selected,
-    checked: (c) => !!c.history?.activity,
-    run: (c) => c.history?.setActivity(!c.history.activity),
-    in: { historyItem: { menu: 'view', toolbar: true, main: true } },
-  },
-  {
-    id: 'historyRefresh',
-    label: 'Re&fresh',
-    group: 'history-refresh',
-    accelerator: 'F5',
-    run: (c) => c.history?.refresh(),
-    in: { history: { menu: 'view' } },
-  },
-
   // ---------- the run window ----------
   {
     id: 'runSaveMarkdown',
@@ -1494,6 +1325,222 @@ export const COMMANDS: readonly Command[] = [
     run: (c) => c.run?.findInMessage?.(),
     in: { run: { menu: 'view' } },
   },
+
+  {
+    id: 'runKeepInAttention',
+    label: 'Close and &Keep in Needs Attention',
+    group: 'close',
+    hide: [{ if: (c) => !c.run?.inAttention, why: 'Only a run its window took off Needs attention has it.' }],
+    run: (c) => {
+      const run = c.run;
+      if (run) void c.looper.runtime.markRunUnseen(run.taskId, run.runId).then(() => c.closeWindow(), failed(c));
+    },
+    in: { run: { menu: 'file' } },
+  },
+
+  // ---------- the History window ----------
+  ...([
+    ['historyChat', 'Continue in &Chat', 'chat', 'chat', 'continue'],
+    ['historyCompact', 'Continue Co&mpacted', 'compact', 'compact', 'continue'],
+    ['historyTerminal', 'Continue in &Terminal', 'terminal', 'terminal', 'continue'],
+  ] as const).map(([id, label, icon, command, group]): Command => ({
+    id,
+    label,
+    group,
+    icon,
+    enabled: (c) => !!c.history?.commands[command],
+    run: (c) => c.history?.selected && void c.looper.history.run(c.history.selected, command).catch(failed(c)),
+    in: { historyItem: { menu: 'file', toolbar: true } },
+  })),
+  {
+    id: 'historyCopyId',
+    label: 'Copy Session &ID',
+    group: 'history-item',
+    icon: 'copy',
+    enabled: (c) => !!c.history?.commands.sessionId,
+    run: (c) => c.history?.selected && void c.looper.history.run(c.history.selected, 'copy-id').catch(failed(c)),
+    in: { historyItem: { menu: 'file', toolbar: true } },
+  },
+  {
+    id: 'historyWorkFolder',
+    label: 'Open &Working Directory',
+    toolbarLabel: workFolderToolbarLabel,
+    group: 'history-item',
+    icon: 'openFolder',
+    enabled: (c) => !!c.history?.commands.folder,
+    run: (c) => c.history?.selected && void c.looper.history.run(c.history.selected, 'open-folder').catch(failed(c)),
+    in: { historyItem: { menu: 'file', toolbar: true } },
+  },
+  {
+    id: 'historyGroupDate',
+    label: 'Group by &Date',
+    group: 'history-group',
+    radio: true,
+    checked: (c) => c.history?.shown.groupBy === 'date',
+    run: (c) => c.history?.setShown({ groupBy: 'date' }),
+    in: { history: { menu: 'view' } },
+  },
+  {
+    id: 'historyGroupFolder',
+    label: 'Group by Fo&lder',
+    group: 'history-group',
+    radio: true,
+    checked: (c) => c.history?.shown.groupBy === 'folder',
+    run: (c) => c.history?.setShown({ groupBy: 'folder' }),
+    in: { history: { menu: 'view' } },
+  },
+  {
+    id: 'historyFolderFilter',
+    label: 'Fold&er',
+    group: 'history-filter',
+    entries: (c) => {
+      const h = c.history;
+      if (!h) return [];
+      return [
+        { id: 'all', label: '&All Folders', radio: true, checked: h.folder === '', run: () => h.setFolder('') },
+        ...(c.projects.length ? [{ separator: true } as const] : []),
+        ...c.projects.map((p): Entry => ({ id: p.id, label: menuText(p.name), radio: true, checked: h.folder === `project:${p.id}`, run: () => h.setFolder(`project:${p.id}`) })),
+        { separator: true },
+        { id: 'other', label: '&Outside Projects', radio: true, checked: h.folder === 'other', run: () => h.setFolder('other') },
+      ];
+    },
+    in: { history: { menu: 'view' } },
+  },
+  {
+    id: 'historyShowRuns',
+    label: 'Show Task &Runs',
+    group: 'history-filter',
+    checked: (c) => !!c.history?.shown.showRuns,
+    run: (c) => c.history?.setShown({ showRuns: !c.history.shown.showRuns }),
+    in: { history: { menu: 'view' } },
+  },
+  {
+    id: 'historyActivity',
+    label: 'A&ctivity Pane',
+    group: 'history-panes',
+    icon: 'activity',
+    enabled: (c) => !!c.history?.selected,
+    checked: (c) => !!c.history?.activity,
+    run: (c) => c.history?.setActivity(!c.history.activity),
+    in: { historyItem: { menu: 'view', toolbar: true, main: true } },
+  },
+  {
+    id: 'historyRefresh',
+    label: 'Re&fresh',
+    group: 'history-refresh',
+    accelerator: 'F5',
+    run: (c) => c.history?.refresh(),
+    in: { history: { menu: 'view' } },
+  },
+
+  // ---------- a window's frame: last on File ----------
+  {
+    id: 'closeWindow',
+    label: 'Clos&e Window',
+    // With Close Conversation in a chat's window: both close what it shows.
+    group: 'close',
+    accelerator: 'Alt+F4',
+    pageKey: true,
+    hide: [{ on: ON_PHONE, why: 'Back or ✕ closes a screen.' }, { view: 'frame', if: (c) => !c.fixed && (!c.chats || c.chats.tab), why: 'The main window’s File has Exit.' }],
+    run: (c) => c.closeWindow(),
+    in: { frame: { menu: 'file' }, history: { menu: 'file' }, run: { menu: 'file' } },
+  },
+  {
+    id: 'exit',
+    label: 'E&xit',
+    group: 'quit',
+    role: 'quit',
+    hide: [{ on: ON_PHONE, why: 'Quitting from a phone would leave no way to start Looper again.' }],
+    in: { app: { menu: 'file' } },
+  },
+
+  // ---------- Tools: Looper's windows, the addons' tools, then the settings ----------
+  {
+    id: 'chatsHistory',
+    label: '&History',
+    group: 'tools',
+    toolbarGroup: 'views',
+    icon: 'history',
+    dropdown: 'Recent Conversations',
+    openDropdown: (c, x, y) => c.looper.sessions.showHistoryMenu(x, y),
+    run: (c) => c.looper.history.open(),
+    in: { chats: { menu: 'tools', toolbar: true }, app: { menu: 'tools' } },
+  },
+  {
+    id: 'recycleBin',
+    label: 'Recycle &Bin',
+    group: 'tools',
+    toolbarGroup: 'views',
+    icon: 'recycleBin',
+    run: (c) => c.host('recycle-bin'),
+    in: { app: { menu: 'tools' }, tasks: { toolbar: true } },
+  },
+  {
+    id: 'templates',
+    label: 'Temp&lates',
+    group: 'tools',
+    run: (c) => c.host('templates'),
+    in: { app: { menu: 'tools' }, tasks: { menu: 'view' } },
+    hide: [{ on: OFF_PHONE, view: 'tasks', why: 'The desktop has Templates in Tools.' }, { on: ON_PHONE, view: 'app', why: 'The Tasks tab has Templates, since templates make tasks.' }],
+  },
+  {
+    id: 'agentSettings',
+    label: 'A&gent Settings…',
+    group: 'settings',
+    run: (c) => c.host('agent-settings'),
+    in: { app: { menu: 'tools' } },
+  },
+  {
+    id: 'settings',
+    label: 'S&ettings',
+    group: 'settings',
+    icon: 'settings',
+    accelerator: (c) => (onChatsTab(c) ? undefined : 'CmdOrCtrl+,'),
+    run: (c) => c.host('settings'),
+    in: { app: { menu: 'tools' } },
+  },
+
+  // ---------- Advanced ----------
+  { id: 'remoteAccess', label: 'Remote Acc&ess', group: 'remote', entries: remoteAccessEntries, in: { app: { menu: 'advanced' } } },
+  { id: 'remoteControl', label: 'Remote &Control', group: 'remote', entries: remoteControlEntries, in: { app: { menu: 'advanced' } } },
+  { id: 'addons', label: '&Addons', group: 'remote', run: (c) => c.host('addons'), in: { app: { menu: 'advanced' } } },
+  {
+    id: 'restMode',
+    label: (c) => (c.rest?.armed ? 'Stop Res&t Mode' : 'Start Res&t Mode'),
+    group: 'power',
+    // A sleeping computer drops Remote Control's sessions, and a Prevent Sleep timer keeps it awake: Rest Mode waits until both are off.
+    enabled: (c) => !!c.rest?.armed || (!c.remoteRunning && String(c.preventSleep?.timer ?? 'off') === 'off'),
+    hide: [{ if: (c) => !c.windowsHost, why: 'Only a Windows computer has Rest Mode.' }],
+    run: (c) => c.host('rest-toggle'),
+    in: { app: { menu: 'advanced' } },
+  },
+  { id: 'preventSleep', label: 'Prevent &Sleep', group: 'power', entries: preventSleepEntries, in: { app: { menu: 'advanced' } } },
+  { id: 'updateModels', label: 'Update &Models…', group: 'maintenance', icon: 'refresh', run: (c) => c.host('update-models'), in: { app: { menu: 'advanced' } } },
+  { id: 'engineLog', label: 'Engine &Log', group: 'maintenance', run: (c) => c.host('engine-log'), in: { app: { menu: 'advanced' } } },
+  { id: 'openDataDirectory', label: 'Open &Data Directory', group: 'maintenance', run: (c) => c.host('open-data-directory'), in: { app: { menu: 'advanced' } } },
+  {
+    id: 'reloadUi',
+    label: '&Reload UI',
+    group: 'maintenance',
+    role: 'reload',
+    pageKey: (c) => !!c.chats,
+    hide: [{ on: ON_PHONE, why: 'A phone reloads Looper’s pages by itself when they lose their connection.' }],
+    in: { app: { menu: 'advanced' } },
+  },
+
+  // ---------- Window (its windows, panes and chats come with the chats' commands above) ----------
+  {
+    id: 'openWindows',
+    label: 'Open Windows',
+    group: 'open-windows',
+    provided: 'open-windows',
+    hide: [{ on: ['web', 'mobile'], why: 'They’re the computer’s own windows.' }],
+    in: { frame: { menu: 'window' } },
+  },
+
+  // ---------- Help ----------
+  { id: 'instructions', label: '&Instructions', group: 'help', accelerator: (c) => (onChatsTab(c) ? undefined : 'F1'), run: (c) => c.host('instructions'), in: { app: { menu: 'help' } } },
+  { id: 'about', label: '&About Looper', group: 'about', run: (c) => c.host('about'), in: { app: { menu: 'help' } } },
 
   // ---------- an addon's panes tab ----------
   {

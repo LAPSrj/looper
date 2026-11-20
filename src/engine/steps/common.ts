@@ -129,13 +129,19 @@ export const AGENT_DELEGATE = 'looper-delegate';
 /** The run-dir folder a session's `looper-delegate` requests and Looper's responses go through. */
 export const DELEGATE_DIR = 'delegate';
 
+/** The command a chat's agent watches the tasks of its project with. */
+export const AGENT_WATCH = 'looper-watch';
+
+/** The run-dir folder a chat's `looper-watch` requests and Looper's responses go through. */
+export const WATCH_DIR = 'watch';
+
 /** The file in DELEGATE_DIR that exists while an agent the session started is still going (DELEGATE_BUSY_VAR). */
 export const DELEGATE_BUSY_FILE = 'busy';
 
 export interface LauncherOpts {
   /** Step file prefix ('' = agent, 'classify-' = classifier). */
   prefix?: string;
-  /** Done command defined by the launcher and written to bin/. */
+  /** Done command defined by the launcher and written to bin/. Unset = the launcher has none (nothing reads its done file). */
   doneCommand?: string;
   doneStatuses?: readonly string[];
   /** Completion command written to bin/. Unset = the agent cannot complete the task. */
@@ -144,6 +150,8 @@ export interface LauncherOpts {
   ask?: { command: string; waitS: number };
   /** Delegate command written to bin/. Unset = the agent cannot start agents in other folders. */
   delegateCommand?: string;
+  /** Watch command written to bin/ (a chat's). Unset = the agent cannot watch tasks. */
+  watchCommand?: string;
 }
 
 /**
@@ -158,6 +166,7 @@ const RUN_ONLY_VARS = [
   'LOOPER_COMPLETE_FILE',
   'LOOPER_ASK_DIR',
   'LOOPER_DELEGATE_DIR',
+  'LOOPER_WATCH_DIR',
   DELEGATE_BUSY_VAR,
 ];
 
@@ -174,11 +183,11 @@ export function writeLauncher(
   opts: LauncherOpts = {},
 ): Launcher {
   const prefix = opts.prefix ?? '';
-  const doneCommand = opts.doneCommand ?? AGENT_DONE.command;
-  const doneStatuses = opts.doneStatuses ?? AGENT_DONE.statuses;
-  const helper = path.join(ctx.runDir, 'bin', ctx.target.doneHelperFile(doneCommand));
-  writeText(helper, ctx.target.renderDoneHelper(doneStatuses), 0o755);
+  const { doneCommand } = opts;
+  const doneStatuses = opts.doneStatuses ?? [];
   const locked = baseEnv(ctx, prefix);
+  if (doneCommand) writeText(path.join(ctx.runDir, 'bin', ctx.target.doneHelperFile(doneCommand)), ctx.target.renderDoneHelper(doneStatuses), 0o755);
+  else delete locked.LOOPER_DONE_FILE;
   if (opts.completeCommand) {
     locked.LOOPER_COMPLETE_FILE = targetFile(ctx, prefix + 'complete');
     writeText(
@@ -201,6 +210,14 @@ export function writeLauncher(
     const helpers = ctx.target.renderRequestHelpers(
       { [opts.delegateCommand]: 'delegate' },
       { dirVar: 'LOOPER_DELEGATE_DIR', script: `${opts.delegateCommand}-request`, hint: 'is Looper still running?', waitS: 120 },
+    );
+    for (const [file, text] of Object.entries(helpers)) writeText(path.join(ctx.runDir, 'bin', file), text, 0o755);
+  }
+  if (opts.watchCommand) {
+    locked.LOOPER_WATCH_DIR = targetFile(ctx, WATCH_DIR);
+    const helpers = ctx.target.renderRequestHelpers(
+      { [opts.watchCommand]: 'watch' },
+      { dirVar: 'LOOPER_WATCH_DIR', script: `${opts.watchCommand}-request`, hint: 'is Looper still running?', waitS: 60 },
     );
     for (const [file, text] of Object.entries(helpers)) writeText(path.join(ctx.runDir, 'bin', file), text, 0o755);
   }

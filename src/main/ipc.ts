@@ -159,6 +159,8 @@ export interface IpcHost {
   openChatWindow: (sessionId: string) => void;
   /** Rename… on a chat or terminal session, modal over `from`. */
   openRenameSession: (sessionId: string, from?: AppWindow | null) => void;
+  /** Chat → Watch Task Events on a task: the event id to watch, modal over `from`. */
+  openWatchEvents: (chatId: string, taskId: string, from?: AppWindow | null) => void;
   /**
    * A Projects tab folder's name window: Rename Folder with `folderId`, else New
    * Folder in `parentId` (unset: the top level), which `moveProject` goes into once it's made.
@@ -354,6 +356,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('runtime:reopen', (_e, id: string) => engine.reopenTask(id));
   ipc.handle('runtime:stopTask', (_e, id: string, runId?: string) => engine.stopTask(id, undefined, runId));
   ipc.handle('runtime:clearNotices', (_e, keys: string[]) => engine.clearNotices(keys));
+  ipc.handle('runtime:markRunSeen', (_e, id: string, runId: string) => engine.markRunSeen(String(id), String(runId)));
+  ipc.handle('runtime:markRunUnseen', (_e, id: string, runId: string) => engine.markRunUnseen(String(id), String(runId)));
 
   ipc.handle('runs:list', (_e, id: string, limit?: number) => engine.listRuns(id, limit));
   ipc.handle('runs:recent', (_e, limit: number, filter: RunFilter, since: number) => engine.recentRuns(limit, filter, since));
@@ -467,6 +471,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.on('chat:answer', (_e, id: string, requestId: string, allow: boolean) => engine.answerChat(id, requestId, !!allow));
   ipc.on('chat:setAutoContinue', (_e, id: string, on: boolean) => engine.setChatAutoContinue(String(id), !!on));
   ipc.on('chat:continueAnyway', (_e, id: string) => engine.setChatContinueAnyway(String(id)));
+  ipc.on('chat:setWatch', (_e, id: string, taskId: string, eventId: string, on: boolean) => engine.setChatWatch(String(id), String(taskId), String(eventId ?? ''), !!on));
+  ipc.on('chat:openWatch', (e, id: string, taskId: string) => host.openWatchEvents(String(id), String(taskId), windowOf(e)));
   ipc.handle('chat:stop', (_e, id: string) => engine.stopChat(String(id)));
   // A message's right-click menu, in a chat, a run's transcript or any other list of an agent's messages; Quote and Edit as New Message hand text back to the window's message box.
   const showMessageMenu = (
@@ -741,6 +747,14 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     }
     const thumbnail = SENT_IMAGE_RE.test(file) ? await sentThumbnail(hostPath, size).catch(() => null) : null;
     return { size, ...(thumbnail ? { thumbnail } : {}) };
+  });
+  /** A file the agent sent, whole, for Now to show it. */
+  ipc.handle('sessions:readSentFile', async (_e, taskId: string, p: string, maxBytes: number): Promise<{ data: string } | { error: string }> => {
+    const hostPath = await sentFileHostPath(String(taskId), String(p));
+    const st = await fs.promises.stat(hostPath).catch(() => null);
+    if (!st?.isFile()) return { error: 'The file can’t be found.' };
+    if (st.size > Number(maxBytes)) return { error: 'The file is too large to show here.' };
+    return { data: (await fs.promises.readFile(hostPath)).toString('base64') };
   });
   /**
    * Click on a file the agent sent. `image`: an image shown inline opens in

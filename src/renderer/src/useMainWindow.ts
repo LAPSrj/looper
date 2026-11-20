@@ -121,6 +121,8 @@ export function useMainWindow(menuTab?: string) {
   const taskProject = tasks.find((t) => t.id === target)?.projectId;
   const menuProject = projectSel ?? (taskProject && projects.some((p) => p.id === taskProject) ? taskProject : null);
   const pickedRun = selected ? null : (taskPick?.runId ?? null);
+  // The Task menu's Remove from Needs Attention takes the picked Needs attention row off.
+  const pickedNeed = !selected && livePick?.list === 'attention' ? attention.find((r) => attentionKey(r) === livePick.key) : undefined;
 
   const openTask = useCallback((e: { taskId: string; runId: string; view: DetailTab }) => {
     setSelected(e.taskId);
@@ -299,6 +301,7 @@ export function useMainWindow(menuTab?: string) {
     task: targetTask,
     runtime: targetTask ? runtimes[targetTask.id] : undefined,
     pickedRun,
+    clearAttention: pickedNeed ? () => clearAttention([pickedNeed]) : undefined,
     project: projects.find((p) => p.id === menuProject) ?? null,
     projectSelected: !!projectSel && !selected,
     taskSelected: !!selected,

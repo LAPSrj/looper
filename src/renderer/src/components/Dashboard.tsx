@@ -102,10 +102,10 @@ export function dashboardOpeners(onOpen: (taskId: string, tab: DetailTab) => voi
   };
 }
 
-/** A need's right-click menu (a long press on a phone): its task's, or Log In. */
-export function showNeedMenu(n: NeedRow, runtimes: Record<string, TaskRuntime>): void {
-  if (n.kind === 'task') showTaskMenu(n.r.task, runtimes[n.r.task.id]);
-  else showLoginMenu(() => logIn(n.r));
+/** A need's right-click menu (a long press on a phone): its task's, or Log In, with Remove from Needs Attention. */
+export function showNeedMenu(n: NeedRow, runtimes: Record<string, TaskRuntime>, clear: (rows: AttentionRow[], logins: LoginRow[]) => void): void {
+  if (n.kind === 'task') showTaskMenu(n.r.task, runtimes[n.r.task.id], () => clear([n.r], []));
+  else showLoginMenu(() => logIn(n.r), () => clear([], [n.r]));
 }
 
 export { StatusIcon, STEP_LABELS, TRIGGER_LABELS };
@@ -217,7 +217,7 @@ export function Dashboard({ attention, logins, running, remote, chats, recent, r
             selected={pickedIn('attention') ?? pickedIn('login')}
             onSelect={(n) => onPick(needPick(n))}
             onOpen={(n) => opens.need(n)}
-            onMenu={(n) => showNeedMenu(n, runtimes)}
+            onMenu={(n) => showNeedMenu(n, runtimes, onClearAttention)}
             empty={null}
           />
         </Section>

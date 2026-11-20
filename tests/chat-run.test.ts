@@ -115,7 +115,7 @@ describe('a run opened in a chat', { timeout: 30_000 }, () => {
 
     event('a');
     await until(() => (e.getChat(chatId)?.rows ?? []).some((r) => r.kind === 'agent'), "the chat's turn on the event");
-    expect(e.getChat(chatId)!.rows.find((r) => r.kind === 'prompt')!.text).toContain('{"looper_related_id":"a"}');
+    expect(e.getChat(chatId)!.rows.find((r) => r.kind === 'events')!.text).toBe('{"looper_related_id":"a"}');
     expect(starts).toHaveLength(1);
 
     await e.closeSession(chatId);
@@ -153,6 +153,34 @@ describe('a run opened in a chat', { timeout: 30_000 }, () => {
     await until(() => e.getChat(chatId) === undefined && rt().runs.length === 0, 'the chat to close');
     expect(rt()).toMatchObject({ lastRunId: runId, lastResult: 'stopped' });
     expect(starts).toHaveLength(1);
+  });
+
+  it("tells a chat its agent's watched task's run ends, and the trigger events with the event id it watches", async () => {
+    const { e, data } = await setUp([ended('first', 'success'), ended('Deployed v2', 'success', 'All checks passed.')]);
+    const t1 = e.listTasks().find((t) => t.id === 't1')!;
+    e.saveTask(TaskSchema.parse({ ...t1, id: 't2', name: 'Deploy' }));
+    const chatId = e.startChat('t1').id;
+    expect(e.getChat(chatId)!.watchTasks).toEqual([
+      { id: 't1', name: 'T1', events: [] },
+      { id: 't2', name: 'Deploy', events: [] },
+    ]);
+    // The agent watches the task's runs with looper-watch, as its helper asks.
+    const watchDir = path.join(e.runDir('t1', chatId), 'watch');
+    fs.mkdirSync(path.join(watchDir, 'requests'), { recursive: true });
+    fs.writeFileSync(path.join(watchDir, 'requests', '1.req'), 'watch\n/x\ntask\nt2\n');
+    await until(() => fs.existsSync(path.join(watchDir, 'responses', '1.code')), 'the answer');
+    // The user watches its events with id 42 (Watch Task Events).
+    e.setChatWatch(chatId, 't2', '42', true);
+    expect(e.getChat(chatId)!.watchTasks![1].events).toEqual(['42']);
+    const event = ['{"looper_related_id":"42","text":"reply"}', '{"looper_related_id":"7","text":"other"}'].join('\n');
+    fs.writeFileSync(path.join(data, 'inbox', `${Date.now()}-t2.json`), JSON.stringify({ op: 'run', taskId: 't2', event }));
+    const t2 = () => e.listRuntimes().find((r) => r.taskId === 't2');
+    await until(() => !!t2()?.lastRunId && t2()!.runs.length === 0, "the watched task's run");
+    await until(() => (e.getChat(chatId)?.rows ?? []).filter((r) => r.kind === 'taskEvents').length === 2, 'both messages');
+    expect(e.getChat(chatId)!.rows.filter((r) => r.kind === 'taskEvents').map((r) => r.text)).toEqual([
+      '## Deploy (task t2): a trigger event\n\n```\n{"looper_related_id":"42","text":"reply"}\n```',
+      `## Deploy (task t2), run ${t2()!.lastRunId} ended: Success. Deployed v2\n\nFinal report:\nAll checks passed.`,
+    ]);
   });
 
   it('closed with nothing said, the run ends as it was', async () => {

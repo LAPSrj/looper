@@ -161,6 +161,30 @@ describe('an interactive chat on Claude Code', { timeout: 30_000 }, () => {
     expect(e.getChat(chatId)?.settings.mode).toBe('interactive');
   });
 
+  it('gives the session no looper-done, and a done file in its folder ends nothing', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'looper-engine-'));
+    const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
+    const e = (engine = createEngine({ dataDir, authStatus: async () => Promise.reject(new Error('not asked in tests')) }));
+    e.start();
+    e.updateSettings({
+      environments: e.settings.environments.map((env) =>
+        env.id === 'local' ? { ...env, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : env,
+      ),
+    });
+    e.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'interactive', prompt: 'x' } }));
+    const chatId = e.startChat('t1').id;
+    await until(() => e.getChat(chatId)?.status === 'ready', 'the session to start');
+    const runDir = e.runDir('t1', chatId);
+    expect(existsSync(join(runDir, 'bin', 'looper-done'))).toBe(false);
+    const launcher = readFileSync(join(runDir, 'chat.sh'), 'utf8');
+    expect(launcher).not.toContain('looper-done');
+    expect(launcher).not.toContain('LOOPER_DONE_FILE');
+    writeFileSync(join(runDir, 'done'), '\n--help\n');
+    // Two polls of the default 1 s would have seen it.
+    await new Promise((r) => setTimeout(r, 2500));
+    expect(readFileSync(join(dataDir, 'engine.log'), 'utf8')).not.toContain('looper-done');
+  });
+
   it('keeps showing a message the mod took as queued until the conversation has it', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'looper-engine-'));
     const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));

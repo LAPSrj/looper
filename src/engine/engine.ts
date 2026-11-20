@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { RecentRun } from '../shared/dashboard';
 import { modelWindows } from './model-windows';
-import { eventsMessage, type MessageImage, type MessagesResult, type ScriptCalls } from '../shared/messages';
+import { eventsMessage, taskEventEntry, taskEventLinesEntry, taskEventsMessage, type MessageImage, type MessagesResult, type ScriptCalls } from '../shared/messages';
+import { resultLabel } from '../shared/format';
+import { itemsInTreeOrder, siblingOrder } from '../shared/folders';
 import { runShown, type RunFilter, type RunSummary } from '../shared/runs';
 import type { EngineEvent, Harness, InboxCommand, PreventSleepState, PreventSleepTimer, Project, ProjectFolder, RecycleBinEntry, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
 import {
@@ -240,6 +242,10 @@ export interface Engine {
   stopTask(id: string, reason?: string, runId?: string): Promise<boolean>;
   /** Needs attention's Clear: forget these notices (by attentionKey). */
   clearNotices(keys: string[]): void;
+  /** A run's window opened: its notices leave Needs attention. True while it has some that Close and Keep in Needs Attention can put back. */
+  markRunSeen(id: string, runId: string): boolean;
+  /** Close and Keep in Needs Attention: the notices the run's window took off come back. */
+  markRunUnseen(id: string, runId: string): void;
   /**
    * Open the task's harness in a window of the system's terminal (same
    * env/cwd/model/args, no prompt). A run id resumes that run's conversation
@@ -352,6 +358,8 @@ export interface Engine {
   setChatAutoContinue(chatId: string, on: boolean): void;
   /** Continue Anyway: the chat's continue goes even though Settings → Chats' cache rule would stop it. */
   setChatContinueAnyway(chatId: string): void;
+  /** Chat → Watch Task Events: the chat's agent gets the task's trigger events with `eventId` as their related id ('' all of them), or stops (`on` false). */
+  setChatWatch(chatId: string, taskId: string, eventId: string, on: boolean): void;
   /** Rename…: the user's name for a chat or terminal session; '' goes back to its automatic name. Throws when it's closed. */
   renameSession(id: string, name: string): Promise<void>;
   /** End a chat (its window closed). */
@@ -647,7 +655,35 @@ export function createEngine(opts: EngineOptions): Engine {
       const env = resolveEnvironment(task, settings);
       loginOutcome(env.id, resolveHarness(task, env).id, worked);
     },
+    onRunEnd: (task, runId, end) => {
+      const report = followedReports.get(runId);
+      followedReports.delete(runId);
+      // A check or classifier that found nothing to do isn't news.
+      if (end.outcome === 'noop' || end.outcome === 'skipped') return;
+      const entry = taskEventEntry({ task: task.name, taskId: task.id, runId, result: resultLabel(end.outcome), headline: report?.summary ?? (end.detail || undefined), report: report?.body });
+      for (const chatId of chats.runWatchers(task.id)) {
+        if (chats.send(chatId, taskEventsMessage([entry]), [])) log.info(`[${task.id}] run ${runId}'s end went to chat ${chatId}`);
+      }
+    },
+    onTaskEvents: (task, lines) => {
+      for (const w of chats.eventWatchers(task.id, lines)) {
+        if (chats.send(w.chatId, taskEventsMessage([taskEventLinesEntry({ task: task.name, taskId: task.id, lines: w.lines })]), [])) {
+          log.info(`[${task.id}] ${w.lines.length} trigger event(s) went to chat ${w.chatId}`);
+        }
+      }
+    },
   });
+
+  /** A chat's watch: the report of a watched task's run, from its result record until the run ends. */
+  const followedReports = new Map<string, { summary?: string; body?: string }>();
+
+  /** The tasks a chat on the task (a project's stand-in or one of its tasks) can watch: its project's, in the Tasks list's order. */
+  const projectTasks = (chatTaskId: string): Task[] => {
+    const own = projectIdOf(chatTaskId) ?? tasks.get(chatTaskId)?.projectId;
+    if (!own) return [];
+    const all = tasks.list();
+    return itemsInTreeOrder(all, siblingOrder(all, tasks.listFolders(), tasks.listLayout())).filter((t) => t.projectId === own);
+  };
 
   // ---------- version history ----------
 
@@ -882,6 +918,7 @@ export function createEngine(opts: EngineOptions): Engine {
         },
       }),
     onTalk: (c) => scheduler.chatTalked(c.taskId, c.id),
+    projectTasks,
     onClosed: (c) => scheduler.releaseChat(c.taskId, c.id, c.sessionId),
   });
 
@@ -1442,6 +1479,7 @@ export function createEngine(opts: EngineOptions): Engine {
     // A task run's sessions (its agent's, its classifier's) go in the ledger as its steps record them.
     if (e.type === 'record') {
       const { taskId, runId } = e.record;
+      if (e.record.phase === 'result' && chats.runWatchers(taskId).length) followedReports.set(runId, { summary: e.record.summary, body: e.record.body });
       void runSessionRefs(runs.runDir(taskId, runId)).then((refs) => {
         for (const r of refs) ledger.add({ sessionId: r.sessionId, kind: r.classifier ? 'classifier' : 'run', taskId, taskName: tasks.get(taskId)?.name, runId });
       });
@@ -2004,6 +2042,8 @@ export function createEngine(opts: EngineOptions): Engine {
     reopenTask: (id) => scheduler.reopenTask(id),
     stopTask: (id, reason, runId) => scheduler.stopTask(id, reason, runId),
     clearNotices: (keys) => scheduler.clearNotices(new Set(keys)),
+    markRunSeen: (id, runId) => scheduler.markRunSeen(id, runId),
+    markRunUnseen: (id, runId) => scheduler.markRunUnseen(id, runId),
     openTaskTerminal(id: string, runId?: string): Promise<void> {
       const task = taskOrProject(id);
       if (!task) throw new Error(`unknown task ${id}`);
@@ -2202,6 +2242,7 @@ export function createEngine(opts: EngineOptions): Engine {
     answerChat: (chatId, requestId, allow) => chats.answer(chatId, requestId, allow),
     setChatAutoContinue: (chatId, on) => chats.setAutoContinue(chatId, on),
     setChatContinueAnyway: (chatId) => chats.setContinueAnyway(chatId),
+    setChatWatch: (chatId, taskId, eventId, on) => chats.setWatch(chatId, taskId, eventId, on),
     async renameSession(id: string, name: string): Promise<void> {
       if (chats.taskOf(id)) chats.rename(id, name);
       else if (terminals.taskOf(id) && !remote.owns(id)) await terminalRuns.rename(id, name);

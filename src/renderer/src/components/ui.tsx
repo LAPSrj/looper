@@ -216,13 +216,33 @@ export function MainInstruction({ children }: { children: ReactNode }) {
 }
 
 /** A label and its control, tied together so the control is named by the label (and a click on the label focuses it). */
-/** A problem with what's in a field, under it: Windows' in-place error, normal text after a 16x16 error icon. */
+/**
+ * A problem with what's in a field, under it: Windows' in-place error, normal text after a 16x16 error icon. An iPhone
+ * has no in-place error, so there it's an alert each time the problem changes (Apple's alerts tell about a problem),
+ * and the text stays hidden under the field for assistive technology.
+ */
 export function FieldError({ id, children }: { id?: string; children: ReactNode }) {
+  if (onIos) return <IosFieldAlert id={id}>{children}</IosFieldAlert>;
   return (
     <p className="field-error" id={id} role="alert">
       <StatusGlyph level="error" />
       <span>{children}</span>
     </p>
+  );
+}
+
+function IosFieldAlert({ id, children }: { id?: string; children: ReactNode }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [text, setText] = useState('');
+  useLayoutEffect(() => setText(ref.current?.textContent?.trim() ?? ''));
+  useEffect(() => {
+    // An alert's title that's a sentence ends with its punctuation (HIG Alerts).
+    if (text) void window.looper.showError(/[.?!]$/.test(text) ? text : `${text}.`);
+  }, [text]);
+  return (
+    <span ref={ref} id={id} hidden>
+      {children}
+    </span>
   );
 }
 

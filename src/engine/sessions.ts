@@ -219,10 +219,10 @@ export function recentMessages(rows: MessageRow[]): string[] {
   return out;
 }
 
-/** The background commands, subagents and workflows a conversation's rows started, newest first. */
+/** The background commands, Monitors, subagents and workflows a conversation's rows (and its Code Mode scripts) started, newest first. */
 export function backgroundOf(rows: MessageRow[]): BackgroundTask[] {
   const out: BackgroundTask[] = [];
-  for (const r of rows) {
+  for (const r of rows.flatMap((row) => (row.started ? [row, ...row.started] : [row]))) {
     if (!r.background) continue;
     if (r.tool === 'Workflow') {
       const launch = workflowLaunchesOf([r])[0];
@@ -242,7 +242,7 @@ export function backgroundOf(rows: MessageRow[]): BackgroundTask[] {
     const agent = r.tool === 'Agent' || r.tool === 'Task';
     out.push({
       id: r.background.id,
-      kind: agent ? 'agent' : 'command',
+      kind: agent ? 'agent' : r.tool === 'Monitor' ? 'monitor' : 'command',
       label: str(input.description) ?? str(input.command) ?? r.preview,
       ...(str(input.command) ? { command: str(input.command) } : {}),
       status: r.background.status,

@@ -93,6 +93,14 @@ export const SESSION_SOCKET_VAR = 'CLAUDE_CODE_MESSAGING_SOCKET';
 export const NESTED_REFUSAL =
   "looper: this command belongs to the Looper run that started this session's parent, so this session can't run it. Report back to the session that started you instead.";
 
+/** What the done command takes after its name, as its --help prints it. */
+export function doneUsage(statuses: readonly string[]): string {
+  return `[${statuses.join('|')}] "<headline>"`;
+}
+
+/** What looper-complete and looper-restart take after their name, as their --help prints it. */
+export const REASON_USAGE = '"<reason>"';
+
 /** The Stop-hook decision around a guidance message literal: block, and continue with the guidance. */
 export const STOP_GUIDANCE_JSON = { before: '{"decision":"block","reason":', after: '}' };
 

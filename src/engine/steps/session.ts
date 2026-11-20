@@ -190,9 +190,9 @@ export interface SessionOpts {
   settings?: Record<string, unknown>;
   /** Headless: schema for claude's --json-schema / codex's --output-schema; the end then carries `structured`. */
   jsonSchema?: object;
-  /** Done command defined on the session's PATH and the statuses it accepts. */
-  doneCommand: string;
-  doneStatuses: readonly string[];
+  /** Done command defined on the session's PATH and the statuses it accepts. Unset = the session has none, and only its process ends it. */
+  doneCommand?: string;
+  doneStatuses?: readonly string[];
   /** Completion command on the session's PATH. Unset = the session cannot complete the task. */
   completeCommand?: string;
   /**
@@ -234,6 +234,8 @@ export interface SessionOpts {
     handle: (args: string[], cwd: string) => Promise<{ text: string; code: number }>;
     busy: () => boolean;
   };
+  /** The watch command on the session's PATH (a chat's looper-watch), whose requests the chat answers. */
+  watchCommand?: string;
   /** The session continues a run an earlier session started (a context restart): the logs keep the earlier output. */
   continued?: boolean;
   /** Status assumed when the done file has no recognized status line (agent: success; classify: none). */
@@ -652,7 +654,9 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   // The ask and delegate commands must pass permissions and the sandbox too, but they don't end the session: a subagent may run them.
   const helperCommands = [...signalCommands, ...(opts.ask ? [opts.ask.command] : []), ...(opts.delegate ? [opts.delegate.command] : [])];
   // The restart helper ends the session through the done file, under its own status.
-  const parseStatuses = opts.restartCommand ? [...doneStatuses, RESTART_STATUS] : doneStatuses;
+  const parseStatuses = [...(doneStatuses ?? []), ...(opts.restartCommand ? [RESTART_STATUS] : [])];
+  // A done file an earlier session in this run folder left would end this one as soon as it starts.
+  fs.rmSync(path.join(ctx.runDir, f('done')), { force: true });
   if (opts.restartCommand) {
     writeText(
       path.join(ctx.runDir, 'bin', target.doneHelperFile(opts.restartCommand)),
@@ -870,6 +874,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
     // The helper outwaits Looper's own deadline, so the no-answer text is what it prints.
     ask: opts.ask ? { command: opts.ask.command, waitS: askWaitS } : undefined,
     delegateCommand: opts.delegate?.command,
+    watchCommand: opts.watchCommand,
   });
   const askDir = path.join(ctx.runDir, f(ASK_DIR));
   // A question an earlier session of the run left behind has nobody waiting on it.
@@ -1007,7 +1012,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   const exitPromise = new Promise<void>((r) => (exitResolve = r));
 
   const watcher = new FileSignalWatcher(
-    path.join(ctx.runDir, f('done')),
+    doneCommand || opts.restartCommand ? path.join(ctx.runDir, f('done')) : undefined,
     path.join(ctx.runDir, f('stop.json')),
     ctx.settings.signalPollMs,
     claude && !headless ? path.join(ctx.runDir, f('turn.json')) : undefined,
@@ -1631,8 +1636,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       const rid = name.slice(0, -'.req'.length);
       // The op, the caller's folder, then one line per argument.
       const question = lines.slice(2).join(' ').trim();
-      if (!question) {
-        respond(rid, `usage: ${command} "<question>"`, 2);
+      if (!question || question === '--help' || question === '-h') {
+        respond(rid, `usage: ${command} "<question>"`, question ? 0 : 2);
         return;
       }
       pendingAsk = { rid, question, at: Date.now() };

@@ -96,8 +96,8 @@ export interface SessionsState {
 export interface BackgroundTask {
   /** Claude's background task id. */
   id: string;
-  kind: 'command' | 'agent' | 'workflow';
-  /** What it does: the command's description, else the command; the subagent's description; the workflow's summary. */
+  kind: 'command' | 'agent' | 'workflow' | 'monitor';
+  /** What it does: the command's (or Monitor's) description, else the command; the subagent's description; the workflow's summary. */
   label: string;
   /** A workflow's run id, which its tab beside the conversation shows. */
   workflowRunId?: string;
@@ -239,13 +239,25 @@ export function waitedText(ms: number): string {
   return min % 60 ? `${h} h ${min % 60} min` : `${h} h`;
 }
 
-/** A background command's end from Claude's task notification: its task id, status and summary. */
-export function parseTaskNotification(text: string): { id: string; status: BackgroundTask['status']; summary?: string } | null {
+/** A Monitor's expiry notice, without the advice to the agent after its first sentence. */
+const MONITOR_EXPIRED_RE = /<event>\s*\[(Monitor expired[^.\]]*)/;
+
+/**
+ * A background command's end from Claude's task notification: its task id, status, summary and output file. A
+ * Monitor's events have no status, and neither has its expiry ("[Monitor expired after 30m …]", claude 2.1.325),
+ * which ends it.
+ */
+export function parseTaskNotification(text: string): { id: string; status: BackgroundTask['status']; summary?: string; outputFile?: string } | null {
   const tag = (name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1]?.trim();
   const id = tag('task-id');
+  if (!id) return null;
   const status = tag('status');
-  if (!id || !status) return null;
+  if (!status) {
+    const expired = MONITOR_EXPIRED_RE.exec(text)?.[1];
+    return expired ? { id, status: 'completed', summary: expired } : null;
+  }
   const mapped: BackgroundTask['status'] =
     status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : status === 'killed' || status === 'stopped' ? 'stopped' : 'running';
-  return { id, status: mapped, summary: tag('summary') };
+  const outputFile = tag('output-file');
+  return { id, status: mapped, summary: tag('summary'), ...(outputFile ? { outputFile } : {}) };
 }

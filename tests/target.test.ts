@@ -1,4 +1,7 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { translatePath, translateToHost } from '../src/engine/target/paths';
 import { BashTarget, WindowsTarget } from '../src/engine/target';
@@ -109,6 +112,30 @@ describe('BashTarget', () => {
     expect(t.quote("a'b")).toBe("'a'\\''b'");
     expect(t.catFile('/p/x')).toBe(`"$(cat '/p/x')"`);
   });
+  it.skipIf(process.platform !== 'linux')('the helpers print their usage for --help and -h and write nothing', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-help-'));
+    const t = new BashTarget({ host: 'wsl' }, undefined);
+    const statuses = ['success', 'warning', 'error'];
+    fs.writeFileSync(path.join(dir, 'looper-done'), t.renderDoneHelper(statuses), { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'looper-complete'), t.renderTextHelper('LOOPER_DONE_FILE', 'completed'), { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'looper-restart'), t.renderStatusHelper('restart', 'context restart'), { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(dir, 'launch.sh'),
+      t.renderLauncher({ taskId: 't', runId: 'r', cwd: dir, env: {}, binDir: '/nonexistent', doneCommand: 'looper-done', doneStatuses: statuses, body: 'looper-done -h' }),
+    );
+    const done = path.join(dir, 'done');
+    const run = (cmd: string): string => execFileSync('bash', ['-c', cmd], { cwd: dir, env: { ...process.env, LOOPER_DONE_FILE: done }, encoding: 'utf8' });
+    const usage = 'usage: looper-done [success|warning|error] "<headline>"\n';
+    expect(run('./looper-done --help')).toBe(usage);
+    expect(run('./looper-done -h')).toBe(usage);
+    expect(run('bash launch.sh')).toBe(usage);
+    expect(run('./looper-complete --help')).toBe('usage: looper-complete "<reason>"\n');
+    expect(run('./looper-restart -h')).toBe('usage: looper-restart "<reason>"\n');
+    expect(fs.existsSync(done)).toBe(false);
+    run('./looper-done warning "Fixed 3 flaky tests"');
+    expect(fs.readFileSync(done, 'utf8')).toBe('warning\nFixed 3 flaky tests\n');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
   it.skipIf(process.platform !== 'linux')(
     'killLeftovers kills only the run marker, and KILLs what ignores TERM',
     async () => {
@@ -154,6 +181,17 @@ describe('WindowsTarget', () => {
     expect(script).toContain('function looper-done');
     expect(script).toContain("@('success','warning','error')");
     expect(script).toContain('exit $LASTEXITCODE');
+    expect(script).toContain(`if ($msg -and @('--help','-h') -contains $msg[0]) { Write-Output 'usage: looper-done [success|warning|error] "<headline>"'`);
     expect(t.quote("it's")).toBe("'it''s'");
+  });
+  it('gives each .cmd helper a usage for --help and -h that ends before its write', () => {
+    const t = new WindowsTarget({ host: 'windows' });
+    for (const script of [t.renderDoneHelper(['success', 'warning', 'error']), t.renderTextHelper('LOOPER_COMPLETE_FILE', 'completed'), t.renderStatusHelper('restart', 'context restart')]) {
+      const lines = script.split('\r\n');
+      expect(lines.slice(2, 4)).toEqual(['if /i "%~1"=="--help" goto looper_usage', 'if /i "%~1"=="-h" goto looper_usage']);
+      expect(lines.slice(-5, -1)[0]).toBe('exit /b 0');
+      expect(lines.indexOf(':looper_usage')).toBeGreaterThan(lines.findLastIndex((l) => l.includes('> "%')));
+    }
+    expect(t.renderDoneHelper(['success', 'warning', 'error'])).toContain('echo usage: %~n0 [success^|warning^|error] "<headline>"');
   });
 });

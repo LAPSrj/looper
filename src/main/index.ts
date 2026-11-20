@@ -255,6 +255,7 @@ if (!app.requestSingleInstanceLock()) {
       openSessions: (select) => (select ? showChat(select) : openSessionsWindow()),
       openChatWindow,
       openRenameSession: openRenameSessionWindow,
+      openWatchEvents: openWatchEventsWindow,
       openItemWindow,
       openProjectFolderName: openProjectFolderNameWindow,
       openRemoteConversation,
@@ -1349,6 +1350,16 @@ function openRenameSessionWindow(sessionId: string, from?: AppWindow | null): vo
     role: 'prompt',
     minWidth: 420,
     minHeight: 240,
+    resizable: false,
+  });
+}
+
+/** Chat → Watch Task Events on a task: the event id to watch, or empty for all its events. */
+function openWatchEventsWindow(chatId: string, taskId: string, from?: AppWindow | null): void {
+  openChildWindow(`watch-events/${encodeURIComponent(chatId)}/${encodeURIComponent(taskId)}`, 'Watch Task Events', 420, 300, from ?? sessionsWindows.get() ?? win, {
+    role: 'prompt',
+    minWidth: 420,
+    minHeight: 300,
     resizable: false,
   });
 }

@@ -96,10 +96,16 @@ export interface SchedulerDeps {
   folderBusy?: (task: Task) => Promise<string | null>;
   /** A run's agent ended: Claude Code had no usable login (`worked` false), or it had one. */
   onLogin?: (task: Task, worked: boolean) => void;
+  /** A run ended, how (`outcome`), and its headline or why it ended (`detail`). */
+  onRunEnd?: (task: Task, runId: string, end: { outcome: RunResult; detail: string }) => void;
+  /** Trigger events came for the task (its watcher's, or a `run` command's), whatever the task does with them. */
+  onTaskEvents?: (task: Task, lines: string[]) => void;
 }
 
 /** How often a delegated agent waiting for its folder asks again whether a session outside Looper is working there. */
 const FOLDER_PROBE_MS = 15_000;
+/** How many runs' notices Close and Keep in Needs Attention can put back. */
+const MAX_SEEN_RUNS = 100;
 
 /** An agent a run's agent started in another folder (looper-delegate). */
 interface Child {
@@ -407,12 +413,45 @@ export class Scheduler extends EventEmitter {
 
   /** Clear: the user saw these notices (by noticeKey); `taskId`: every problem of that task (its runs were deleted). */
   clearNotices(keys: ReadonlySet<string> | { taskId: string }): void {
+    if ('taskId' in keys) for (const k of this.seenNotices.keys()) if (k.startsWith(`${keys.taskId}|`)) this.seenNotices.delete(k);
     for (const rt of this.runtimes.values()) {
       const left = 'taskId' in keys ? (rt.taskId === keys.taskId ? [] : rt.notices) : rt.notices.filter((p) => !keys.has(noticeKey(rt.taskId, p)));
       if (left.length === rt.notices.length) continue;
       rt.notices = left;
       this.emitRuntime(rt);
     }
+    this.persist();
+  }
+
+  /** The notices a run's window took off Needs attention, by `<task>|<run>`, the newest last, so Close and Keep in Needs Attention can put them back. */
+  private readonly seenNotices = new Map<string, TaskNotice[]>();
+
+  /** A run's window opened: its notices leave Needs attention. True while the run has notices to put back. */
+  markRunSeen(taskId: string, runId: string): boolean {
+    const key = `${taskId}|${runId}`;
+    const rt = this.runtimes.get(taskId);
+    const seen = rt?.notices.filter((p) => p.runId === runId) ?? [];
+    if (rt && seen.length) {
+      const kept = [...(this.seenNotices.get(key) ?? []), ...seen];
+      this.seenNotices.delete(key);
+      this.seenNotices.set(key, kept);
+      if (this.seenNotices.size > MAX_SEEN_RUNS) this.seenNotices.delete(this.seenNotices.keys().next().value!);
+      rt.notices = rt.notices.filter((p) => p.runId !== runId);
+      this.emitRuntime(rt);
+      this.persist();
+    }
+    return this.seenNotices.has(key);
+  }
+
+  /** Close and Keep in Needs Attention: the notices the run's window took off come back. */
+  markRunUnseen(taskId: string, runId: string): void {
+    const key = `${taskId}|${runId}`;
+    const back = this.seenNotices.get(key);
+    this.seenNotices.delete(key);
+    const rt = this.runtimes.get(taskId);
+    if (!back || !rt) return;
+    rt.notices = [...rt.notices, ...back].sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
+    this.emitRuntime(rt);
     this.persist();
   }
 
@@ -468,6 +507,7 @@ export class Scheduler extends EventEmitter {
     if (!task.enabled || task.completedAt) throw new Error('This task is disabled or completed, so it takes no events.');
     const lines = event.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     if (!lines.length) throw new Error('The event is empty.');
+    this.tellEvents(task, lines);
     this.liftPause(task, rt);
     rt.lastEventAt = this.now();
     this.emitRuntime(rt);
@@ -2061,11 +2101,20 @@ export class Scheduler extends EventEmitter {
   private onWatcherEvents(taskId: string, lines: string[]): void {
     const task = this.d.tasks.get(taskId);
     const rt = this.runtimes.get(taskId);
+    if (task) this.tellEvents(task, lines);
     if (!task || !rt || !task.enabled || task.completedAt || rt.pausedReason) return;
     rt.lastEventAt = this.now();
     this.emitRuntime(rt);
     this.holdEvents(task, lines, { trigger: 'watcher' });
     this.flushEvents(task);
+  }
+
+  private tellEvents(task: Task, lines: string[]): void {
+    try {
+      this.d.onTaskEvents?.(task, lines);
+    } catch (e) {
+      this.d.log.error(`[${task.id}] trigger event listener failed: ${errMsg(e)}`);
+    }
   }
 
   /**
@@ -2741,6 +2790,11 @@ export class Scheduler extends EventEmitter {
       autoPausedReason,
       completed: !wasCompleted && !!fresh.completedAt,
     });
+    try {
+      this.d.onRunEnd?.(fresh, runId, { outcome, detail });
+    } catch (e) {
+      this.d.log.error(`[${taskId}] run end listener failed: ${errMsg(e)}`);
+    }
     this.emitRuntime(rt);
     this.persist();
   }

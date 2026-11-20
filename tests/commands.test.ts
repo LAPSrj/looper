@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { specTemplate } from '../src/main/command-menu';
-import { CHAT_WINDOW_VIEWS, CHATS_WINDOW_VIEWS, contextMenu, hiddenReasons, mainToolbarViews, mainWindowViews, menuBar, moreViewCommands, runCommand } from '../src/shared/commands/build';
+import { CHAT_WINDOW_VIEWS, CHATS_WINDOW_VIEWS, HISTORY_VIEWS, contextMenu, hiddenReasons, mainToolbarViews, mainWindowViews, menuBar, moreViewCommands, runCommand } from '../src/shared/commands/build';
 import { addonCommandId } from '../src/shared/commands/addon-commands';
 import { COMMAND_VIEWS, DESKTOP_VIEWS, MENU_BAR, noMnemonic, type CommandView } from '../src/shared/commands/command';
 import { EMPTY_CONTEXT, HOST_COMMANDS, type CommandContext } from '../src/shared/commands/context';
@@ -441,6 +441,64 @@ describe('a phone', () => {
     expect(file).not.toContain('Folders');
   });
 
+  it('ends a run window’s File menu with Close Window, after Close and Keep in Needs Attention while the window took the run off that list', () => {
+    const file = (inAttention: boolean) => {
+      const c = runContext('details', false, 'desktop');
+      return labels(menu(['run'], 'file', { ...c, run: { ...c.run!, inAttention } }));
+    };
+    expect(file(true).slice(-3)).toEqual(['-', 'Close and Keep in Needs Attention', 'Close Window']);
+    expect(file(false).slice(-2)).toEqual(['-', 'Close Window']);
+    const phone = runContext('details');
+    expect(labels(phoneMore(['run'], { ...phone, run: { ...phone.run!, inAttention: true } }))).toContain('Close and Keep in Needs Attention');
+  });
+
+  it('puts Close Window last on File in every window that has it', () => {
+    const c = context({
+      settings: SettingsSchema.parse({}),
+      history: { selected: 'h', commands: {}, shown: SettingsSchema.parse({}).view.history, setShown: () => undefined, folder: 'all', setFolder: () => undefined, activity: false, setActivity: () => undefined, refresh: () => undefined, find: () => undefined } as never,
+    });
+    const last = (views: readonly CommandView[], over: Partial<CommandContext> = {}) => labels(menu(views, 'file', { ...c, ...over })).at(-1);
+    expect(last(HISTORY_VIEWS)).toBe('Close Window');
+    expect(last(['run'], { run: runContext('details', false, 'desktop').run })).toBe('Close Window');
+    expect(last(mainWindowViews('tasks', true), { tab: 'tasks', fixed: true })).toBe('Close Window');
+  });
+
+  it('gives each File item its own access key in every window', () => {
+    const settings = SettingsSchema.parse({});
+    const chats = (single: boolean, tab: boolean) =>
+      ({ single, tab, selected: 'c1', summary: { id: 'c1', title: 'c', kind: 'chat' }, chat: null, sessionId: 's', sessions: [], stoppable: false, shown: settings.view.sessions, setShown: () => undefined, setSelected: () => undefined, activityOpen: false, toggleActivity: () => undefined, step: () => undefined, focusPane: () => undefined }) as never;
+    const history = { selected: 'h', commands: {}, shown: settings.view.history, setShown: () => undefined, folder: 'all', setFolder: () => undefined, activity: false, setActivity: () => undefined, refresh: () => undefined, find: () => undefined } as never;
+    const t = task({ projectId: 'p1' } as Partial<Task>);
+    const project = { id: 'p1', name: 'P' } as never;
+    const windows: [string, readonly CommandView[], Partial<CommandContext>][] = [
+      ['main Tasks', mainWindowViews('tasks'), { tab: 'tasks', task: t, project }],
+      ['main Chats', mainWindowViews('chats'), { tab: 'chats', chats: chats(false, true) }],
+      ['view Tasks', mainWindowViews('tasks', true), { tab: 'tasks', fixed: true, task: t, project }],
+      ['task window', mainWindowViews('tasks', true, true), { tab: 'tasks', fixed: true, item: true, task: t, project }],
+      ['project window', mainWindowViews('projects', true, true), { tab: 'projects', fixed: true, item: true, project, projectSelected: true }],
+      ['Chats window', CHATS_WINDOW_VIEWS, { chats: chats(false, false) }],
+      ['chat window', CHAT_WINDOW_VIEWS, { chats: chats(true, false) }],
+      ['History', HISTORY_VIEWS, { history }],
+      ['run window', ['run'], { run: { ...runContext('details', false, 'desktop').run!, inAttention: true } }],
+    ];
+    for (const [name, views, over] of windows) {
+      const keys = menu(views, 'file', context({ settings, ...over }))
+        .filter((i) => i.type !== 'separator')
+        .map((i) => /&([^&])/.exec(i.label ?? '')?.[1]?.toLowerCase());
+      expect(keys, name).not.toContain(undefined);
+      expect(new Set(keys).size, name).toBe(keys.length);
+    }
+  });
+
+  it('offers Remove from Needs Attention only on a Needs attention row’s task', () => {
+    const clear = vi.fn();
+    const items = contextMenu('task', context({ task: task(), clearAttention: clear }));
+    expect(labels(items)[0]).toBe('Remove from Needs Attention');
+    runCommand('removeFromAttention', context({ task: task(), clearAttention: clear }));
+    expect(clear).toHaveBeenCalledOnce();
+    expect(labels(contextMenu('task', context({ task: task() })))).not.toContain('Remove from Needs Attention');
+  });
+
   it('names New Chat in Project in a conversation, and keeps Send to Chats on the Chats list', () => {
     const summary = { id: 'c', kind: 'chat', taskId: 't', status: 'idle', projectId: 'p' };
     const c = context({ chats: { single: false, tab: true, selected: 'c', summary, chat: null, sessions: [summary], shown: {} } as never }, 'mobile');
@@ -463,6 +521,41 @@ describe('a phone', () => {
     const m = composeMore({ more: { items, toolbar, run: () => undefined } });
     expect(labels(m.row)).toEqual(['Restart Agent', 'Open Folder']);
     expect(labels(m.items)).toEqual(expect.arrayContaining(['Restart Agent', 'Open Working Directory', 'Close Conversation']));
+  });
+});
+
+describe('Chat → Watch Task Events', () => {
+  const summary = { id: 'c', kind: 'chat', taskId: 't', status: 'idle' };
+  const withTasks = (watchTasks: unknown, here: CommandContext['here'] = 'desktop') => {
+    const chat = { id: 'c', status: 'ready', queued: [], history: [], rows: [], models: [], harnessId: 'h', harnesses: [{ id: 'h', name: 'Claude Code' }], settings: { permissionMode: 'default' }, permissions: [], harnessKind: 'claude-code', watchTasks };
+    return context({ tab: 'chats', chats: { single: false, tab: true, selected: 'c', summary, chat, sessions: [summary], shown: {} } as never }, here);
+  };
+  const tasks = [
+    { id: 't1', name: 'Deploy', events: [''] },
+    { id: 't2', name: 'Audit', events: [] },
+    { id: 't3', name: 'Slack replies', events: ['42'] },
+  ];
+
+  it('lists the project’s tasks in their order: each event id it watches checked, then the task again to watch another id', () => {
+    const c = withTasks([...tasks.slice(0, 2), { id: 't3', name: 'Slack replies', events: ['42', '7'] }]);
+    const item = menu(mainWindowViews('chats'), 'chat', c).find((i) => i.id === 'watchTaskEvents')!;
+    expect(item.label).toBe('Watch Task E&vents');
+    expect(item.submenu!.map((i) => [i.label, i.checked])).toEqual([
+      ['Deploy', true],
+      ['Audit', false],
+      ['Slack replies (42)', true],
+      ['Slack replies (7)', true],
+      ['Slack replies', false],
+    ]);
+    // An unchecked item asks for the event id to watch; a checked one stops that watch.
+    for (const n of [1, 3, 4]) runCommand(item.submenu![n].id, c);
+    expect(c.calls).toEqual(['looper.chat.openWatch', 'looper.chat.setWatch', 'looper.chat.openWatch']);
+    expect(labels(phoneMore(['conversation'], withTasks(tasks, 'mobile')))).toContain('Watch Task Events');
+  });
+
+  it('says there are no tasks when the project has none', () => {
+    const item = menu(mainWindowViews('chats'), 'chat', withTasks([])).find((i) => i.id === 'watchTaskEvents')!;
+    expect(item.submenu!.map((i) => [i.label, i.enabled])).toEqual([['No Tasks', false]]);
   });
 });
 

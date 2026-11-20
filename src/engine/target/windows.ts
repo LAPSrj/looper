@@ -1,7 +1,9 @@
 import { requestPolls, type LauncherSpec, type RequestHelperOpts, type SpawnSpec, type Target, type TargetContext } from './index';
 import {
   DELEGATE_BUSY_VAR,
+  doneUsage,
   NESTED_REFUSAL,
+  REASON_USAGE,
   SESSION_SOCKET_VAR,
   SOCKET_FILE_VAR,
   guideHookJson,
@@ -27,6 +29,23 @@ const SUBAGENT_TEST = `($payload -split '"tool_input"', 2)[0] -match '"agent_id"
 const NESTED_TEST =
   `($env:${SESSION_SOCKET_VAR} -and $env:${SOCKET_FILE_VAR} -and (Test-Path -LiteralPath $env:${SOCKET_FILE_VAR}) -and ` +
   `([IO.File]::ReadAllText($env:${SOCKET_FILE_VAR}) -ne '') -and ([IO.File]::ReadAllText($env:${SOCKET_FILE_VAR}) -ne $env:${SESSION_SOCKET_VAR}))`;
+
+/** A .cmd helper's first lines: --help or -h jumps to HELP_CMD_END, which prints its usage and signals nothing. */
+const HELP_CMD = ['if /i "%~1"=="--help" goto looper_usage', 'if /i "%~1"=="-h" goto looper_usage'];
+
+/** A .cmd helper's last lines: the end of its normal path, then the usage HELP_CMD jumps to. */
+const HELP_CMD_END = (args: string): string[] => ['exit /b 0', ':looper_usage', `echo usage: %~n0 ${cmdEchoText(args)}`, 'exit /b 0'];
+
+/** Text for a .cmd echo, with the characters cmd reads as operators escaped outside double quotes. */
+function cmdEchoText(s: string): string {
+  let quoted = false;
+  return [...s]
+    .map((c) => {
+      if (c === '"') quoted = !quoted;
+      return !quoted && '^&|<>'.includes(c) ? '^' + c : c;
+    })
+    .join('');
+}
 
 /** A .cmd helper's first lines: run by another session than its run's own, it refuses (see NESTED_TEST). */
 const NESTED_CMD = [
@@ -93,20 +112,24 @@ export class WindowsTarget implements Target {
       lines.push(`$env:${k} = ${this.quote(v)}`);
     }
     lines.push(`$env:PATH = ${this.quote(spec.binDir)} + ';' + $env:PATH`);
-    const statuses = spec.doneStatuses.map((s) => `'${s}'`).join(',');
-    lines.push(
-      `function ${spec.doneCommand} { param([Parameter(ValueFromRemainingArguments=$true)][string[]]$msg)`,
-      `  if (${NESTED_TEST}) { [Console]::Error.WriteLine(${this.quote(NESTED_REFUSAL)}); $global:LASTEXITCODE = 1; return }`,
-      `  if ($env:${DELEGATE_BUSY_VAR} -and (Test-Path -LiteralPath $env:${DELEGATE_BUSY_VAR})) { [Console]::Error.Write([IO.File]::ReadAllText($env:${DELEGATE_BUSY_VAR})); $global:LASTEXITCODE = 1; return }`,
-      "  $status = ''",
-      `  if ($msg -and @(${statuses}) -contains $msg[0]) {`,
-      '    $status = $msg[0]',
-      '    $msg = if ($msg.Count -gt 1) { $msg[1..($msg.Count - 1)] } else { @() }',
-      '  }',
-      "  $text = if ($msg) { $msg -join ' ' } else { 'done' }",
-      '  Set-Content -LiteralPath $env:LOOPER_DONE_FILE -Value ($status + [Environment]::NewLine + $text)',
-      '}',
-    );
+    if (spec.doneCommand) {
+      const doneStatuses = spec.doneStatuses ?? [];
+      const statuses = doneStatuses.map((s) => `'${s}'`).join(',');
+      lines.push(
+        `function ${spec.doneCommand} { param([Parameter(ValueFromRemainingArguments=$true)][string[]]$msg)`,
+        `  if ($msg -and @('--help','-h') -contains $msg[0]) { Write-Output ${this.quote(`usage: ${spec.doneCommand} ${doneUsage(doneStatuses)}`)}; $global:LASTEXITCODE = 0; return }`,
+        `  if (${NESTED_TEST}) { [Console]::Error.WriteLine(${this.quote(NESTED_REFUSAL)}); $global:LASTEXITCODE = 1; return }`,
+        `  if ($env:${DELEGATE_BUSY_VAR} -and (Test-Path -LiteralPath $env:${DELEGATE_BUSY_VAR})) { [Console]::Error.Write([IO.File]::ReadAllText($env:${DELEGATE_BUSY_VAR})); $global:LASTEXITCODE = 1; return }`,
+        "  $status = ''",
+        `  if ($msg -and @(${statuses}) -contains $msg[0]) {`,
+        '    $status = $msg[0]',
+        '    $msg = if ($msg.Count -gt 1) { $msg[1..($msg.Count - 1)] } else { @() }',
+        '  }',
+        "  $text = if ($msg) { $msg -join ' ' } else { 'done' }",
+        '  Set-Content -LiteralPath $env:LOOPER_DONE_FILE -Value ($status + [Environment]::NewLine + $text)',
+        '}',
+      );
+    }
     lines.push(`Set-Location -LiteralPath ${this.quote(spec.cwd)}`);
     lines.push(`if (-not $?) { Write-Error "looper: cannot cd to ${spec.cwd}"; exit 97 }`);
     lines.push(spec.body);
@@ -119,6 +142,7 @@ export class WindowsTarget implements Target {
     return [
       '@echo off',
       'setlocal',
+      ...HELP_CMD,
       ...NESTED_CMD,
       `if defined ${DELEGATE_BUSY_VAR} if exist "%${DELEGATE_BUSY_VAR}%" (type "%${DELEGATE_BUSY_VAR}%" 1>&2 & exit /b 1)`,
       'set "status="',
@@ -137,6 +161,7 @@ export class WindowsTarget implements Target {
       'if not defined msg set "msg=done"',
       'echo.%status%> "%LOOPER_DONE_FILE%"',
       'echo.%msg%>> "%LOOPER_DONE_FILE%"',
+      ...HELP_CMD_END(doneUsage(statuses)),
       '',
     ].join('\r\n');
   }
@@ -218,10 +243,12 @@ export class WindowsTarget implements Target {
     return [
       '@echo off',
       'setlocal',
+      ...HELP_CMD,
       ...NESTED_CMD,
       'set "msg=%*"',
       `if not defined msg set "msg=${fallback}"`,
       `echo.%msg%> "%${envVar}%"`,
+      ...HELP_CMD_END(REASON_USAGE),
       '',
     ].join('\r\n');
   }
@@ -230,11 +257,13 @@ export class WindowsTarget implements Target {
     return [
       '@echo off',
       'setlocal',
+      ...HELP_CMD,
       ...NESTED_CMD,
       'set "msg=%*"',
       `if not defined msg set "msg=${fallback}"`,
       `echo.${status}> "%LOOPER_DONE_FILE%"`,
       'echo.%msg%>> "%LOOPER_DONE_FILE%"',
+      ...HELP_CMD_END(REASON_USAGE),
       '',
     ].join('\r\n');
   }

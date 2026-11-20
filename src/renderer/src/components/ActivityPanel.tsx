@@ -4,7 +4,7 @@ import { findToolCall, toolCallTitle, type AddonInfo, type AddonToolCall } from 
 import type { Attachment } from '@shared/chat';
 import { effortLabel } from '@shared/environments';
 import { parseInspected } from '@shared/inspect';
-import { CHANGE_TOOLS, type MessageRow, type SentFile } from '@shared/messages';
+import { CHANGE_TOOLS, SENT_IMAGE_RE, type MessageRow, type SentFile } from '@shared/messages';
 import { baseName, dirName } from '@shared/paths';
 import type { BackgroundTask, SubagentInfo } from '@shared/sessions';
 import { WORKFLOW_STATUS_TEXT, workflowAgents, type WorkflowRun } from '@shared/workflows';
@@ -12,6 +12,11 @@ import { stripAnsi } from '../format';
 import { useAddonList } from '../live-state';
 import { AgentRow, tokensText, WorkflowAgentList } from './AgentRows';
 import { AttachmentList, CHEVRON, localScriptCalls, ScriptCallBox, SentFileList, type RowCtx } from './ChatRows';
+import { languageOf } from './code-languages';
+import { reportError } from '../report-error';
+import { FileViewContent } from '../web/file-view';
+import type { FileView } from '../web/file-flows';
+import { imageType, VIEWER_MAX_BYTES, viewerKind } from '../web/dialog-flows';
 import { SplitPane } from './SplitPane';
 import { WaitedFor } from './Live';
 import { changeRows, writtenLines, type EditorLine } from './editor-lines';
@@ -43,6 +48,12 @@ const inputOf = (row: MessageRow): Record<string, unknown> =>
 function callTitle(row: MessageRow, addons: AddonInfo[]): { title: string | undefined; subject: string } {
   const custom = row.tool ? findToolCall(addons, row.tool) : undefined;
   if (custom?.call.title) return { title: toolCallTitle(custom.call.title, inputOf(row)), subject: '' };
+  // Its screen shows the caption: the title names the files.
+  if (row.tool === 'SendUserFile') {
+    const files = sentFilesOf(row);
+    const what = files.length === 1 ? 'File' : `${files.length} Files`;
+    return { title: `${row.result === undefined ? 'Sending' : 'Sent'} ${what}`, subject: files.map((f) => f.name).join(', ') };
+  }
   return { title: row.tool, subject: row.file ?? str(inputOf(row).command)?.split('\n')[0] ?? row.preview };
 }
 
@@ -70,6 +81,83 @@ interface Mail {
   /** The call's other parameters, as more header rows. */
   rest: [string, unknown][];
   text: string;
+}
+
+/** The files a SendUserFile call sent, or names before its result says what was delivered. */
+function sentFilesOf(row: MessageRow): SentFile[] {
+  if (row.sent) return row.sent.files;
+  const input = inputOf(row);
+  const files = Array.isArray(input.files) ? input.files.filter((f): f is string => typeof f === 'string' && f.trim() !== '') : [];
+  return files.map((f) => ({ path: f.trim(), name: baseName(f.trim()), inline: SENT_IMAGE_RE.test(f) && input.display !== 'attach' }));
+}
+
+const bytesOf = (base64: string): Uint8Array => Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+
+/** A sent file as Now shows it, read whole: an image, a PDF's pages, Markdown formatted, code or text; null for any other kind. */
+function useSentFileView(f: SentFile, taskId: string): FileView | null {
+  const kind = viewerKind(f.name, (n) => !!languageOf(n));
+  const [read, setRead] = useState<{ data: string } | { error: string } | null>(null);
+  useEffect(() => {
+    if (!kind) return;
+    let live = true;
+    setRead(null);
+    window.looper.sessions.readSentFile(taskId, f.path, VIEWER_MAX_BYTES[kind]).then(
+      (r) => live && setRead(r),
+      (e: unknown) => live && setRead({ error: e instanceof Error ? e.message : String(e) }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [taskId, f.path, kind]);
+  return useMemo(() => {
+    if (!kind) return null;
+    const data = read && 'data' in read ? read.data : null;
+    const nothing = () => undefined;
+    return {
+      kind,
+      url: data && kind === 'image' ? `data:${imageType(f.name)};base64,${data}` : null,
+      text: data && kind !== 'image' && kind !== 'pdf' ? new TextDecoder().decode(bytesOf(data)) : null,
+      pdf: data && kind === 'pdf' ? (bytesOf(data).buffer as ArrayBuffer) : null,
+      error: read && 'error' in read ? read.error : '',
+      toDevice: nothing,
+      toHost: nothing,
+      askDownload: nothing,
+    };
+  }, [kind, read, f.name]);
+}
+
+/** One sent file on Now: shown as Now shows a file, a Markdown one as a document; a double-click opens it in its default program. */
+function SentFileView({ f, ctx, named }: { f: SentFile; ctx: RowCtx; named: boolean }) {
+  const view = useSentFileView(f, ctx.taskId);
+  const open = () => void window.looper.sessions.openFile(ctx.taskId, ctx.runId, f.path, false).catch(reportError);
+  let shown: ReactNode;
+  if (!view) shown = <SentFileList files={[f]} ctx={ctx} />;
+  else if (view.kind === 'markdown' && view.text !== null) shown = <Markdown text={view.text} breaks={false} />;
+  else shown = <FileViewContent view={view} name={f.name} classes={{ note: 'muted', text: 'now-sent-text' }} image={(url) => <img className="now-sent-image" src={url} alt={f.name} />} />;
+  return (
+    <div className="now-sent-file" onDoubleClick={open}>
+      {named && <div className="muted now-sent-name">{f.name}</div>}
+      <div className={view?.kind === 'image' || view?.kind === 'pdf' ? 'now-sent-pages' : 'now-doc-page'}>{shown}</div>
+    </div>
+  );
+}
+
+/** A SendUserFile call as the files it sent, each on a page as Now shows a document, under the caption. */
+function SentFilesScreen({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
+  const files = sentFilesOf(row);
+  const caption = row.sent?.caption ?? str(inputOf(row).caption);
+  return (
+    <div className="now-doc now-sent">
+      {caption && (
+        <div className="now-sent-caption">
+          <MessageBody text={caption} />
+        </div>
+      )}
+      {files.map((f) => (
+        <SentFileView key={f.path} f={f} ctx={ctx} named={files.length > 1} />
+      ))}
+    </div>
+  );
 }
 
 /**
@@ -589,6 +677,8 @@ function NowScreen({
         )}
       </>
     );
+  } else if (row.tool === 'SendUserFile' && !row.resultError && sentFilesOf(row).length) {
+    body = <SentFilesScreen row={row} ctx={ctx} />;
   } else if (row.tool === 'REPL') {
     // The script run in a console, and the calls it made under it.
     const terminal = <ScriptConsole key={row.toolUseId ?? row.id} row={row} script={script} addons={addons} />;
@@ -671,6 +761,9 @@ function NowScreen({
     </div>
   );
 }
+
+/** What the Background list says a task is, beside its label; a command and a subagent say nothing. */
+const BACKGROUND_KINDS: Partial<Record<BackgroundTask['kind'], string>> = { workflow: 'Workflow', monitor: 'Monitor' };
 
 /** A file's thumbnail when it's an image. */
 function FileThumb({ path, taskId }: { path: string; taskId: string }) {
@@ -866,7 +959,7 @@ export function ActivityPanel({
   const tab = (picked === 'git' && !gitProject) || (picked.startsWith('addon:') && !addonTab) ? 'now' : picked;
   const git = useGitStatus(gitProject, !!working || background.some((b) => b.status === 'running') || subagents.some((a) => a.status === 'running'));
   const { addons } = useAddonList();
-  const tools = rows.filter((r) => r.kind === 'tool');
+  const tools = rows.filter((r) => r.kind === 'tool' && !r.fromScript);
   const i = nowIndex(tools.length, pos);
   const row = tools[i];
   // A script's call Now shows instead of its REPL call, which stays the call Now is at.
@@ -954,7 +1047,7 @@ export function ActivityPanel({
                   <BackgroundStatus b={b} />
                 </span>
                 <span className="bg-label">{b.label}</span>
-                <span className="muted bg-kind">{b.kind === 'workflow' ? 'Workflow' : ''}</span>
+                <span className="muted bg-kind">{BACKGROUND_KINDS[b.kind] ?? ''}</span>
               </div>
               {b.summary && b.status !== 'running' && <div className="muted bg-summary">{b.summary}</div>}
               {openOutput.has(b.id) && <BackgroundOutput b={b} sessionId={sessionId} />}
@@ -965,7 +1058,7 @@ export function ActivityPanel({
             sub: (
               <>
                 <BackgroundStatus b={b} />
-                {b.kind === 'workflow' ? ' · Workflow' : ''}
+                {BACKGROUND_KINDS[b.kind] ? ` · ${BACKGROUND_KINDS[b.kind]}` : ''}
                 {b.summary && b.status !== 'running' ? ` · ${b.summary}` : ''}
               </>
             ),

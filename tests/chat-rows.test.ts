@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,6 +8,7 @@ import { Logger } from '../src/engine/log';
 import { TranscriptAccumulator } from '../src/engine/messages';
 import { loadSettings } from '../src/engine/store/settings';
 import type { MessageRow } from '../src/shared/messages';
+import type { ChatInfo } from '../src/shared/chat';
 import { TaskSchema } from '../src/shared/types';
 
 const until = async (cond: () => boolean, what: string) => {
@@ -54,6 +55,83 @@ function transcriptRows(): MessageRow[] {
   for (const rec of [user('earlier question'), agent('earlier answer'), user('another question'), agent('another answer')]) acc.addLine(JSON.stringify(rec));
   return acc.rows;
 }
+
+describe('a chat that watches tasks', { timeout: 30_000 }, () => {
+  let manager: ChatManager | null = null;
+  afterEach(async () => {
+    await manager?.closeAll();
+    manager = null;
+  });
+
+  it("keeps what it watches across a reopen, answers its agent's looper-watch, and picks the trigger events it watches", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'looper-chat-watch-'));
+    const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
+    const host = detectHost();
+    const settings = loadSettings(dataDir, host);
+    settings.environments = settings.environments.map((e) =>
+      e.id === 'local' ? { ...e, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir), args: [], env: {} }] } : e,
+    );
+    const task = TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } });
+    const projectTask = (id: string, name: string, mode: 'manual' | 'watcher') => TaskSchema.parse({ id, name, trigger: { mode }, environmentId: 'local', cwd: dir, agent: { prompt: 'x' } });
+    const infos: ChatInfo[] = [];
+    manager = new ChatManager({
+      dataDir,
+      host,
+      settings,
+      log: new Logger(join(dataDir, 'engine.log'), false),
+      emit: () => undefined,
+      runDir: (taskId, runId) => join(dataDir, 'runs', taskId, runId),
+      readHistory: async () => [],
+      readCompactable: async () => [],
+      writeInfo: (_t, _r, info) => void infos.push(info),
+      appendRecord: () => undefined,
+      taskVersion: () => undefined,
+      onLimits: () => undefined,
+      projectTasks: () => [projectTask('t2', 'Deploy', 'manual'), projectTask('t3', 'Slack replies', 'watcher')],
+    });
+    const info = { harnessId: 'fake', harnessKind: 'claude-code' as const, title: 'x', settings: { permissionMode: '' }, watches: [{ taskId: 't2', what: 'runs' as const }] };
+    const id = manager.start(task, { kind: 'reopen', runId: 'r1', info, sessionId: 's0' }).id;
+    expect(manager.runWatchers('t2')).toEqual([id]);
+    expect(manager.get(id)!.watchTasks).toEqual([
+      { id: 't2', name: 'Deploy', events: [] },
+      { id: 't3', name: 'Slack replies', events: [] },
+    ]);
+
+    // Watch Task Events with an event id: only the events with that related id.
+    manager.setWatch(id, 't3', ' 42 ', true);
+    manager.setWatch(id, 't3', '9', true);
+    manager.setWatch(id, 't3', '9', false);
+    expect(manager.get(id)!.watchTasks![1].events).toEqual(['42']);
+    expect(infos.at(-1)!.watches).toEqual([{ taskId: 't2', what: 'runs' }, { taskId: 't3', what: 'events', eventId: '42' }]);
+    const lines = ['{"looper_related_id":"42","text":"reply"}', '{"looper_related_id":"7"}', 'not json'];
+    expect(manager.eventWatchers('t3', lines)).toEqual([{ chatId: id, lines: [lines[0]] }]);
+    manager.setWatch(id, 't3', '42', false);
+    expect(manager.eventWatchers('t3', lines)).toEqual([]);
+
+    // The agent's looper-watch, as its helper asks: the op, the caller's folder, then one line per argument.
+    const ask = async (rid: string, ...args: string[]) => {
+      const watchDir = join(dataDir, 'runs', 't1', id, 'watch');
+      mkdirSync(join(watchDir, 'requests'), { recursive: true });
+      writeFileSync(join(watchDir, 'requests', `${rid}.req`), ['watch', dir, ...args, ''].join('\n'));
+      await until(() => existsSync(join(watchDir, 'responses', `${rid}.code`)), 'the answer');
+      return { code: Number(readFileSync(join(watchDir, 'responses', `${rid}.code`), 'utf8')), text: readFileSync(join(watchDir, 'responses', `${rid}.out`), 'utf8').trim() };
+    };
+    expect(await ask('1', 'events', 't3')).toEqual({ code: 0, text: 'Watching "Slack replies": all trigger events. Each one reaches you as a message while this chat is open.' });
+    expect(manager.eventWatchers('t3', lines)).toEqual([{ chatId: id, lines }]);
+    expect(await ask('2', 'tasks')).toEqual({
+      code: 0,
+      text: [
+        "The tasks of this chat's project, in the Tasks list's order (id, name):",
+        't2  "Deploy", runs started by hand; watching the end of each run',
+        't3  "Slack replies", runs by its watcher; watching all trigger events',
+      ].join('\n'),
+    });
+    expect(await ask('3', 'stop', 't2')).toEqual({ code: 0, text: 'Stopped watching "Deploy".' });
+    expect(manager.runWatchers('t2')).toEqual([]);
+    expect((await ask('4', 'task', 't9')).code).toBe(1);
+    expect((await ask('5', 'watch', 't2')).code).toBe(2);
+  });
+});
 
 describe('a chat opened again', { timeout: 30_000 }, () => {
   let manager: ChatManager | null = null;

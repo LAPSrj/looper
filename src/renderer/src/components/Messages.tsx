@@ -200,6 +200,12 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
   const commandState = useCommandState();
   const [canContinue, setCanContinue] = useState({ chat: false, terminal: false, guidance: false, compact: false });
   const [workFolder, setWorkFolder] = useState(false);
+  const [inAttention, setInAttention] = useState(false);
+  // Opening a run's window takes its notices off Needs attention; Close and Keep in Needs Attention puts them back.
+  useEffect(() => {
+    if (agentId) return;
+    void window.looper.runtime.markRunSeen(taskId, runId).then(setInAttention, () => undefined);
+  }, [taskId, runId, agentId]);
   useEffect(() => {
     if (agentId) return;
     // Read once as the window opens: a run still going keeps the Continue items off.
@@ -224,6 +230,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
       rawOutput,
       autoScroll,
       filter,
+      inAttention,
       tab: hasResult && showResult ? 'result' : 'details',
       message: !selectsFirstRow && selected !== null,
       findInMessage:

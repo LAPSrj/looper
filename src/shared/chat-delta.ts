@@ -20,7 +20,7 @@ export interface ChatWire extends Omit<ChatState, 'history' | 'rows'> {
 }
 
 /** The state's large fields that seldom change, sent only when they do. */
-const KEPT_FIELDS = ['commands', 'models', 'harnesses', 'modelWindows', 'subagentMessages'] as const;
+const KEPT_FIELDS = ['commands', 'models', 'harnesses', 'modelWindows', 'subagentMessages', 'watchTasks'] as const;
 
 /**
  * What a row shows, cheaply: its rows only grow at their end (streamed text, a result) or change state, so the
@@ -36,6 +36,7 @@ export function rowSignature(r: MessageRow): string {
     r.resultError ? 1 : 0,
     r.superseded ? 1 : 0,
     r.background ? `${r.background.status}:${tail(r.background.summary)}:${r.background.outputFile ?? ''}` : '',
+    r.started ? r.started.map((s) => `${s.background?.status}:${tail(s.background?.summary)}`).join(',') : '',
     r.agentId ?? '',
     r.patch?.length ?? '',
     r.sent ? `${r.sent.files.length}:${tail(r.sent.caption)}` : '',

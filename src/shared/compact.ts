@@ -55,7 +55,7 @@ export function compactRow(r: MessageRow): MessageRow | null {
   if (r.kind === 'prompt' || r.kind === 'guidance') {
     return { ...base, kind: r.kind, preview: r.preview, text: r.text, ...(r.attachments?.length ? { attachments: r.attachments } : {}) };
   }
-  if (r.kind === 'agent' || r.kind === 'events' || r.kind === 'delegate') return { ...base, kind: r.kind, preview: r.preview, text: r.text };
+  if (r.kind === 'agent' || r.kind === 'events' || r.kind === 'delegate' || r.kind === 'taskEvents') return { ...base, kind: r.kind, preview: r.preview, text: r.text };
   if (r.kind === 'peer') return { ...base, kind: r.kind, preview: r.preview, text: r.text, ...(r.from ? { from: r.from } : {}) };
   if (r.kind !== 'tool') return null;
   if (r.sent) return { ...base, kind: 'tool', tool: r.tool, preview: r.preview, text: r.sent.caption ?? '', sent: r.sent };
@@ -121,7 +121,7 @@ export function proseRows(rows: MessageRow[]): MessageRow[] {
 }
 
 /** The labels compactedText starts its blocks with. */
-const LABEL_RE = /^(\s*)(\[(?:User|Agent|Subagent report|Trigger events|From the agents|Tool call #|Result\]|Earlier session|Compaction))/gm;
+const LABEL_RE = /^(\s*)(\[(?:User|Agent|Subagent report|Trigger events|Task events|From the agents|Tool call #|Result\]|Earlier session|Compaction))/gm;
 
 /** Text inside a block, with each line that would read as one of the block labels escaped, so a message can't pass for another speaker. */
 function escapeLabels(text: string): string {
@@ -319,6 +319,7 @@ function proseBlock(r: MessageRow, path: (p: string) => string): { label: string
   if (r.kind === 'agent') return { label: '[Agent]', body: escapeLabels(r.text) };
   if (r.kind === 'events') return { label: '[Trigger events, while the agent worked]', body: escapeLabels(r.text) };
   if (r.kind === 'delegate') return { label: '[From the agents it started]', body: escapeLabels(r.text) };
+  if (r.kind === 'taskEvents') return { label: '[Task events, from the tasks the chat watches]', body: escapeLabels(r.text) };
   if (r.kind === 'peer') return { label: `[Message from ${r.from ?? 'another session'}]`, body: escapeLabels(r.text) };
   const attached = fileAttachments(r.attachments ?? []);
   const files = attached.length ? `\n\nAttached files:\n${attached.map((a) => `- ${path(a.path)}`).join('\n')}` : '';

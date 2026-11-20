@@ -3434,26 +3434,16 @@ html.phone-window .checkbox-group-box {
 }
 
 /*
- * A problem with what's in a field, as each system shows one: iOS, a footnote in its red under the field and no
- * symbol (it has no inline error symbol); Android, Material's error state: the field's outline and the supporting
- * text under it in the error color.
+ * A problem with what's in a field on Android: Material's error state, the field's outline and the supporting text
+ * under it in the error color. An iPhone tells it in an alert (FieldError).
  */
-html.phone-window .field-error > .status-glyph {
+html.phone-window[data-platform='android'] .field-error > .status-glyph {
   display: none;
-}
-html.phone-window .field-error {
-  margin: 6px 0 0;
-  color: var(--pg-red);
-  font-size: calc(13 * var(--u));
-  line-height: calc(18 * var(--u));
-}
-html.phone-window[data-platform='ios'] .form-group .field > .field-error {
-  flex: 0 0 100%;
-  margin: 0;
 }
 html.phone-window[data-platform='android'] .field-error {
   margin: 4px 0 0;
   padding: 0 16px;
+  color: var(--pg-red);
   font-size: calc(12 * var(--u));
   line-height: calc(16 * var(--u));
 }

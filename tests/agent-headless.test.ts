@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Logger } from '../src/engine/log';
 import { startAgent, type AgentHandle } from '../src/engine/steps/agent';
 import { FOCUS_REPORT_RE, HeadlessStream } from '../src/engine/steps/session';
-import type { RunContext } from '../src/engine/steps/common';
+import { writeLauncher, type RunContext } from '../src/engine/steps/common';
 import { writeText } from '../src/engine/store/fsutil';
 import { createTarget } from '../src/engine/target';
 import { EXAMPLE_TASK } from '../src/shared/example-task';
@@ -304,6 +304,26 @@ describe('headless agent over pipes', () => {
     expect(end.doneStatus).toBe('warning');
     expect(end.headline).toBe('Deployed with caveats');
     expect(end.body).toBe('Deployed, but the cache config needs a look.');
+  });
+
+  it('a done file an earlier session left in the run folder does not end the new one', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(root, `echo '{"type":"result","result":"The site is up."}'`);
+    const ctx = makeCtx(harness);
+    fs.writeFileSync(path.join(ctx.runDir, 'done'), '\n--help\n');
+    const end = await (await startAgent(ctx, { onData: () => {} })).finished;
+    expect(end.headline).not.toBe('--help');
+    expect(end.body).toBe('The site is up.');
+    expect(fs.existsSync(path.join(ctx.runDir, 'done'))).toBe(false);
+  });
+
+  it('a launcher without a done command has no done helper and no LOOPER_DONE_FILE', () => {
+    const ctx = makeCtx('true');
+    const script = fs.readFileSync(writeLauncher(ctx, 'plain', 'true').hostPath, 'utf8');
+    expect(script).not.toContain('looper-done');
+    expect(script).not.toContain('LOOPER_DONE_FILE');
+    expect(fs.existsSync(path.join(ctx.runDir, 'bin', 'looper-done'))).toBe(false);
   });
 
   it('ends as an error with a retry time when the usage limit is hit', async () => {
@@ -764,6 +784,24 @@ describe('headless agent over pipes', () => {
     // Its Bash call waits in the foreground for the whole answer wait, past Claude Code's own ceiling if it must.
     expect(mod.ask).toEqual({ command: 'looper-ask', timeoutMs: (Math.ceil(0.02 * 60) + 120 + 30) * 1000 });
     expect(settings.env.BASH_MAX_TIMEOUT_MS).toBe('600000');
+  });
+
+  it('ask: looper-ask --help prints its usage and asks nothing', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-fake-'));
+    dirs.push(root);
+    const harness = fakeHarness(
+      root,
+      [
+        `h=$(looper-ask --help); printf '%s|%s' "$h" "$?" > '${path.join(root, 'help.txt')}'`,
+        `echo '{"type":"result","result":"no question"}'`,
+      ].join('\n'),
+    );
+    const ctx = makeCtx(harness, { agent: { ask: { allowed: true, waitMin: 0.02 } } });
+    const asked: string[] = [];
+    const handle = await startAgent(ctx, { onData: () => {}, onQuestion: (q) => asked.push(q) });
+    await handle.finished;
+    expect(asked).toEqual([]);
+    expect(fs.readFileSync(path.join(root, 'help.txt'), 'utf8')).toBe('usage: looper-ask "<question>"|0');
   });
 
   it('ask: a task that does not allow it gives the agent no looper-ask and no word about it', async () => {

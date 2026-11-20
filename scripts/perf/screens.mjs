@@ -19,6 +19,7 @@ export const WINDOWS = [
   { name: 'Send to Chats', hash: 'send-to-sessions', size: [520, 520] },
   { name: 'Menu level', hash: 'menu-level/0', size: [336, 436] },
   { name: 'Rename Chat', hash: 'session-rename/{chat}', size: [420, 240], fits: true },
+  { name: 'Watch Task Events', hash: 'watch-events/{chat}/{task}', size: [420, 300], fits: true },
   { name: 'Settings', hash: 'settings', size: [720, 642], contentSize: true, fits: true },
   { name: 'Agent Settings', hash: 'agent-settings', size: [900, 680] },
   { name: 'MCP Server', hash: 'mcp-server/{key}', via: 'mcp', size: [560, 560] },

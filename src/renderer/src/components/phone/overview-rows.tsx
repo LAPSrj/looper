@@ -8,11 +8,11 @@ import { Section } from '../Section';
 import { Row } from './PhoneList';
 
 /** A long press on a row about a task: its menu, which acts on that task. */
-export const taskRowMenu = (m: MainWindow, taskId: string, list: 'attention' | 'running', runId: string | null, key?: string) => () => {
+export const taskRowMenu = (m: MainWindow, taskId: string, list: 'attention' | 'running', runId: string | null, key?: string, clearAttention?: () => void) => () => {
   const task = m.tasks.find((t) => t.id === taskId);
   if (!task) return;
   m.setPick({ list, taskId, runId, key });
-  showTaskMenu(task, m.runtimes[taskId]);
+  showTaskMenu(task, m.runtimes[taskId], clearAttention);
 };
 
 /** Needs Attention, with the Claude Code logins that need the user: a tap opens a row as a double-click does. */
@@ -36,7 +36,11 @@ export function AttentionGroup({ m, rows }: { m: MainWindow; rows: AttentionRow[
             sub={at !== null ? `${fmtClock(at, now)} · ${n.r.problem}` : n.r.problem}
             chevron
             onOpen={() => opens.need(n)}
-            onMenu={n.kind === 'task' ? taskRowMenu(m, n.r.task.id, 'attention', n.r.runId, attentionKey(n.r)) : () => showNeedMenu(n, m.runtimes)}
+            onMenu={
+              n.kind === 'task'
+                ? taskRowMenu(m, n.r.task.id, 'attention', n.r.runId, attentionKey(n.r), () => m.clearAttention([n.r]))
+                : () => showNeedMenu(n, m.runtimes, m.clearAttention)
+            }
           />
         );
       })}

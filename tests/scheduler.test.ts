@@ -68,6 +68,8 @@ interface Harness {
   agentThrows: Error | null;
   /** What each agent's end told about the login (onLogin's `worked`), in order. */
   logins: boolean[];
+  /** Each run's end as onRunEnd reports it, in order. */
+  runEnds: { runId: string; outcome: string; detail: string }[];
   tickN(n: number): Promise<void>;
 }
 
@@ -116,9 +118,11 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
     completeSignals: [],
     agentThrows: null,
     logins: [],
+    runEnds: [],
   };
   const sched = new Scheduler({
     onLogin: (_task, worked) => h.logins!.push(worked),
+    onRunEnd: (_task, runId, end) => h.runEnds!.push({ runId, ...end }),
     dataDir: dir,
     host: 'wsl',
     settings,
@@ -420,6 +424,42 @@ describe('Scheduler', () => {
     expect(h.sched.get('t1')!.notices.map((p) => p.detail)).toEqual(['Blocked']);
     h.sched.clearNotices({ taskId: 't1' });
     expect(h.sched.get('t1')!.notices).toEqual([]);
+  });
+
+  it('takes a run’s notices off Needs attention as its window opens, and puts them back for Close and Keep in Needs Attention', async () => {
+    h.checks.push(check('act'), check('act'));
+    h.agentEnds.push({ ...agentEnd('done', 'Deployed with caveats'), doneStatus: 'warning' });
+    h.agentEnds.push({ ...agentEnd('done', 'Blocked'), doneStatus: 'error' });
+    await h.tickN(1);
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    const [first, second] = h.sched.get('t1')!.notices;
+    expect(h.sched.markRunSeen('t1', first.runId!)).toBe(true);
+    expect(h.sched.get('t1')!.notices).toEqual([second]);
+    // The window opened again (a reload) can still put them back.
+    expect(h.sched.markRunSeen('t1', first.runId!)).toBe(true);
+    expect(h.sched.markRunSeen('t1', 'no-such-run')).toBe(false);
+    h.sched.markRunUnseen('t1', first.runId!);
+    expect(h.sched.get('t1')!.notices).toEqual([first, second]);
+    // Clearing the task's runs forgets what a window could put back.
+    h.sched.markRunSeen('t1', second.runId!);
+    h.sched.clearNotices({ taskId: 't1' });
+    h.sched.markRunUnseen('t1', second.runId!);
+    expect(h.sched.get('t1')!.notices).toEqual([]);
+  });
+
+  it('tells how each run ended, a check that found nothing to do too', async () => {
+    h.checks.push(check('act'), check('noop'));
+    h.agentEnds.push({ ...agentEnd('done', 'Fixed 3 flaky tests'), doneStatus: 'success' });
+    await h.tickN(1);
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.runEnds.map((e) => [e.outcome, e.detail])).toEqual([
+      ['success', 'Fixed 3 flaky tests'],
+      ['noop', expect.any(String)],
+    ]);
+    expect(h.runEnds[1].runId).toBe(h.sched.get('t1')!.lastRunId);
+    expect(h.runEnds[0].runId).not.toBe(h.runEnds[1].runId);
   });
 
   it('an auto-pause is the problem of the run that caused it', async () => {

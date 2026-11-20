@@ -52,7 +52,7 @@ export class ClaudeStreamAccumulator extends TranscriptAccumulator {
 
   /** The user's message as a prompt row: Looper adds it itself, and drops Claude's replay of it. */
   addPrompt(text: string, attachments?: Attachment[]): MessageRow {
-    const row = this.push({ kind: 'prompt', ts: new Date().toISOString(), text });
+    const row = this.promptRow(text);
     if (attachments?.length) row.attachments = attachments;
     return row;
   }
@@ -86,7 +86,7 @@ export class CodexExecAccumulator extends TranscriptAccumulator {
   }
 
   addPrompt(text: string, attachments?: Attachment[]): MessageRow {
-    const row = this.push({ kind: 'prompt', ts: new Date().toISOString(), text });
+    const row = this.promptRow(text);
     if (attachments?.length) row.attachments = attachments;
     return row;
   }

@@ -411,6 +411,74 @@ describe("the mod's messages for the agent", () => {
     await hooks['turn.complete']($, { reason: 'aborted', isAborted: true }, pass);
     expect(ended().aborted).toBe(true);
   });
+  it('runs a message that begins with / as a slash command, and says so when Claude Code refuses it', async () => {
+    const dir = tmp('looper-mod-command-');
+    const user = path.join(dir, 'chat-message.json');
+    const module = path.join(dir, 'register.mjs');
+    fs.writeFileSync(
+      module,
+      renderMod({
+        files: { ready: path.join(dir, 'mod.json'), control: path.join(dir, 'c.json'), turnEnd: path.join(dir, 'turn-end.json'), usage: path.join(dir, 'u.json'), turn: path.join(dir, 't.json') },
+        inbox: [user],
+        userInbox: [user],
+        signalCommands: [],
+        guardMessage: '',
+        headless: false,
+        prompted: false,
+        windows: false,
+      }),
+    );
+    type Hook = ($: unknown, e: Record<string, unknown>, next: (e: Record<string, unknown>) => unknown) => unknown;
+    const hooks: Record<string, Hook> = {};
+    const { register } = (await import(pathToFileURL(module).href)) as { register: (on: (name: string, hook: Hook) => void) => void };
+    register((name, hook) => (hooks[name] = hook));
+    let tick: () => Promise<void> = async () => {};
+    const prompts: unknown[] = [];
+    const commands: unknown[] = [];
+    const notices: unknown[] = [];
+    const $ = {
+      fs: {
+        write: async (p: string, text: string) => fs.writeFileSync(p, text),
+        read: async (p: string) => fs.readFileSync(p, 'utf8'),
+        exists: async (p: string) => fs.existsSync(p),
+      },
+      process: { run: async (argv: string[]) => (fs.renameSync(argv[1], argv[2]), { exitCode: 0 }) },
+      session: { id: async () => 's1', usage: async () => ({}) },
+      ui: { log: (text: string) => void notices.push(text) },
+      clock: { every: (_ms: number, fn: () => Promise<void>) => (tick = fn) },
+      turn: { abort: async () => {} },
+      prompt: {
+        read: async () => ({ text: '', cursor: 0 }),
+        submit: async (p: { text: string }) => {
+          if (p.text.startsWith('/')) throw new Error('a text beginning with / would run a command as the user');
+          prompts.push(p);
+          return { text: p.text };
+        },
+      },
+      command: {
+        run: async (c: { command: string }) => {
+          if (c.command !== 'pick-up') throw new Error('looper: $.command.run: unknown command /' + c.command);
+          commands.push(c);
+          return {};
+        },
+      },
+    };
+    await hooks['session.start']($, {}, async (x: unknown) => x);
+
+    fs.writeFileSync(user, JSON.stringify('/pick-up elio costs'));
+    await tick();
+    expect(commands).toEqual([{ command: 'pick-up', args: 'elio costs' }]);
+    expect(prompts).toEqual([]);
+    expect(fs.existsSync(user)).toBe(false);
+
+    fs.writeFileSync(user, JSON.stringify('/pikc-up'));
+    await tick();
+    expect(notices).toEqual(['couldn\'t send "/pikc-up": unknown command /pikc-up']);
+
+    fs.writeFileSync(user, JSON.stringify('plain words'));
+    await tick();
+    expect(prompts).toEqual([{ text: 'plain words', asUser: true }]);
+  });
 });
 
 describe('a Claude Code run on the mod', () => {

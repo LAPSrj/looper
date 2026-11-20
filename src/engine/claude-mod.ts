@@ -328,7 +328,20 @@ async function poll($) {
   const box = await $.prompt.read()
   if (box.text) return
   const text = await takeMessage($)
-  if (text) await $.prompt.submit({ text, asUser: true })
+  if (!text) return
+  try {
+    await deliver($, text)
+  } catch (err) {
+    // Another try would be refused the same way: the person sees why instead.
+    const reason = ((err && err.message) || String(err)).replace(/^\S+: \$\.[\w.]+: /, '')
+    $.ui.log('couldn\'t send "' + text.split('\n')[0] + '": ' + reason)
+  }
+}
+
+// Claude Code refuses a plugin's prompt that begins with /: a slash command runs as a command.
+function deliver($, text) {
+  const slash = /^\s*\/(\S+)\s*([\s\S]*)$/.exec(text)
+  return slash ? $.command.run({ command: slash[1], args: slash[2].trim() }) : $.prompt.submit({ text, asUser: true })
 }
 
 // The user's message ends the turn id and starts the next one as their prompt: a note in the turn would never read as
@@ -354,7 +367,7 @@ async function interrupt($, id) {
       // The turn ended on its own meanwhile: the prompt starts the next one all the same.
     }
     // It runs once the session is idle, which the abort makes it.
-    $.prompt.submit({ text, asUser: true }).catch(() => writeJson($, from, text))
+    deliver($, text).catch(() => writeJson($, from, text))
     return true
   } finally {
     interrupting = false

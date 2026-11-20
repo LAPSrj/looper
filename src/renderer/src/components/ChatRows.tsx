@@ -461,6 +461,21 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
           <MessageBody text={row.text} />
         </Disclosure>
       );
+    case 'taskEvents':
+      // The run ends and trigger events of the tasks the chat watches: Looper's message, not the user's.
+      return (
+        <Disclosure
+          className="chat-aside"
+          onContextMenu={onContextMenu}
+          summary={
+            <summary>
+              Task events <span className="chat-tool-preview">{row.preview}</span>
+            </summary>
+          }
+        >
+          <MessageBody text={row.text} />
+        </Disclosure>
+      );
     case 'peer':
       // A message another Claude Code session sent the agent: that session's words, not the user's.
       return (

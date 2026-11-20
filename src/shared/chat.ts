@@ -139,6 +139,25 @@ export interface ChatState {
   continueAnyway?: boolean;
   /** The conversation is in Claude Code's Code Mode, which Claude Code goes on with only in a terminal: the chat stays interactive. */
   codeMode?: boolean;
+  /** Chat → Watch Task Events: the tasks of the chat's project in the Tasks list's order, with the event ids it watches each for. */
+  watchTasks?: WatchableTask[];
+}
+
+/** A task of the chat's project in Chat → Watch Task Events, and the event ids the chat watches it for ('' for all its events). */
+export interface WatchableTask {
+  id: string;
+  name: string;
+  events: string[];
+}
+
+/**
+ * What a chat watches of a task of its project (Watch Task Events, looper-watch): the end of each of its runs
+ * (`runs`), or its trigger events (`events`), only those whose related id is `eventId` when it has one.
+ */
+export interface TaskWatch {
+  taskId: string;
+  what: 'runs' | 'events';
+  eventId?: string;
 }
 
 /** A turn that failed on the usage limit: when, and when the limit resets (ms since the epoch) when the harness said. */
@@ -229,6 +248,8 @@ export interface ChatInfo {
   resumedSession?: string;
   /** The conversation is in Claude Code's Code Mode (ChatState.codeMode). */
   codeMode?: boolean;
+  /** Watch Task Events and looper-watch: what the chat watches. */
+  watches?: TaskWatch[];
 }
 
 /**

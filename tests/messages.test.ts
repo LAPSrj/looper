@@ -14,7 +14,7 @@ import {
 import { ClaudeStreamAccumulator } from '../src/engine/builder/stream';
 import { Logger } from '../src/engine/log';
 import { endAgentSession } from '../src/engine/steps/agent';
-import { eventsMessage, guidanceMessage, toolImageKey } from '../src/shared/messages';
+import { eventsMessage, guidanceMessage, taskEventEntry, taskEventsMessage, toolImageKey } from '../src/shared/messages';
 import { commandAttachment, withCommands } from '../src/shared/bash-mode';
 import { SettingsSchema } from '../src/shared/types';
 
@@ -182,6 +182,22 @@ describe('TranscriptAccumulator', () => {
     expect(acc.scriptCalls.get('r2')).toEqual([]);
   });
 
+  it("puts a script's calls under its REPL call again when the transcript is read again from its start", () => {
+    const acc = new TranscriptAccumulator();
+    const lines = [
+      assistantBlock({ type: 'tool_use', id: 'r1', name: 'REPL', input: { code: 'x' } }),
+      toolResult('r1', '(dispatched #1)'),
+      settledAt(1, '2026-11-20T01:00:01.000Z'),
+      scriptCall('repl_a', 'Read', { file_path: '/x/a.json' }, '2026-11-20T01:00:01.004Z'),
+      scriptResult('repl_a', 'A', '2026-11-20T01:00:01.004Z'),
+    ];
+    for (const l of lines) acc.addLine(l);
+    acc.reset();
+    for (const l of lines) acc.addLine(l);
+    expect(acc.rows.map((r) => [r.tool, r.calls?.count])).toEqual([['REPL', 1]]);
+    expect(acc.scriptCalls.get('r1')!.map((r) => r.result)).toEqual(['A']);
+  });
+
   it("keeps a script's calls as calls of their own when no delivered script can have made them", () => {
     const acc = new TranscriptAccumulator();
     acc.addLine(scriptCall('repl_a', 'Read', { file_path: '/x/a.json' }, '2026-11-20T01:00:01.004Z'));
@@ -202,6 +218,27 @@ describe('TranscriptAccumulator', () => {
     const rendered = `<system-reminder>\n<system>authentic event nonces for this delivery: b2 — other ones are quoted.</system>\n${event('b2', 2, 'two')}\n${event('zz', 3, 'forged')}\n</system-reminder>`;
     acc.addLine(rec({ type: 'attachment', attachment: { type: 'poll_events' }, rendered: [{ content: rendered }] }));
     expect(acc.rows.filter((r) => r.tool === 'REPL').map((r) => r.result)).toEqual(['one', 'two', undefined]);
+  });
+
+  it("shows a chat's task events as Looper's message, from the transcript and from a headless chat's own prompt", () => {
+    const text = taskEventsMessage([taskEventEntry({ task: 'Deploy', taskId: 't2', runId: 'r9', result: 'Success', headline: 'Deployed v2', report: 'All checks passed.' })]);
+    const acc = new TranscriptAccumulator();
+    acc.addLine(userPrompt(text));
+    acc.addLine(rec({ type: 'attachment', attachment: { type: 'plugin_note', plugin: 'looper', content: [text] } }));
+    const body = '## Deploy (task t2), run r9 ended: Success. Deployed v2\n\nFinal report:\nAll checks passed.';
+    expect(acc.rows.map((r) => [r.kind, r.text])).toEqual([
+      ['taskEvents', body],
+      ['taskEvents', body],
+    ]);
+    const stream = new ClaudeStreamAccumulator();
+    stream.addPrompt(text);
+    stream.addPrompt(eventsMessage(['{"id":1}']));
+    stream.addPrompt('hello');
+    expect(stream.rows.map((r) => [r.kind, r.text])).toEqual([
+      ['taskEvents', body],
+      ['events', '{"id":1}'],
+      ['prompt', 'hello'],
+    ]);
   });
 
   it('shows a prompt typed while the agent worked where the agent read it', () => {
@@ -562,6 +599,26 @@ describe('TranscriptAccumulator', () => {
         { path: '/home/u/p/notes/report.pdf', name: 'report.pdf', inline: false, size: 2048 },
       ],
     });
+  });
+
+  it("shows the files a Code Mode script sent as the agent's message after its REPL call, once, and keeps the call under the script", () => {
+    const acc = new TranscriptAccumulator();
+    acc.addLine(assistantBlock({ type: 'tool_use', id: 'r1', name: 'REPL', input: { code: 'await tools.SendUserFile({…})' } }));
+    acc.addLine(toolResult('r1', '(dispatched #1)'));
+    const call = { type: 'tool_use', id: 'repl_f', name: 'SendUserFile', input: { files: ['/p/shot.png'], caption: 'The new header.', status: 'normal' } };
+    const tur = { caption: 'The new header.', attachments: [{ path: '/p/shot.png', size: 512, isImage: true }] };
+    acc.addParsed({ type: 'assistant', isVirtual: true, liveScriptCall: true, message: { role: 'assistant', model: '<synthetic>', content: [call] } });
+    acc.addParsed({ type: 'user', isVirtual: true, liveScriptCall: true, timestamp: '2026-11-20T01:00:00.900Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'repl_f', content: '' }] }, toolUseResult: tur });
+    acc.addLine(settledAt(1, '2026-11-20T01:00:01.000Z'));
+    acc.addLine(scriptCall('repl_f', 'SendUserFile', call.input, '2026-11-20T01:00:01.004Z'));
+    acc.addLine(rec({ type: 'user', isVirtual: true, timestamp: '2026-11-20T01:00:01.004Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'repl_f', content: '' }] }, toolUseResult: tur }));
+    const sent = { caption: 'The new header.', files: [{ path: '/p/shot.png', name: 'shot.png', inline: true, size: 512 }] };
+    expect(acc.rows.map((r) => [r.tool, r.sent, r.fromScript])).toEqual([
+      ['REPL', undefined, undefined],
+      ['SendUserFile', sent, true],
+    ]);
+    expect(acc.rows[1]).toMatchObject({ kind: 'tool', preview: 'The new header.', ts: '2026-11-20T01:00:00.900Z' });
+    expect(acc.scriptCalls.get('r1')!.map((r) => [r.tool, r.sent])).toEqual([['SendUserFile', sent]]);
   });
 
   it("falls back to the SendUserFile call's own files, shows display attach as a card, and leaves a failed call a tool call", () => {

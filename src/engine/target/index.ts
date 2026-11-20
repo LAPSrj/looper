@@ -37,10 +37,10 @@ export interface LauncherSpec {
   env: Record<string, string>;
   /** Target-native path to the run's bin/ dir (holds the done helper). */
   binDir: string;
-  /** Name of the done command defined for this step (looper-done / looper-classify). */
-  doneCommand: string;
+  /** Name of the done command defined for this step (looper-done / looper-classify). Unset: the launcher defines none. */
+  doneCommand?: string;
   /** Statuses the done command accepts as its first argument. */
-  doneStatuses: readonly string[];
+  doneStatuses?: readonly string[];
   /** Command line(s), already in the target's shell syntax. */
   body: string;
 }

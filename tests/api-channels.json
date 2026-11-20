@@ -974,6 +974,38 @@
    "err": "Error invoking remote method 'runtime:clearNotices': Error: boom runtime:clearNotices"
   }
  },
+ "runtime.markRunSeen": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "runtime:markRunSeen",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runtime:markRunSeen': Error: boom runtime:markRunSeen"
+  }
+ },
+ "runtime.markRunUnseen": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "runtime:markRunUnseen",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runtime:markRunUnseen': Error: boom runtime:markRunUnseen"
+  }
+ },
  "runs.list": {
   "arity": 2,
   "calls": [
@@ -1425,6 +1457,36 @@
     "chat:continueAnyway",
     [
      "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "chat.setWatch": {
+  "arity": 4,
+  "calls": [
+   [
+    "send",
+    "chat:setWatch",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
+    ]
+   ]
+  ],
+  "result": {}
+ },
+ "chat.openWatch": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "chat:openWatch",
+    [
+     "a0",
+     "a1"
     ]
    ]
   ],
@@ -2099,6 +2161,23 @@
   ],
   "result": {
    "err": "Error invoking remote method 'sessions:sentFile': Error: boom sessions:sentFile"
+  }
+ },
+ "sessions.readSentFile": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "sessions:readSentFile",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'sessions:readSentFile': Error: boom sessions:readSentFile"
   }
  },
  "sessions.openFile": {

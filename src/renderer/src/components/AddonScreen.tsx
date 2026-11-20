@@ -18,6 +18,8 @@ import { Section } from './Section';
 import { CheckboxField, CheckboxGroup, Field, FieldRow, FormGroup, InfoBar, InputRow, InputSuffix, MainInstruction, NumberInput, SelectInput, TabBar, TextArea, TextInput } from './ui';
 import { WindowActions } from './WindowActions';
 import { reportError } from '../report-error';
+import { useAddonList } from '../live-state';
+import { AddonNotRunning } from './AddonNotRunning';
 import { isPhone } from '../web/page-nav';
 
 type Value = AddonValue;
@@ -30,6 +32,17 @@ const SLOW_DRAW_MS = 500;
 
 /** What a screen tells its window, for the commands placed on it (CommandContext `addon.screen`). */
 export type AddonScreenReport = NonNullable<AddonContext['screen']>;
+
+/** A screen the addon couldn't draw: the tab's own state when the addon isn't running (Restart), else why, with Try Again. */
+function ScreenFailed({ addonId, addonName, error, retry }: { addonId: string; addonName: string; error: string; retry: () => void }) {
+  const addon = useAddonList().addons.find((a) => a.id === addonId);
+  if (addon && addon.status !== 'running') return <AddonNotRunning addon={addon} />;
+  return (
+    <EmptyState level="error" title={`${addonName} couldn't show this screen`} action={<button className="btn" onClick={retry}>Try Again</button>}>
+      {error}
+    </EmptyState>
+  );
+}
 
 /**
  * An addon's screen, drawn from the nodes it sent: in the main window's
@@ -621,11 +634,7 @@ export function AddonScreenView({
     return out;
   };
 
-  const failed = error !== null && (
-    <EmptyState level="error" title={`${addonName} couldn't show this screen`} action={<button className="btn" onClick={load}>Try Again</button>}>
-      {error}
-    </EmptyState>
-  );
+  const failed = error !== null && <ScreenFailed addonId={addonId} addonName={addonName} error={error} retry={load} />;
 
   const instruction = screen?.instruction && !pushed && <MainInstruction>{screen.instruction}</MainInstruction>;
   const page = failed || (screen && (

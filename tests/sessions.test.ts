@@ -118,10 +118,59 @@ describe('background work in a transcript', () => {
     expect(backgroundOf(acc.rows)).toEqual([expect.objectContaining({ id: 'wsv0', kind: 'workflow', label: 'Do it', workflowRunId: 'wf_e8-949', status: 'completed' })]);
   });
 
+  /** A Monitor's events and ends as Claude Code queues them (claude 2.1.325). */
+  const monitorNote = (id: string, body: string) =>
+    line({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: `<task-notification>\n<task-id>${id}</task-id>\n${body}\n</task-notification>` } });
+
+  it('tracks a Monitor by its task id: its events leave it running, and its end or its expiry ends it', () => {
+    const acc = new TranscriptAccumulator();
+    for (const [id, task] of [['tu5', 'bm1'], ['tu6', 'bm2']]) {
+      acc.addLine(line({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Monitor', input: { command: 'tail -f log', description: `Watch ${task}`, timeout_ms: 1800000 } }] } }));
+      acc.addLine(
+        line({
+          type: 'user',
+          message: { content: [{ type: 'tool_result', tool_use_id: id, content: `Monitor started (task ${task}, expires in 30m unless the source ends first). You will be notified on each event.` }] },
+          toolUseResult: { taskId: task, timeoutMs: 1800000, persistent: false },
+        }),
+      );
+    }
+    expect(backgroundOf(acc.rows)).toEqual([
+      expect.objectContaining({ id: 'bm2', kind: 'monitor', label: 'Watch bm2', command: 'tail -f log', status: 'running' }),
+      expect.objectContaining({ id: 'bm1', kind: 'monitor', label: 'Watch bm1', status: 'running' }),
+    ]);
+    acc.addLine(monitorNote('bm1', '<summary>Monitor event: "Watch bm1"</summary>\n<event>line 1</event>'));
+    expect(acc.rows[0].background?.status).toBe('running');
+    acc.addLine(
+      monitorNote('bm1', '<tool-use-id>tu5</tool-use-id>\n<output-file>/tmp/claude-1000/p/s/tasks/bm1.output</output-file>\n<status>completed</status>\n<summary>Monitor "Watch bm1" stream ended</summary>\n<event>line 2</event>'),
+    );
+    expect(acc.rows[0].background).toEqual({ id: 'bm1', status: 'completed', summary: 'Monitor "Watch bm1" stream ended', outputFile: '/tmp/claude-1000/p/s/tasks/bm1.output' });
+    acc.addLine(monitorNote('bm2', '<summary>Monitor event: "Watch bm2"</summary>\n<event>[Monitor expired after 30m with no events delivered. Re-arm it if you still need the watch.]</event>'));
+    expect(acc.rows[1].background).toEqual({ id: 'bm2', status: 'completed', summary: 'Monitor expired after 30m with no events delivered' });
+  });
+
+  it("lists the background work a Code Mode script started, from its REPL row, as the mod hands its calls over and as the transcript copies them", () => {
+    const acc = new TranscriptAccumulator();
+    acc.addLine(line({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'r1', name: 'REPL', input: { code: 'await tools.Monitor({…})' } }] } }));
+    acc.addLine(line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'r1', content: '(dispatched #1)' }] } }));
+    const call = { type: 'tool_use', id: 'repl_m', name: 'Monitor', input: { command: 'node listen.mjs', description: 'Slack replies' } };
+    const tur = { taskId: 'bgs', timeoutMs: 1800000, persistent: false };
+    acc.addParsed({ type: 'assistant', isVirtual: true, liveScriptCall: true, message: { role: 'assistant', model: '<synthetic>', content: [call] } });
+    acc.addParsed({ type: 'user', isVirtual: true, liveScriptCall: true, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'repl_m', content: '' }] }, toolUseResult: tur });
+    expect(acc.rows).toHaveLength(1);
+    expect(backgroundOf(acc.rows)).toEqual([expect.objectContaining({ id: 'bgs', kind: 'monitor', label: 'Slack replies', status: 'running' })]);
+    acc.addLine(monitorNote('bgs', '<summary>Monitor event: "Slack replies"</summary>\n<event>[Monitor expired after 30m with 1 event delivered. Re-arm it if you still need the watch.]</event>'));
+    // The script ended: the transcript's copies of its call change nothing.
+    acc.addLine(line({ type: 'attachment', attachment: { type: 'poll_events', envelopes: ['<event nonce="a" kind="repl-eval" at="2026-11-20T01:00:01.000Z" eval="1" ms="5" status="settled">\n<result>{}</result>\n</event>'] } }));
+    acc.addLine(line({ type: 'assistant', isVirtual: true, timestamp: '2026-11-20T01:00:01.004Z', message: { role: 'assistant', model: '<synthetic>', content: [call] } }));
+    acc.addLine(line({ type: 'user', isVirtual: true, timestamp: '2026-11-20T01:00:01.004Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'repl_m', content: '' }] }, toolUseResult: tur }));
+    expect(backgroundOf(acc.rows)).toEqual([expect.objectContaining({ id: 'bgs', status: 'completed', summary: 'Monitor expired after 30m with 1 event delivered' })]);
+  });
+
   it('reads the status of a task notification', () => {
     expect(parseTaskNotification('<task-id>x</task-id><status>failed</status>')).toEqual({ id: 'x', status: 'failed', summary: undefined });
     expect(parseTaskNotification('<task-id>x</task-id><status>killed</status>')?.status).toBe('stopped');
     expect(parseTaskNotification('no notification')).toBeNull();
+    expect(parseTaskNotification('<task-id>x</task-id><summary>Monitor event: "w"</summary><event>tick</event>')).toBeNull();
   });
 });
 

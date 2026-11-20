@@ -3842,6 +3842,33 @@ button:focus-visible,
   border: 1px solid var(--border);
   user-select: text;
 }
+/* The files a SendUserFile call sent, on Now: each on a page as a document is, an image or a PDF's pages on the gray. */
+.now-sent-caption,
+.now-sent-name {
+  max-width: 68ch;
+  margin: 0 auto 8px;
+}
+.now-sent-name {
+  margin-bottom: 4px;
+  font-size: var(--font-caption);
+}
+.now-sent-file + .now-sent-file {
+  margin-top: 16px;
+}
+.now-sent-pages {
+  text-align: center;
+}
+.now-sent-image {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.now-sent-text {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+}
 /* A message between agents on Now, as an email: its header rows, a rule, then the message. */
 .now-mail-head {
   border-collapse: collapse;

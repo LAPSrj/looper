@@ -106,6 +106,9 @@ export function messagesToMarkdown(rows: readonly MessageRow[], opts: MessagesMa
       case 'delegate':
         parts.push(heading(2, 'From the agents it started', row.ts, plain), prose(row.text));
         break;
+      case 'taskEvents':
+        parts.push(heading(2, 'Task events', row.ts, plain), prose(row.text));
+        break;
       case 'peer':
         parts.push(heading(2, `Message from ${row.from ?? 'another session'}`, row.ts, plain), prose(row.text));
         break;

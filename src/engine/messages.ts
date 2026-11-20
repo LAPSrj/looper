@@ -6,6 +6,7 @@ import {
   eventsText,
   guidanceText,
   peerMessages,
+  taskEventsText,
   CHANGE_TOOLS,
   scriptCallsPage,
   toolImageId,
@@ -310,7 +311,7 @@ const WAITING_ON_OWN_WORK = /waiting on its own background work|background work 
 const STOP_HOOK_FEEDBACK = 'Stop hook feedback:';
 
 /** Rows of what the agent was given: a turn that starts with one of them isn't the one before going on. */
-const INPUT_KINDS = new Set<MessageRow['kind']>(['prompt', 'guidance', 'events', 'delegate', 'peer', 'task']);
+const INPUT_KINDS = new Set<MessageRow['kind']>(['prompt', 'guidance', 'events', 'delegate', 'taskEvents', 'peer', 'task']);
 
 /** A message's text: the string itself, or its text blocks joined by newlines. */
 function textOf(content: unknown): string {
@@ -593,6 +594,7 @@ export class TranscriptAccumulator {
     this.scriptCalls.clear();
     this.settled = [];
     this.callOwners.clear();
+    this.callRepl.clear();
     this.scriptFiles.clear();
     this.nextId = 0;
     this.byToolId.clear();
@@ -606,21 +608,29 @@ export class TranscriptAccumulator {
 
   /**
    * A Bash call run in the background (its result names the task id and the
-   * file its output goes to), an Agent call launched in the background, or a
+   * file its output goes to), an Agent call launched in the background, a
    * Workflow call (its result's toolUseResult is `{status:'async_launched',
-   * taskId, taskType:'local_workflow', runId, …}`, claude 2.1.314).
+   * taskId, taskType:'local_workflow', runId, …}`, claude 2.1.314), or a
+   * Monitor (`{taskId, timeoutMs, persistent}`, and its result starts "Monitor
+   * started (task b5mejbp4l, …", claude 2.1.325). A Code Mode script's call goes
+   * on its REPL row's `started` too, since the conversation's rows don't hold it.
    */
   private takeBackground(row: MessageRow, tur: Rec | undefined, result: string | undefined): void {
     let id: string | undefined;
     if (typeof tur?.backgroundTaskId === 'string' && tur.backgroundTaskId) id = tur.backgroundTaskId;
     else if (tur?.isAsync === true && typeof tur.agentId === 'string' && tur.agentId) id = tur.agentId;
     else if (tur?.taskType === 'local_workflow' && typeof tur.taskId === 'string' && tur.taskId) id = tur.taskId;
+    else if (row.tool === 'Monitor') id = (typeof tur?.taskId === 'string' && tur.taskId ? tur.taskId : undefined) ?? /^Monitor started \(task (\w+)/.exec(result ?? '')?.[1];
     if (!id) return;
+    // The transcript's copy of a script's call the mod handed over: the row already says how its work stands.
+    if (row.background?.id === id) return;
     const outputFile =
       (typeof tur?.outputFile === 'string' && tur.outputFile ? tur.outputFile : undefined) ??
       /Output is being written to: (\S+?)\.?(?:\s|$)/.exec(result ?? '')?.[1];
     row.background = { id, status: 'running', ...(outputFile ? { outputFile } : {}) };
     this.byBackgroundId.set(id, row);
+    const repl = row.toolUseId ? this.callRepl.get(row.toolUseId) : undefined;
+    if (repl) repl.started = [...(repl.started ?? []), row];
   }
 
   /**
@@ -639,7 +649,12 @@ export class TranscriptAccumulator {
       delete row.background.summary;
       return;
     }
-    row.background = { ...row.background, status: n.status, ...(n.summary ? { summary: n.summary } : {}) };
+    row.background = {
+      ...row.background,
+      status: n.status,
+      ...(n.summary ? { summary: n.summary } : {}),
+      ...(n.outputFile && !row.background.outputFile ? { outputFile: n.outputFile } : {}),
+    };
   }
 
   addLine(line: string): void {
@@ -789,11 +804,16 @@ export class TranscriptAccumulator {
           if (typeof agentId === 'string' && agentId) row.agentId = agentId;
           this.takeBackground(row, tur, row.result);
           // SendUserFile: the result confirms delivery, so the call becomes the agent's message with its files.
-          if (row.tool === 'SendUserFile' && block.is_error !== true) {
+          if (row.tool === 'SendUserFile' && block.is_error !== true && !row.sent) {
             const sent = sentFilesOf(row.input, tur);
             if (sent) {
               row.sent = sent;
               row.preview = sent.caption ? previewOf(sent.caption) : sent.files.map((f) => f.name).join(', ').slice(0, MAX_PREVIEW);
+              // A script's call is under its REPL call, which the conversation shows as a call: the message goes after it.
+              if (row.toolUseId && this.callRepl.has(row.toolUseId)) {
+                const shown = this.push({ kind: 'tool', ts, tool: row.tool, text: row.text, preview: row.preview });
+                Object.assign(shown, { input: row.input, result: row.result, sent, fromScript: true });
+              }
             }
           }
         } else if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
@@ -906,6 +926,7 @@ export class TranscriptAccumulator {
       if (open) this.callOwners.set(call.toolUseId, repl);
     }
     if (call.file) files.set(call.file, { changed: !!files.get(call.file)?.changed || CHANGE_TOOLS.has(call.tool ?? ''), index: calls.length - 1 });
+    if (call.background && !repl.started?.includes(call)) repl.started = [...(repl.started ?? []), call];
     repl.calls = callCounts(
       { count: calls.length, failed: 0, ...(files.size ? { files: [...files].map(([path, f]) => ({ path, ...f })) } : {}) },
       call.resultError ? [...(repl.calls?.failures ?? []), calls.length - 1] : (repl.calls?.failures ?? []),
@@ -923,6 +944,7 @@ export class TranscriptAccumulator {
     this.scriptFiles.delete(from.toolUseId!);
     this.scriptCalls.delete(from.toolUseId!);
     delete from.calls;
+    delete from.started;
     for (const c of list) this.addScriptCall(from, c);
     if (!list.length) this.scriptCalls.set(from.toolUseId!, []);
     this.addScriptCall(to, call);
@@ -998,6 +1020,7 @@ export class TranscriptAccumulator {
       guidanceText(text) === null &&
       eventsText(text) === null &&
       delegateText(text) === null &&
+      taskEventsText(text) === null &&
       peerMessages(text) === null &&
       !text.trimStart().startsWith('<task-notification>')
         ? last
@@ -1103,14 +1126,24 @@ export class TranscriptAccumulator {
     }
   }
 
+  /** A message a chat sends its agent, as its row: Looper's related events or task events, else the user's prompt. */
+  protected promptRow(text: string): MessageRow {
+    const ts = new Date().toISOString();
+    const events = eventsText(text);
+    if (events !== null) return this.push({ kind: 'events', ts, text: events });
+    const taskEvents = taskEventsText(text);
+    if (taskEvents !== null) return this.push({ kind: 'taskEvents', ts, text: taskEvents });
+    return this.push({ kind: 'prompt', ts, text });
+  }
+
   /** A message Looper's mod handed the agent mid-turn: a run's guidance, related events or delegated agents' messages show; its notice doesn't. */
   protected takeModNote(text: string, ts?: string): void {
     this.pushGuidance(text, ts);
   }
 
   /**
-   * Rows of their own when `text` is a guidance, events or delegated agents' message (see GUIDANCE_PREFIX,
-   * EVENTS_PREFIX, DELEGATE_PREFIX) or other sessions' messages (peerMessages); false when it is none.
+   * Rows of their own when `text` is a guidance, events, delegated agents' or task events message (see GUIDANCE_PREFIX,
+   * EVENTS_PREFIX, DELEGATE_PREFIX, TASK_EVENTS_PREFIX) or other sessions' messages (peerMessages); false when it is none.
    */
   protected pushGuidance(text: string, ts?: string): boolean {
     const g = guidanceText(text);
@@ -1130,6 +1163,11 @@ export class TranscriptAccumulator {
     const delegated = delegateText(text);
     if (delegated !== null) {
       this.push({ kind: 'delegate', ts, text: delegated });
+      return true;
+    }
+    const taskEvents = taskEventsText(text);
+    if (taskEvents !== null) {
+      this.push({ kind: 'taskEvents', ts, text: taskEvents });
       return true;
     }
     const peers = peerMessages(text);

@@ -17,14 +17,15 @@ const forTask = (c: CommandContext, t: Task, rt: TaskRuntime | undefined): Comma
   task: t,
   runtime: rt,
   pickedRun: null,
+  clearAttention: undefined,
   project: c.projects.find((p) => p.id === t.projectId) ?? null,
   projectSelected: false,
 });
 
-/** A task row's menu: its commands act on that row, whatever is selected. */
-export function showTaskMenu(t: Task, rt: TaskRuntime | undefined): void {
+/** A task row's menu: its commands act on that row, whatever is selected. A Needs attention row passes how to take it off. */
+export function showTaskMenu(t: Task, rt: TaskRuntime | undefined, clearAttention?: () => void): void {
   if (!current) return;
-  const c = forTask(current, t, rt);
+  const c = { ...forTask(current, t, rt), clearAttention };
   popupCommands(c, contextMenu('task', c));
 }
 
@@ -33,9 +34,9 @@ export function deleteTask(t: Task, rt: TaskRuntime | undefined): void {
   if (current) runCommand('deleteTask', forTask(current, t, rt));
 }
 
-/** A Claude Code login's row: Log In. */
-export function showLoginMenu(logIn: () => void): void {
-  if (current) popupEntries(current, 'login', [{ id: 'log-in', label: '&Log In', run: logIn }]);
+/** A Claude Code login's row in Needs attention: Log In, or take the row off. */
+export function showLoginMenu(logIn: () => void, clear: () => void): void {
+  if (current) popupEntries(current, 'login', [{ id: 'log-in', label: '&Log In', run: logIn }, { separator: true }, { id: 'remove', label: 'Remove from &Needs Attention', run: clear }]);
 }
 
 /** A project row's menu. */

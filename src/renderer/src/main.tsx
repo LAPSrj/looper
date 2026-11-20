@@ -44,6 +44,7 @@ const FilterApp = lazy(() => import('./FilterApp').then((m) => ({ default: m.Fil
 const HistoryApp = lazy(() => import('./HistoryApp').then((m) => ({ default: m.HistoryApp })));
 const FolderNameApp = lazy(() => import('./FolderNameApp').then((m) => ({ default: m.FolderNameApp })));
 const SessionNameApp = lazy(() => import('./SessionNameApp').then((m) => ({ default: m.SessionNameApp })));
+const WatchEventsApp = lazy(() => import('./WatchEventsApp').then((m) => ({ default: m.WatchEventsApp })));
 const FolderNoteApp = lazy(() => import('./FolderNoteApp').then((m) => ({ default: m.FolderNoteApp })));
 const MoveToFolderApp = lazy(() => import('./MoveToFolderApp').then((m) => ({ default: m.MoveToFolderApp })));
 const ImageApp = lazy(() => import('./ImageApp').then((m) => ({ default: m.ImageApp })));
@@ -97,6 +98,7 @@ const folderNoteMatch = /^note-editor-folder\/([^/]+)$/.exec(hash);
 const moveToFolderMatch = /^move-to-folder\/([^/]+)$/.exec(hash);
 const folderRenameMatch = /^folder-rename\/([^/]+)$/.exec(hash);
 const sessionRenameMatch = /^session-rename\/([^/]+)$/.exec(hash);
+const watchEventsMatch = /^watch-events\/([^/]+)\/([^/]+)$/.exec(hash);
 const folderNewMatch = /^folder-new(?:\/([^/]+))?$/.exec(hash);
 const projectFolderNewMatch = /^project-folder-new(?:\/([^/]+))?$/.exec(hash);
 const projectFolderRenameMatch = /^project-folder-rename\/([^/]+)$/.exec(hash);
@@ -203,6 +205,7 @@ function pickRoot() {
   if (folderNewMatch) return <FolderNameApp parentId={folderNewMatch[1] ? decodeURIComponent(folderNewMatch[1]) : undefined} />;
   if (folderRenameMatch) return <FolderNameApp folderId={decodeURIComponent(folderRenameMatch[1])} />;
   if (sessionRenameMatch) return <SessionNameApp sessionId={decodeURIComponent(sessionRenameMatch[1])} />;
+  if (watchEventsMatch) return <WatchEventsApp chatId={decodeURIComponent(watchEventsMatch[1])} taskId={decodeURIComponent(watchEventsMatch[2])} />;
   if (projectFolderRenameMatch) return <FolderNameApp scope="projects" folderId={decodeURIComponent(projectFolderRenameMatch[1])} />;
   if (projectFolderNewMatch) {
     const q = new URLSearchParams(projectFolderNewMatch[1] ? decodeURIComponent(projectFolderNewMatch[1]) : '');

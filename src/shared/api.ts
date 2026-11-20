@@ -170,6 +170,10 @@ export interface LooperApi {
     stopTask(id: string, runId?: string): Promise<boolean>;
     /** Needs attention's Clear: forget these runs' notices (by attentionKey). */
     clearNotices(keys: string[]): Promise<void>;
+    /** A run's window opened: its notices leave Needs attention. True while it has some that Close and Keep in Needs Attention can put back. */
+    markRunSeen(id: string, runId: string): Promise<boolean>;
+    /** Close and Keep in Needs Attention: the notices the run's window took off come back. */
+    markRunUnseen(id: string, runId: string): Promise<void>;
   };
   runs: {
     list(id: string, limit?: number): Promise<RunRecord[]>;
@@ -252,6 +256,10 @@ export interface LooperApi {
     setAutoContinue(id: string, on: boolean): void;
     /** Continue Anyway: the continue goes even though Settings → Chats' cache rule would stop it. */
     continueAnyway(id: string): void;
+    /** Chat → Watch Task Events: the agent gets the task's trigger events with `eventId` as their related id ('' all of them), or stops (`on` false). */
+    setWatch(id: string, taskId: string, eventId: string, on: boolean): void;
+    /** Chat → Watch Task Events on a task: the window that asks for the event id to watch. */
+    openWatch(id: string, taskId: string): void;
     /** End the agent's turn (Esc), and the commands the user ran from the message box. */
     stop(id: string): Promise<void>;
     /**
@@ -352,6 +360,8 @@ export interface LooperApi {
     fileThumbnail(taskId: string, path: string): Promise<string | null>;
     /** A file the agent sent (a path in the session's own form): its size, and a thumbnail for an image; null when the file is gone. */
     sentFile(taskId: string, path: string): Promise<SentFileInfo | null>;
+    /** A file the agent sent, whole, for Now to show (base64); why it can't be shown when it's gone or bigger than `maxBytes`. */
+    readSentFile(taskId: string, path: string, maxBytes: number): Promise<{ data: string } | { error: string }>;
     /** Click on a sent file: `image` opens it in the image window (a device gets its file viewer), any other file in its default app. */
     openFile(taskId: string, runId: string, path: string, image: boolean, images?: string[]): Promise<void>;
   };

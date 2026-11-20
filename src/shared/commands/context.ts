@@ -111,6 +111,8 @@ export interface RunContext {
   rawOutput: boolean;
   autoScroll: boolean;
   filter: string;
+  /** Its window took the run's notices off Needs attention: Close and Keep in Needs Attention puts them back. */
+  inAttention?: boolean;
   /** A phone's run sheet: the tab it shows. */
   tab?: 'result' | 'details';
   /** A phone's run sheet shows one message's screen over the list. */
@@ -179,6 +181,8 @@ export interface CommandContext {
   runtime?: TaskRuntime;
   /** On a dashboard, Stop Task stops the picked row's run. */
   pickedRun?: string | null;
+  /** A Needs attention row's task: Remove from Needs Attention takes that row off. */
+  clearAttention?(): void;
   /** The project the commands act on: the selected project, or the task's. */
   project: Project | null;
   /** The shown project itself, not the task's. */

@@ -24,8 +24,10 @@ import {
   type ChatSettings,
   type ChatState,
   type QueuedMessage,
+  type TaskWatch,
   type TitleBy,
   type UsageLimitHit,
+  type WatchableTask,
 } from '../shared/chat';
 import { limitsKey, type SlashCommand, type UsageLimits } from '../shared/sessions';
 import {
@@ -48,8 +50,9 @@ import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
 import { COMPACTED_FILE, compactedFile, findCodexRollout, LiveRows, TranscriptReader, transcriptHostPath } from './messages';
 import { claudeModelWindows, modelWindows as sharedWindows } from './model-windows';
-import { AGENT_DONE, childEnv, SOCKET_FILE, writeLauncher, type RunContext } from './steps/common';
-import { mergeClaudeSettings, readUserSettings, readUserSettingsSync } from './claude-settings';
+import { AGENT_WATCH, childEnv, SOCKET_FILE, WATCH_DIR, writeLauncher, type RunContext } from './steps/common';
+import { parseWatchArgs, tasksText, WATCH_FOOTER, WATCH_USAGE, watchedLines, watchText, withWatch } from './task-watch';
+import { mergeClaudeSettings, mergeSystemPrompt, readUserSettings, readUserSettingsSync } from './claude-settings';
 import { takeFlagValues } from '../shared/claude-args';
 import { endingError, usageLimitOf } from './sessions';
 import { LOGIN_FAILED_RE } from '../shared/logins';
@@ -414,6 +417,8 @@ export interface ChatDeps {
   onOpen?: (chat: { id: string; taskId: string; fromRunId: string }) => void;
   /** A message for the chat's agent: the user's, or Looper's (related events). */
   onTalk?: (chat: { id: string; taskId: string }) => void;
+  /** The tasks of the project of a chat on the task (`chatTaskId`), in the Tasks list's order: the ones it can watch. */
+  projectTasks?: (chatTaskId: string) => Task[];
   /** A chat closed for good has ended its processes: `sessionId` is the conversation it went on with. */
   onClosed?: (chat: { id: string; taskId: string; sessionId?: string }) => void;
 }
@@ -669,6 +674,10 @@ class ChatSession {
   private termSize?: { cols: number; rows: number };
   /** The conversation is in Claude Code's Code Mode (its transcript's repl-mode record): Claude Code resumes it only in a terminal. */
   private codeMode = false;
+  /** Watch Task Events and looper-watch: what the chat watches of its project's tasks. */
+  private watches: TaskWatch[];
+  /** The looper-watch requests being answered, by file name. */
+  private readonly takenWatch = new Set<string>();
   /** The interactive session's rows from its mod, ahead of its transcript. */
   private live: LiveRows | null = null;
   private livePolling = false;
@@ -788,6 +797,7 @@ class ChatSession {
     // Codex runs headless; a Claude chat without a session type of its own takes the task's.
     this.settings = { ...this.settings, mode: this.claude ? (this.settings.mode ?? task.agent.mode) : 'headless' };
     this.codeMode = !!info?.codeMode;
+    this.watches = info?.watches ?? [];
     this.context = info?.context;
     if (opening.kind === 'continue') {
       this.fromRunId = opening.runId;
@@ -859,6 +869,9 @@ class ChatSession {
   start(): void {
     fs.mkdirSync(path.join(this.dir, 'bin'), { recursive: true });
     fs.mkdirSync(path.join(this.dir, 'permissions'), { recursive: true });
+    // A looper-watch request an earlier start left behind has nobody waiting on it.
+    fs.rmSync(path.join(this.dir, WATCH_DIR), { recursive: true, force: true });
+    this.timers.push(setInterval(() => void this.pollWatchRequests(), this.d.settings.signalPollMs));
     // Until its first message, how it opened is what Looper's next start opens it again with.
     if (!this.recorded) writeJsonAtomic(path.join(this.dir, OPENING_FILE), this.opening);
     // Continue in Chat shows the run's conversation; a chat opened again, its own.
@@ -1324,12 +1337,11 @@ class ChatSession {
           ...(remote ? ['--remote-control', remote] : []),
           ...this.extraArgs,
         ],
-        footer: '',
+        footer: WATCH_FOOTER,
         prompt: '',
         inbox: [CHAT_MESSAGE_FILE],
+        watchCommand: AGENT_WATCH,
         settings: this.chatHooks,
-        doneCommand: AGENT_DONE.command,
-        doneStatuses: AGENT_DONE.statuses,
         stopGate: false,
         permissions: { waitMs: PERMISSION_TIMEOUT_SEC * 1000, noAnswer: NO_PERMISSION_ANSWER },
         maxRuntimeMs: Infinity,
@@ -1696,6 +1708,105 @@ class ChatSession {
     this.scheduleEmit();
   }
 
+  // ---------- watching the project's tasks ----------
+
+  /** The tasks of the chat's project, in the Tasks list's order. */
+  private projectTasks(): Task[] {
+    return this.d.projectTasks?.(this.taskId) ?? [];
+  }
+
+  /** Watch Task Events or looper-watch: the agent gets the task's run ends or trigger events as messages. */
+  watch(w: TaskWatch): void {
+    if (this.closed) return;
+    const next = withWatch(this.watches, w);
+    if (JSON.stringify(next) === JSON.stringify(this.watches)) return;
+    this.watches = next;
+    this.save();
+    this.scheduleEmit();
+  }
+
+  /** Stop watching the task: its trigger events (`what`), only those with `eventId` ('' all of them) when given, or everything. */
+  unwatch(taskId: string, what?: TaskWatch['what'], eventId?: string): void {
+    const gone = (w: TaskWatch) => w.taskId === taskId && (what === undefined || w.what === what) && (eventId === undefined || (w.eventId ?? '') === eventId);
+    const next = this.watches.filter((w) => !gone(w));
+    if (this.closed || next.length === this.watches.length) return;
+    this.watches = next;
+    this.save();
+    this.scheduleEmit();
+  }
+
+  /** Whether the agent gets the ends of the task's runs. */
+  watchesRuns(taskId: string): boolean {
+    return this.watches.some((w) => w.taskId === taskId && w.what === 'runs');
+  }
+
+  /** The task's event lines the agent watches. */
+  watchedEvents(taskId: string, lines: readonly string[]): string[] {
+    return watchedLines(this.watches, taskId, lines);
+  }
+
+  /** Chat → Watch Task Events: the project's tasks, with the event ids the chat watches each for. */
+  private watchableTasks(): WatchableTask[] {
+    return this.projectTasks().map((t) => ({
+      id: t.id,
+      name: t.name,
+      events: this.watches.filter((w) => w.taskId === t.id && w.what === 'events').map((w) => w.eventId ?? ''),
+    }));
+  }
+
+  /** The agent's looper-watch requests, each answered with the text the command prints and its exit code. */
+  private async pollWatchRequests(): Promise<void> {
+    const reqDir = path.join(this.dir, WATCH_DIR, 'requests');
+    let names: string[];
+    try {
+      names = await fs.promises.readdir(reqDir);
+    } catch {
+      return; // no request yet
+    }
+    for (const name of names) {
+      if (!name.endsWith('.req') || this.takenWatch.has(name)) continue;
+      this.takenWatch.add(name);
+      let lines: string[];
+      try {
+        lines = (await fs.promises.readFile(path.join(reqDir, name), 'utf8')).trimStart().split(/\r?\n/);
+        await fs.promises.rm(path.join(reqDir, name), { force: true });
+      } catch {
+        this.takenWatch.delete(name);
+        continue;
+      }
+      while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+      // The op, the caller's folder, then one line per argument.
+      const out = this.answerWatch(lines.slice(2));
+      const resDir = path.join(this.dir, WATCH_DIR, 'responses');
+      const rid = name.slice(0, -'.req'.length);
+      try {
+        await fs.promises.mkdir(resDir, { recursive: true });
+        await fs.promises.writeFile(path.join(resDir, `${rid}.out`), out.text + '\n');
+        await fs.promises.writeFile(path.join(resDir, `${rid}.code.tmp`), String(out.code));
+        await fs.promises.rename(path.join(resDir, `${rid}.code.tmp`), path.join(resDir, `${rid}.code`));
+      } catch (err) {
+        this.d.log.warn(`chat ${this.id}: cannot answer ${AGENT_WATCH}: ${errMsg(err)}`);
+      }
+      this.takenWatch.delete(name);
+    }
+  }
+
+  private answerWatch(args: string[]): { text: string; code: number } {
+    const req = parseWatchArgs(args);
+    if ('error' in req) return { text: `${AGENT_WATCH}: ${req.error}\n${WATCH_USAGE}`, code: 2 };
+    const tasks = this.projectTasks();
+    if (req.op === 'tasks') return { text: tasksText(tasks, this.watches), code: 0 };
+    const taskId = req.op === 'stop' ? req.taskId : req.watch.taskId;
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return { text: `${AGENT_WATCH}: this chat's project has no task "${taskId}". \`${AGENT_WATCH} tasks\` lists them.`, code: 1 };
+    if (req.op === 'stop') {
+      this.unwatch(taskId);
+      return { text: `Stopped watching "${task.name}".`, code: 0 };
+    }
+    this.watch(req.watch);
+    return { text: `Watching "${task.name}": ${watchText(req.watch)}. Each one reaches you as a message while this chat is open.`, code: 0 };
+  }
+
   /** Continue Anyway: the continue goes at the reset, or at once when the reset has passed, whatever the cache rule says. */
   setContinueAnyway(): void {
     if (this.closed || !this.limit || !this.autoContinue || this.continueAnyway) return;
@@ -1798,7 +1909,7 @@ class ChatSession {
   /** prelude: lines that run before the harness, which replaces the launcher's shell. */
   private launcher(name: string, body: string, prelude = ''): { command: string; args: string[] } {
     const exec = this.target.kind === 'windows' ? '' : 'exec ';
-    return writeLauncher(this.ctx, name, (prelude ? prelude + '\n' : '') + exec + body, this.harness.env).spec;
+    return writeLauncher(this.ctx, name, (prelude ? prelude + '\n' : '') + exec + body, this.harness.env, { watchCommand: AGENT_WATCH }).spec;
   }
 
   /** The chat's model, effort and permission mode, as a run would pass the task's. */
@@ -1827,7 +1938,11 @@ class ChatSession {
     parts.push('-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--replay-user-messages');
     // Under -p Claude Code sends thinking blocks without their text unless the display is set explicitly.
     parts.push('--thinking-display', 'summarized');
-    for (const arg of this.userArgs) parts.push(q(arg));
+    // The agent's own instructions join the user's --append-system-prompt (Claude Code keeps only the last one given).
+    const system = mergeSystemPrompt(WATCH_FOOTER, this.userArgs);
+    writeText(path.join(this.dir, 'system.txt'), system.text ?? '');
+    parts.push('--append-system-prompt', this.target.catFile(this.targetFile('system.txt')));
+    for (const arg of system.rest) parts.push(q(arg));
     this.launched = { model: s.model, effort, permissionMode: s.permissionMode, interactive: false };
     this.spawnProc(this.launcher('chat', parts.join(' ')), (_code, stderr) => {
       if (CODE_MODE_RESUME_RE.test(stderr)) {
@@ -2395,6 +2510,7 @@ class ChatSession {
         ...(this.compactedFrom ? { compactedFrom: this.compactedFrom } : {}),
         ...(this.resumedSession ? { resumedSession: this.resumedSession } : {}),
         ...(this.codeMode ? { codeMode: true } : {}),
+        ...(this.watches.length ? { watches: this.watches } : {}),
       });
     } catch (err) {
       this.d.log.warn(`chat ${this.id}: cannot save: ${errMsg(err)}`);
@@ -2531,6 +2647,7 @@ class ChatSession {
       autoContinue: this.autoContinue,
       ...(this.continueAnyway ? { continueAnyway: true } : {}),
       ...(this.codeMode ? { codeMode: true } : {}),
+      ...(this.d.projectTasks ? { watchTasks: this.watchableTasks() } : {}),
     };
   }
 }
@@ -2776,6 +2893,24 @@ export class ChatManager {
   /** Continue Anyway, past Settings → Chats' cache rule. */
   setContinueAnyway(id: string): void {
     this.sessions.get(id)?.setContinueAnyway();
+  }
+
+  /** Watch Task Events: watch the task's trigger events with `eventId` as their related id ('' all of them), or stop (`on` false). */
+  setWatch(id: string, taskId: string, eventId: string, on: boolean): void {
+    const s = this.sessions.get(id);
+    const e = eventId.trim();
+    if (!on) s?.unwatch(taskId, 'events', e);
+    else s?.watch({ taskId, what: 'events', ...(e ? { eventId: e } : {}) });
+  }
+
+  /** The open chats whose agents get the ends of the task's runs. */
+  runWatchers(taskId: string): string[] {
+    return [...this.sessions.values()].filter((s) => s.watchesRuns(taskId)).map((s) => s.id);
+  }
+
+  /** The open chats whose agents watch some of the task's event lines, with those lines. */
+  eventWatchers(taskId: string, lines: readonly string[]): { chatId: string; lines: string[] }[] {
+    return [...this.sessions.values()].map((s) => ({ chatId: s.id, lines: s.watchedEvents(taskId, lines) })).filter((w) => w.lines.length > 0);
   }
 
   /** Chats in the middle of a turn or waiting on the user: quitting would stop their agents. */

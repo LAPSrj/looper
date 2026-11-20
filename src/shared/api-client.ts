@@ -108,6 +108,8 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       reopen: (id) => t.invoke('runtime:reopen', id),
       stopTask: (id, runId) => t.invoke('runtime:stopTask', id, runId),
       clearNotices: (keys) => t.invoke('runtime:clearNotices', keys),
+      markRunSeen: (id, runId) => t.invoke('runtime:markRunSeen', id, runId),
+      markRunUnseen: (id, runId) => t.invoke('runtime:markRunUnseen', id, runId),
     },
     runs: {
       list: (id, limit) => t.invoke('runs:list', id, limit),
@@ -146,6 +148,8 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       answer: (id, requestId, allow) => t.send('chat:answer', id, requestId, allow),
       setAutoContinue: (id, on) => t.send('chat:setAutoContinue', id, on),
       continueAnyway: (id) => t.send('chat:continueAnyway', id),
+      setWatch: (id, taskId, eventId, on) => t.send('chat:setWatch', id, taskId, eventId, on),
+      openWatch: (id, taskId) => t.send('chat:openWatch', id, taskId),
       stop: (id) => t.invoke('chat:stop', id),
       runCommand: (id, command, commandId) => t.invoke('chat:runCommand', id, command, commandId).catch(plainError),
       stopCommand: (id, commandId) => t.invoke('chat:stopCommand', id, commandId),
@@ -207,6 +211,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       backgroundOutput: (id, taskId) => t.invoke('sessions:backgroundOutput', id, taskId),
       fileThumbnail: (taskId, path) => t.invoke('sessions:fileThumbnail', taskId, path),
       sentFile: (taskId, path) => t.invoke('sessions:sentFile', taskId, path),
+      readSentFile: (taskId, path, maxBytes) => t.invoke('sessions:readSentFile', taskId, path, maxBytes),
       openFile: (taskId, runId, path, image, images) => t.invoke('sessions:openFile', taskId, runId, path, image, images).catch(plainError),
     },
     attachment: {

@@ -2,7 +2,9 @@ import { execOffThread } from '../exec-worker';
 import { requestPolls, type LauncherSpec, type RequestHelperOpts, type SpawnSpec, type Target, type TargetContext } from './index';
 import {
   DELEGATE_BUSY_VAR,
+  doneUsage,
   NESTED_REFUSAL,
+  REASON_USAGE,
   SESSION_SOCKET_VAR,
   SOCKET_FILE_VAR,
   guideHookJson,
@@ -24,6 +26,13 @@ import { DEFAULT_SHELL } from '../../shared/environments';
  * before tool_input, so the command or a tool's output can't supply it.
  */
 const SUBAGENT_PATTERN = `*'"agent_id":'* | *'"agent_id": '*`;
+
+/** A helper script's name as its shell sees it. */
+const SCRIPT_NAME = '"${0##*/}"';
+
+/** A helper's first line: --help or -h prints its usage (`name` is a shell word) and signals nothing. */
+const HELP_CHECK = (name: string, args: string, leave: 'exit' | 'return'): string =>
+  `case "$1" in -h|--help) printf 'usage: %s %s\\n' ${name} ${shellQuote(args)}; ${leave} 0;; esac;`;
 
 /** The done command's first line: while an agent the session started is still going, it prints why and fails. */
 const DELEGATE_REFUSAL = (leave: 'exit' | 'return'): string =>
@@ -54,6 +63,10 @@ function killScript(marker: string, mac: boolean): string {
     `[ -z "$alive" ] && break; sleep 0.1; n=$((n + 1)); done; ` +
     `pids=$(${list}); [ -n "$pids" ] && kill -KILL $pids 2>/dev/null; exit 0`
   );
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 export class BashTarget implements Target {
@@ -96,7 +109,7 @@ export class BashTarget implements Target {
   }
 
   quote(s: string): string {
-    return `'${s.replace(/'/g, `'\\''`)}'`;
+    return shellQuote(s);
   }
 
   catFile(targetPath: string): string {
@@ -116,11 +129,13 @@ export class BashTarget implements Target {
       lines.push(`export ${k}=${this.quote(v)}`);
     }
     lines.push(`export PATH=${this.quote(spec.binDir)}":$PATH"`);
-    const statuses = spec.doneStatuses.join('|');
-    lines.push(
-      `${spec.doneCommand}() { ${NESTED_CHECK('return')} ${DELEGATE_REFUSAL('return')} local s=; case "$1" in ${statuses}) s="$1"; shift;; esac; printf '%s\\n%s\\n' "$s" "\${*:-done}" > "$LOOPER_DONE_FILE"; }`,
-    );
-    lines.push(`export -f ${spec.doneCommand} 2>/dev/null`);
+    if (spec.doneCommand) {
+      const statuses = spec.doneStatuses ?? [];
+      lines.push(
+        `${spec.doneCommand}() { ${HELP_CHECK(shellQuote(spec.doneCommand), doneUsage(statuses), 'return')} ${NESTED_CHECK('return')} ${DELEGATE_REFUSAL('return')} local s=; case "$1" in ${statuses.join('|')}) s="$1"; shift;; esac; printf '%s\\n%s\\n' "$s" "\${*:-done}" > "$LOOPER_DONE_FILE"; }`,
+      );
+      lines.push(`export -f ${spec.doneCommand} 2>/dev/null`);
+    }
     lines.push(
       `cd ${this.quote(spec.cwd)} || { echo "looper: cannot cd to ${spec.cwd}" >&2; exit 97; }`,
     );
@@ -132,6 +147,7 @@ export class BashTarget implements Target {
   renderDoneHelper(statuses: readonly string[]): string {
     return [
       '#!/usr/bin/env bash',
+      HELP_CHECK(SCRIPT_NAME, doneUsage(statuses), 'exit'),
       NESTED_CHECK('exit'),
       DELEGATE_REFUSAL('exit'),
       's=',
@@ -144,6 +160,7 @@ export class BashTarget implements Target {
   renderTextHelper(envVar: string, fallback: string): string {
     return [
       '#!/usr/bin/env bash',
+      HELP_CHECK(SCRIPT_NAME, REASON_USAGE, 'exit'),
       NESTED_CHECK('exit'),
       `printf '%s\\n' "\${*:-${fallback}}" > "$${envVar}"`,
       '',
@@ -153,6 +170,7 @@ export class BashTarget implements Target {
   renderStatusHelper(status: string, fallback: string): string {
     return [
       '#!/usr/bin/env bash',
+      HELP_CHECK(SCRIPT_NAME, REASON_USAGE, 'exit'),
       NESTED_CHECK('exit'),
       `printf '%s\\n%s\\n' ${this.quote(status)} "\${*:-${fallback}}" > "$LOOPER_DONE_FILE"`,
       '',
