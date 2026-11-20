@@ -822,5 +822,13 @@
     "nodes": 66,
     "heapMb": 26,
     "rendererMb": 102
+  },
+  "window: Watch Task Events": {
+    "readyMs": 226,
+    "longestMs": 100,
+    "blockingMs": 100,
+    "nodes": 62,
+    "heapMb": 27,
+    "rendererMb": 120
   }
 }

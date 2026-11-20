@@ -58,7 +58,9 @@ import {
 } from './platform';
 import { withAccessKeys } from './platform/menus';
 import { specTemplate } from './command-menu';
+import { entriesMenu } from '../shared/commands/build';
 import type { HostCommand } from '../shared/commands/context';
+import { watchTaskMenu } from '../shared/commands/list';
 import type { MenuItemSpec, PopupButton } from '../shared/remote-access';
 import type { RemoteAccess } from './remote-access';
 
@@ -668,6 +670,15 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     };
     const restartable = engine.canRestartSession(id);
     const chat = s.kind === 'chat' ? engine.getChat(id) : undefined;
+    const watch =
+      chat &&
+      entriesMenu(
+        'watch',
+        watchTaskMenu(chat.watchTasks ?? [], {
+          open: (taskId) => host.openWatchEvents(id, taskId, sender),
+          stop: (taskId, eventId) => engine.setChatWatch(id, taskId, eventId, false),
+        }),
+      );
     const items: Electron.MenuItemConstructorOptions[] = [
       ...(run
         ? [
@@ -693,6 +704,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
             ...(chat
               ? [{ label: 'Continue When Limit Resets', type: 'checkbox' as const, checked: chat.autoContinue, click: (item: Electron.MenuItem) => engine.setChatAutoContinue(id, item.checked) }]
               : []),
+            ...(watch ? [{ label: 'Watch Task Events', submenu: specTemplate(watch.items, watch.pick) }] : []),
             { type: 'separator' } as const,
           ]),
       ...(s.kind === 'terminal' ? [] : [{ label: 'Open in New Window', platforms: NOT_MOBILE, click: () => host.openChatWindow(id) }]),

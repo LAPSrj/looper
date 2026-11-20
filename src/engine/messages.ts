@@ -1206,6 +1206,12 @@ export class TranscriptAccumulator {
   }
 }
 
+/** Looper's instructions ahead of a Codex chat's message: the conversation shows the message without them. */
+const LOOPER_INSTRUCTIONS_RE = /^<looper_instructions>\n[\s\S]*?\n<\/looper_instructions>\n\n/;
+
+/** The message with Looper's instructions ahead of it, for a Codex thread that started without them. */
+export const withLooperInstructions = (instructions: string, text: string): string => `<looper_instructions>\n${instructions}\n</looper_instructions>\n\n${text}`;
+
 /**
  * Folds codex rollout records into display rows. A rollout line is
  * `{timestamp, ordinal, type, payload}`; the conversation lives in
@@ -1265,7 +1271,7 @@ export class CodexAccumulator extends TranscriptAccumulator {
           // Injected context is one <tag>…</tag> block, after a heading line for the AGENTS.md
           // instructions ("# AGENTS.md instructions", seen live in codex-cli 0.163.0).
           if (/^(?:#[^\n]*\n+)?<([\w-]+)>[\s\S]*<\/\1>\s*$/.test(text.trim())) continue;
-          this.pushPrompt(text, ts);
+          this.pushPrompt(text.replace(LOOPER_INSTRUCTIONS_RE, ''), ts);
         } else if (block.type === 'output_text' && p.role === 'assistant') {
           this.push({ kind: 'agent', ts, text });
         }

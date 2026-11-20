@@ -530,14 +530,15 @@ describe('Chat → Watch Task Events', () => {
     const chat = { id: 'c', status: 'ready', queued: [], history: [], rows: [], models: [], harnessId: 'h', harnesses: [{ id: 'h', name: 'Claude Code' }], settings: { permissionMode: 'default' }, permissions: [], harnessKind: 'claude-code', watchTasks };
     return context({ tab: 'chats', chats: { single: false, tab: true, selected: 'c', summary, chat, sessions: [summary], shown: {} } as never }, here);
   };
+  const own = { own: true, folders: [] };
   const tasks = [
-    { id: 't1', name: 'Deploy', events: [''] },
-    { id: 't2', name: 'Audit', events: [] },
-    { id: 't3', name: 'Slack replies', events: ['42'] },
+    { id: 't1', name: 'Deploy', events: [''], ...own },
+    { id: 't2', name: 'Audit', events: [], ...own },
+    { id: 't3', name: 'Slack replies', events: ['42'], ...own },
   ];
 
   it('lists the project’s tasks in their order: each event id it watches checked, then the task again to watch another id', () => {
-    const c = withTasks([...tasks.slice(0, 2), { id: 't3', name: 'Slack replies', events: ['42', '7'] }]);
+    const c = withTasks([...tasks.slice(0, 2), { id: 't3', name: 'Slack replies', events: ['42', '7'], ...own }]);
     const item = menu(mainWindowViews('chats'), 'chat', c).find((i) => i.id === 'watchTaskEvents')!;
     expect(item.label).toBe('Watch Task E&vents');
     expect(item.submenu!.map((i) => [i.label, i.checked])).toEqual([
@@ -553,7 +554,38 @@ describe('Chat → Watch Task Events', () => {
     expect(labels(phoneMore(['conversation'], withTasks(tasks, 'mobile')))).toContain('Watch Task Events');
   });
 
-  it('says there are no tasks when the project has none', () => {
+  it('shows the tasks in their folders, then the other projects’ tasks under Other Projects', () => {
+    const inbox = { id: 'f1', name: 'Inbox' };
+    const sub = { id: 'f2', name: 'Slack' };
+    const c = withTasks([
+      { id: 't1', name: 'Deploy', events: [], own: true, folders: [] },
+      { id: 't2', name: 'Triage', events: [], own: true, folders: [inbox] },
+      { id: 't3', name: 'Replies', events: ['42'], own: true, folders: [inbox, sub] },
+      { id: 't4', name: 'Audit', events: [], own: true, folders: [] },
+      { id: 't5', name: 'Backups', events: [], own: false, folders: [inbox] },
+      { id: 't6', name: 'Invoices', events: [], own: false, folders: [] },
+    ]);
+    const item = menu(mainWindowViews('chats'), 'chat', c).find((i) => i.id === 'watchTaskEvents')!;
+    const shape = (items: typeof item.submenu): unknown[] => items!.map((i) => (i.type === 'separator' ? '-' : i.submenu ? { [i.label!]: shape(i.submenu) } : i.label));
+    expect(shape(item.submenu)).toEqual([
+      'Deploy',
+      { Inbox: ['Triage', { Slack: ['Replies (42)', 'Replies'] }] },
+      'Audit',
+      '-',
+      { '&Other Projects': [{ Inbox: ['Backups'] }, 'Invoices'] },
+    ]);
+    const other = item.submenu!.at(-1)!.submenu!;
+    runCommand(other[0].submenu![0].id, c);
+    expect(c.calls).toEqual(['looper.chat.openWatch']);
+  });
+
+  it('shows only Other Projects when the chat’s project has no tasks', () => {
+    const c = withTasks([{ id: 't6', name: 'Invoices', events: [], own: false, folders: [] }]);
+    const item = menu(mainWindowViews('chats'), 'chat', c).find((i) => i.id === 'watchTaskEvents')!;
+    expect(item.submenu!.map((i) => i.label)).toEqual(['&Other Projects']);
+  });
+
+  it('says there are no tasks when Looper has none', () => {
     const item = menu(mainWindowViews('chats'), 'chat', withTasks([])).find((i) => i.id === 'watchTaskEvents')!;
     expect(item.submenu!.map((i) => [i.label, i.enabled])).toEqual([['No Tasks', false]]);
   });

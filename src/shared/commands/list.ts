@@ -1,5 +1,5 @@
 // Relative imports only: the main process, the renderer and the unit tests all load the list.
-import { chatCanCompact, chatInteractive } from '../chat';
+import { chatCanCompact, chatInteractive, type WatchableTask } from '../chat';
 import { chatSettingEntries } from '../chat-settings';
 import { folderTree, siblingOrder } from '../folders';
 import { mainTabs } from '../main-tabs';
@@ -54,21 +54,52 @@ const IN_RUN_FOLDERS: Hide = { on: ON_PHONE, why: 'The Folders submenu has it.' 
 // ---------- submenus built from state ----------
 
 /**
- * Chat → Watch Task Events: the tasks of the chat's project in the Tasks list's order. A task the chat watches for
- * event ids has a checked item for each id, then its unchecked item, which asks for another id to watch; one it watches
- * for all its events is checked alone. Unchecking an item stops that watch.
+ * Watch Task Events, in the Chat menu and a chat's right-click menu: the chat's project's tasks, then Other Projects
+ * with the rest, each in the Tasks list's folders and order (a folder without any of them left out). A task the chat
+ * watches for event ids has a checked item for each id, then its unchecked item, which asks for another id to watch
+ * (`open`); one it watches for all its events is checked alone. Unchecking an item stops that watch (`stop`).
  */
+export function watchTaskMenu(tasks: readonly WatchableTask[], act: { open(taskId: string): void; stop(taskId: string, eventId: string): void }): Entry[] {
+  if (!tasks.length) return [{ id: 'none', label: 'No Tasks', enabled: false }];
+  const items = (t: WatchableTask): Entry[] => {
+    const add: Entry = { id: `task-${t.id}`, label: menuText(t.name), checked: false, run: () => act.open(t.id) };
+    if (t.events.includes('')) return [{ ...add, checked: true, run: () => act.stop(t.id, '') }];
+    const watched = t.events.map((e, i): Entry => ({ id: `task-${t.id}-event-${i}`, label: menuText(`${t.name} (${e})`), checked: true, run: () => act.stop(t.id, e) }));
+    return [...watched, add];
+  };
+  // The tasks come in tree order, so a folder's first task is where the folder sits among its siblings.
+  const tree = (list: WatchableTask[], prefix: string): Entry[] => {
+    const top: Entry[] = [];
+    const inside = new Map<string, Entry[]>();
+    for (const t of list) {
+      let level = top;
+      for (const f of t.folders) {
+        let entries = inside.get(f.id);
+        if (!entries) {
+          entries = [];
+          inside.set(f.id, entries);
+          level.push({ id: `${prefix}folder-${f.id}`, label: menuText(f.name), entries });
+        }
+        level = entries;
+      }
+      level.push(...items(t));
+    }
+    return top;
+  };
+  const own = tasks.filter((t) => t.own);
+  const other = tasks.filter((t) => !t.own);
+  return [
+    ...tree(own, ''),
+    ...(own.length && other.length ? [{ separator: true } as const] : []),
+    ...(other.length ? [{ id: 'other-projects', label: '&Other Projects', entries: tree(other, 'other-') }] : []),
+  ];
+}
+
 const watchTaskEntries = (c: CommandContext): Entry[] => {
   const chat = c.chats?.chat;
-  const tasks = chat?.watchTasks ?? [];
-  if (!chat || !tasks.length) return [{ id: 'none', label: 'No Tasks', enabled: false }];
-  return tasks.flatMap((t): Entry[] => {
-    const add: Entry = { id: t.id, label: menuText(t.name), checked: false, run: () => c.looper.chat.openWatch(chat.id, t.id) };
-    if (t.events.includes('')) return [{ ...add, checked: true, run: () => c.looper.chat.setWatch(chat.id, t.id, '', false) }];
-    const watched = t.events.map(
-      (e, i): Entry => ({ id: `${t.id}-event-${i}`, label: menuText(`${t.name} (${e})`), checked: true, run: () => c.looper.chat.setWatch(chat.id, t.id, e, false) }),
-    );
-    return [...watched, add];
+  return watchTaskMenu(chat?.watchTasks ?? [], {
+    open: (taskId) => chat && c.looper.chat.openWatch(chat.id, taskId),
+    stop: (taskId, eventId) => chat && c.looper.chat.setWatch(chat.id, taskId, eventId, false),
   });
 };
 

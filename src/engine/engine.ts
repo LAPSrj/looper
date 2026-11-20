@@ -4,7 +4,8 @@ import type { RecentRun } from '../shared/dashboard';
 import { modelWindows } from './model-windows';
 import { eventsMessage, taskEventEntry, taskEventLinesEntry, taskEventsMessage, type MessageImage, type MessagesResult, type ScriptCalls } from '../shared/messages';
 import { resultLabel } from '../shared/format';
-import { itemsInTreeOrder, siblingOrder } from '../shared/folders';
+import { folderParents, itemsInTreeOrder, siblingOrder } from '../shared/folders';
+import type { WatchTarget } from './task-watch';
 import { runShown, type RunFilter, type RunSummary } from '../shared/runs';
 import type { EngineEvent, Harness, InboxCommand, PreventSleepState, PreventSleepTimer, Project, ProjectFolder, RecycleBinEntry, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
 import {
@@ -677,12 +678,25 @@ export function createEngine(opts: EngineOptions): Engine {
   /** A chat's watch: the report of a watched task's run, from its result record until the run ends. */
   const followedReports = new Map<string, { summary?: string; body?: string }>();
 
-  /** The tasks a chat on the task (a project's stand-in or one of its tasks) can watch: its project's, in the Tasks list's order. */
-  const projectTasks = (chatTaskId: string): Task[] => {
+  /** The tasks a chat on the task (a project's stand-in or one of its tasks) can watch: every task in the Tasks list's order, its project's marked own. */
+  const watchTargets = (chatTaskId: string): WatchTarget[] => {
     const own = projectIdOf(chatTaskId) ?? tasks.get(chatTaskId)?.projectId;
-    if (!own) return [];
     const all = tasks.list();
-    return itemsInTreeOrder(all, siblingOrder(all, tasks.listFolders(), tasks.listLayout())).filter((t) => t.projectId === own);
+    const folders = tasks.listFolders();
+    const parents = folderParents(folders);
+    const names = new Map(folders.map((f) => [f.id, f.name]));
+    const projectNames = new Map(projects.list().map((p) => [p.id, p.name]));
+    const folderPath = (folderId: string | undefined) => {
+      const out: { id: string; name: string }[] = [];
+      for (let id = folderId && parents.has(folderId) ? folderId : ''; id; id = parents.get(id) ?? '') out.unshift({ id, name: names.get(id)! });
+      return out;
+    };
+    return itemsInTreeOrder(all, siblingOrder(all, folders, tasks.listLayout(), parents)).map((task) => ({
+      task,
+      own: !!own && task.projectId === own,
+      folders: folderPath(task.folderId),
+      project: task.projectId ? projectNames.get(task.projectId) : undefined,
+    }));
   };
 
   // ---------- version history ----------
@@ -918,7 +932,7 @@ export function createEngine(opts: EngineOptions): Engine {
         },
       }),
     onTalk: (c) => scheduler.chatTalked(c.taskId, c.id),
-    projectTasks,
+    watchTargets,
     onClosed: (c) => scheduler.releaseChat(c.taskId, c.id, c.sessionId),
   });
 

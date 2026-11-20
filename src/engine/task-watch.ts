@@ -4,7 +4,7 @@ import { relatedIdOfLine } from './guidance';
 import { AGENT_WATCH } from './steps/common';
 
 /*
- * What a chat watches of the tasks of its project, from its agent's
+ * What a chat watches of Looper's tasks, from its agent's
  * looper-watch or the Chat menu's Watch Task Events: the end of each of a
  * task's runs, or its trigger events, all of them or only those with one
  * related id (the event id).
@@ -20,8 +20,8 @@ export const WATCH_USAGE = [
 
 /** What a chat's agent is told about looper-watch. */
 export const WATCH_FOOTER = [
-  `Looper: this chat can watch the Looper tasks of its project with the ${AGENT_WATCH} command.`,
-  `\`${AGENT_WATCH} tasks\` lists them in the Tasks list's order, with what this chat watches.`,
+  `Looper: this chat can watch Looper's tasks with the ${AGENT_WATCH} command.`,
+  `\`${AGENT_WATCH} tasks\` lists its project's tasks, then the other projects', in the Tasks list's order, with what this chat watches.`,
   `\`${AGENT_WATCH} task <task-id>\` brings you the end of each of the task's runs, with its report.`,
   `\`${AGENT_WATCH} events <task-id> <event-id>\` brings you the task's trigger events whose looper_related_id is <event-id>; leave the event id out for all of its events.`,
   `\`${AGENT_WATCH} stop <task-id>\` stops watching the task.`,
@@ -73,12 +73,25 @@ export function watchText(w: TaskWatch): string {
 
 const TRIGGER_TEXT: Record<Task['trigger']['mode'], string> = { manual: 'started by hand', schedule: 'on a schedule', watcher: 'by its watcher' };
 
-/** looper-watch tasks: the project's tasks, each with how it starts and what the chat watches of it. */
-export function tasksText(tasks: readonly Task[], watches: readonly TaskWatch[]): string {
-  if (!tasks.length) return "This chat's project has no tasks.";
-  const lines = tasks.map((t) => {
+/** A task a chat can watch, in the Tasks list's order: whether it's in the chat's project, the folders it's in from the top, and its project's name. */
+export interface WatchTarget {
+  task: Task;
+  own: boolean;
+  folders: { id: string; name: string }[];
+  project?: string;
+}
+
+/** looper-watch tasks: the project's tasks, then the other projects', each with how it starts and what the chat watches of it. */
+export function tasksText(targets: readonly WatchTarget[], watches: readonly TaskWatch[]): string {
+  const line = ({ task: t, own, project }: WatchTarget) => {
     const watched = watches.filter((w) => w.taskId === t.id).map(watchText);
-    return `${t.id}  "${t.name}", runs ${TRIGGER_TEXT[t.trigger.mode]}${watched.length ? `; watching ${watched.join(', ')}` : ''}`;
-  });
-  return [`The tasks of this chat's project, in the Tasks list's order (id, name):`, ...lines].join('\n');
+    const where = !own && project ? ` (${project})` : '';
+    return `${t.id}  "${t.name}"${where}, runs ${TRIGGER_TEXT[t.trigger.mode]}${watched.length ? `; watching ${watched.join(', ')}` : ''}`;
+  };
+  const own = targets.filter((x) => x.own);
+  const other = targets.filter((x) => !x.own);
+  return [
+    ...(own.length ? [`The tasks of this chat's project, in the Tasks list's order (id, name):`, ...own.map(line)] : ["This chat's project has no tasks."]),
+    ...(other.length ? [`The tasks of other projects, in the Tasks list's order (id, name, project):`, ...other.map(line)] : []),
+  ].join('\n');
 }

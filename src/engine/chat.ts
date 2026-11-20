@@ -48,10 +48,10 @@ import { ClaudeStreamAccumulator, CodexExecAccumulator } from './builder/stream'
 import { contextOfLine, readCodexContextWindow, readContextTokens } from './context';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
-import { COMPACTED_FILE, compactedFile, findCodexRollout, LiveRows, TranscriptReader, transcriptHostPath } from './messages';
+import { COMPACTED_FILE, compactedFile, findCodexRollout, LiveRows, TranscriptReader, transcriptHostPath, withLooperInstructions } from './messages';
 import { claudeModelWindows, modelWindows as sharedWindows } from './model-windows';
 import { AGENT_WATCH, childEnv, SOCKET_FILE, WATCH_DIR, writeLauncher, type RunContext } from './steps/common';
-import { parseWatchArgs, tasksText, WATCH_FOOTER, WATCH_USAGE, watchedLines, watchText, withWatch } from './task-watch';
+import { parseWatchArgs, tasksText, WATCH_FOOTER, WATCH_USAGE, watchedLines, watchText, withWatch, type WatchTarget } from './task-watch';
 import { mergeClaudeSettings, mergeSystemPrompt, readUserSettings, readUserSettingsSync } from './claude-settings';
 import { takeFlagValues } from '../shared/claude-args';
 import { endingError, usageLimitOf } from './sessions';
@@ -417,8 +417,8 @@ export interface ChatDeps {
   onOpen?: (chat: { id: string; taskId: string; fromRunId: string }) => void;
   /** A message for the chat's agent: the user's, or Looper's (related events). */
   onTalk?: (chat: { id: string; taskId: string }) => void;
-  /** The tasks of the project of a chat on the task (`chatTaskId`), in the Tasks list's order: the ones it can watch. */
-  projectTasks?: (chatTaskId: string) => Task[];
+  /** The tasks a chat on the task (`chatTaskId`) can watch: every task, in the Tasks list's order. */
+  watchTargets?: (chatTaskId: string) => WatchTarget[];
   /** A chat closed for good has ended its processes: `sessionId` is the conversation it went on with. */
   onClosed?: (chat: { id: string; taskId: string; sessionId?: string }) => void;
 }
@@ -674,8 +674,10 @@ class ChatSession {
   private termSize?: { cols: number; rows: number };
   /** The conversation is in Claude Code's Code Mode (its transcript's repl-mode record): Claude Code resumes it only in a terminal. */
   private codeMode = false;
-  /** Watch Task Events and looper-watch: what the chat watches of its project's tasks. */
+  /** Watch Task Events and looper-watch: what the chat watches. */
   private watches: TaskWatch[];
+  /** Codex: its thread has Looper's instructions (ChatInfo.codexInstructed). */
+  private codexInstructed = false;
   /** The looper-watch requests being answered, by file name. */
   private readonly takenWatch = new Set<string>();
   /** The interactive session's rows from its mod, ahead of its transcript. */
@@ -798,6 +800,7 @@ class ChatSession {
     this.settings = { ...this.settings, mode: this.claude ? (this.settings.mode ?? task.agent.mode) : 'headless' };
     this.codeMode = !!info?.codeMode;
     this.watches = info?.watches ?? [];
+    this.codexInstructed = !!info?.codexInstructed;
     this.context = info?.context;
     if (opening.kind === 'continue') {
       this.fromRunId = opening.runId;
@@ -1708,11 +1711,11 @@ class ChatSession {
     this.scheduleEmit();
   }
 
-  // ---------- watching the project's tasks ----------
+  // ---------- watching tasks ----------
 
-  /** The tasks of the chat's project, in the Tasks list's order. */
-  private projectTasks(): Task[] {
-    return this.d.projectTasks?.(this.taskId) ?? [];
+  /** The tasks the chat can watch, in the Tasks list's order. */
+  private watchTargets(): WatchTarget[] {
+    return this.d.watchTargets?.(this.taskId) ?? [];
   }
 
   /** Watch Task Events or looper-watch: the agent gets the task's run ends or trigger events as messages. */
@@ -1745,12 +1748,14 @@ class ChatSession {
     return watchedLines(this.watches, taskId, lines);
   }
 
-  /** Chat → Watch Task Events: the project's tasks, with the event ids the chat watches each for. */
+  /** Chat → Watch Task Events: every task, with the event ids the chat watches each for. */
   private watchableTasks(): WatchableTask[] {
-    return this.projectTasks().map((t) => ({
+    return this.watchTargets().map(({ task: t, own, folders }) => ({
       id: t.id,
       name: t.name,
       events: this.watches.filter((w) => w.taskId === t.id && w.what === 'events').map((w) => w.eventId ?? ''),
+      own,
+      folders,
     }));
   }
 
@@ -1794,11 +1799,11 @@ class ChatSession {
   private answerWatch(args: string[]): { text: string; code: number } {
     const req = parseWatchArgs(args);
     if ('error' in req) return { text: `${AGENT_WATCH}: ${req.error}\n${WATCH_USAGE}`, code: 2 };
-    const tasks = this.projectTasks();
-    if (req.op === 'tasks') return { text: tasksText(tasks, this.watches), code: 0 };
+    const targets = this.watchTargets();
+    if (req.op === 'tasks') return { text: tasksText(targets, this.watches), code: 0 };
     const taskId = req.op === 'stop' ? req.taskId : req.watch.taskId;
-    const task = tasks.find((t) => t.id === taskId);
-    if (!task) return { text: `${AGENT_WATCH}: this chat's project has no task "${taskId}". \`${AGENT_WATCH} tasks\` lists them.`, code: 1 };
+    const task = targets.find((x) => x.task.id === taskId)?.task;
+    if (!task) return { text: `${AGENT_WATCH}: Looper has no task "${taskId}". \`${AGENT_WATCH} tasks\` lists them.`, code: 1 };
     if (req.op === 'stop') {
       this.unwatch(taskId);
       return { text: `Stopped watching "${task.name}".`, code: 0 };
@@ -1986,11 +1991,14 @@ class ChatSession {
     const files = attached.filter((x) => !images.includes(x)).map((x) => this.target.toTargetPath(x.path));
     const promptFile = `turn-${this.codexTurns}.txt`;
     const prompt = withFileList(withCommands(p.text, p.attachments), files) || 'See the attached image.';
-    writeText(path.join(this.dir, promptFile), compacted ? `${compacted}\n\n${prompt}` : prompt);
+    const text = compacted ? `${compacted}\n\n${prompt}` : prompt;
+    // A thread started elsewhere (a run, the History window, a fork) didn't get developer_instructions, which only a new thread takes.
+    writeText(path.join(this.dir, promptFile), this.sessionId && !this.codexInstructed ? withLooperInstructions(WATCH_FOOTER, text) : text);
     const parts = [this.harness.command, 'exec', ...codexPermissionArgs(s.permissionMode, false)];
     if (s.model) parts.push('--model', q(s.model));
     const effort = resolveEffort(s, this.harness);
     if (effort) parts.push('-c', q('model_reasoning_effort=' + effort));
+    parts.push('-c', q('developer_instructions=' + JSON.stringify(WATCH_FOOTER)));
     if (this.sessionId) parts.push('resume', q(this.sessionId));
     parts.push('--json', '--skip-git-repo-check');
     // The equals form: `exec`'s --image takes several values and would swallow the prompt.
@@ -2003,6 +2011,7 @@ class ChatSession {
     this.setStatus('working');
     this.spawnProc(this.launcher(`turn-${this.codexTurns}`, parts.join(' '), prelude), (code, stderr) => {
       if (code !== 0) this.acc.addNote(exitText(`Codex exited with code ${code}.`, stderr));
+      else this.codexInstructed = true;
       this.turnEnded();
       this.takeLimit();
       void this.readCodexContext().finally(() => this.save());
@@ -2511,6 +2520,7 @@ class ChatSession {
         ...(this.resumedSession ? { resumedSession: this.resumedSession } : {}),
         ...(this.codeMode ? { codeMode: true } : {}),
         ...(this.watches.length ? { watches: this.watches } : {}),
+        ...(this.codexInstructed ? { codexInstructed: true } : {}),
       });
     } catch (err) {
       this.d.log.warn(`chat ${this.id}: cannot save: ${errMsg(err)}`);
@@ -2647,7 +2657,7 @@ class ChatSession {
       autoContinue: this.autoContinue,
       ...(this.continueAnyway ? { continueAnyway: true } : {}),
       ...(this.codeMode ? { codeMode: true } : {}),
-      ...(this.d.projectTasks ? { watchTasks: this.watchableTasks() } : {}),
+      ...(this.d.watchTargets ? { watchTasks: this.watchableTasks() } : {}),
     };
   }
 }

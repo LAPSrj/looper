@@ -159,10 +159,15 @@ describe('a run opened in a chat', { timeout: 30_000 }, () => {
     const { e, data } = await setUp([ended('first', 'success'), ended('Deployed v2', 'success', 'All checks passed.')]);
     const t1 = e.listTasks().find((t) => t.id === 't1')!;
     e.saveTask(TaskSchema.parse({ ...t1, id: 't2', name: 'Deploy' }));
+    const ops = e.addFolder('Ops');
+    const nightly = e.addFolder('Nightly', ops.id);
+    const home = e.saveProject({ name: 'Home', environmentId: 'local', cwd: os.tmpdir() });
+    e.saveTask(TaskSchema.parse({ ...t1, id: 't3', name: 'Backups', projectId: home.id, cwd: home.cwd, folderId: nightly.id }));
     const chatId = e.startChat('t1').id;
     expect(e.getChat(chatId)!.watchTasks).toEqual([
-      { id: 't1', name: 'T1', events: [] },
-      { id: 't2', name: 'Deploy', events: [] },
+      { id: 't1', name: 'T1', events: [], own: true, folders: [] },
+      { id: 't2', name: 'Deploy', events: [], own: true, folders: [] },
+      { id: 't3', name: 'Backups', events: [], own: false, folders: [{ id: ops.id, name: 'Ops' }, { id: nightly.id, name: 'Nightly' }] },
     ]);
     // The agent watches the task's runs with looper-watch, as its helper asks.
     const watchDir = path.join(e.runDir('t1', chatId), 'watch');

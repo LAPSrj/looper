@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { CodexAccumulator, TranscriptReader, findCodexRollout, readCodexRef } from '../src/engine/messages';
+import { CodexAccumulator, TranscriptReader, findCodexRollout, readCodexRef, withLooperInstructions } from '../src/engine/messages';
 import { guidanceMessage } from '../src/shared/messages';
 
 // Fixture shapes captured live from a codex-cli 0.154.0 rollout
@@ -31,6 +31,18 @@ describe('CodexAccumulator guidance', () => {
     expect(acc.rows.map((r) => [r.kind, r.text])).toEqual([
       ['guidance', 'end with PINEAPPLE'],
       ['guidance', 'typed in'],
+    ]);
+  });
+});
+
+describe('CodexAccumulator Looper instructions', () => {
+  it("shows a chat's message without the instructions Looper put ahead of it", () => {
+    const acc = new CodexAccumulator();
+    acc.addLine(userText(withLooperInstructions('Looper: use looper-watch.', 'deploy it')));
+    acc.addLine(userText('<looper_instructions> in the middle </looper_instructions> stays'));
+    expect(acc.rows.map((r) => [r.kind, r.text])).toEqual([
+      ['prompt', 'deploy it'],
+      ['prompt', '<looper_instructions> in the middle </looper_instructions> stays'],
     ]);
   });
 });

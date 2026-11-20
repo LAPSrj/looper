@@ -139,15 +139,19 @@ export interface ChatState {
   continueAnyway?: boolean;
   /** The conversation is in Claude Code's Code Mode, which Claude Code goes on with only in a terminal: the chat stays interactive. */
   codeMode?: boolean;
-  /** Chat → Watch Task Events: the tasks of the chat's project in the Tasks list's order, with the event ids it watches each for. */
+  /** Chat → Watch Task Events: every task in the Tasks list's order, with the event ids it watches each for. */
   watchTasks?: WatchableTask[];
 }
 
-/** A task of the chat's project in Chat → Watch Task Events, and the event ids the chat watches it for ('' for all its events). */
+/** A task in Chat → Watch Task Events, and the event ids the chat watches it for ('' for all its events). */
 export interface WatchableTask {
   id: string;
   name: string;
   events: string[];
+  /** It's in the chat's project; the others are under Other Projects. */
+  own: boolean;
+  /** The Tasks list's folders it's in, from the top level down. */
+  folders: { id: string; name: string }[];
 }
 
 /**
@@ -250,6 +254,8 @@ export interface ChatInfo {
   codeMode?: boolean;
   /** Watch Task Events and looper-watch: what the chat watches. */
   watches?: TaskWatch[];
+  /** Codex: its thread has Looper's instructions, because the chat started it with them or a message took them there. */
+  codexInstructed?: boolean;
 }
 
 /**
