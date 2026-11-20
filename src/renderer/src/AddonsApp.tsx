@@ -79,7 +79,7 @@ export function AddonsApp() {
                 !!addon.description && { label: 'Description', value: addon.description },
                 { label: 'Runs', value: addon.run, className: 'mono addon-wrap', note: addon.localRun ? 'Changed in Edit…' : undefined },
                 { label: 'Panes', value: addon.panes.map((p) => p.title).join(', ') || 'None' },
-                !!addon.error && { label: 'Stopped', value: addon.error, className: 'mono addon-wrap', tone: 'error' },
+                !!addon.error && { label: 'Stopped', value: addon.error, className: 'addon-wrap', tone: 'error' },
               ]}
             />
           )}

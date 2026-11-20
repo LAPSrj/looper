@@ -780,7 +780,7 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
               buttons: [{ id: 'switch', label: 'Switch' }],
             },
             { type: 'field', id: 'newBranch', label: 'New branch', input: 'text', value: '' },
-            { type: 'buttons', items: [{ id: 'create-branch', label: 'Create Branch' }] },
+            { type: 'buttons', items: [{ id: 'create-branch', label: 'Create Branch', requires: ['newBranch'] }] },
           ],
         };
       }

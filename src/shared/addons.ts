@@ -536,6 +536,8 @@ const ButtonSchema = z
     primary: z.boolean().optional(),
     danger: z.boolean().optional(),
     disabled: z.boolean().optional(),
+    /** The ids of fields it needs: it's off while any of them is empty, as a window's primary button is with `required` fields. */
+    requires: z.array(id).optional(),
     /** Asked in a Yes/No dialog first; No sends nothing. */
     confirm: z.string().min(1).optional(),
   })
@@ -1126,8 +1128,10 @@ export interface AddonInfo {
   /** Off: stopped in the Addons window; it stays stopped and shows nothing until started there. */
   enabled: boolean;
   status: AddonStatus;
-  /** Why it stopped: its exit and the last lines it wrote to stderr. */
+  /** Why it stopped, for the user: what kept it from starting, or that it stopped unexpectedly (the Engine Log has its exit and output). */
   error?: string;
+  /** It stopped on its own after starting. */
+  crashed?: boolean;
 }
 
 /** Key of an addon pane in the view settings and the sidebar. */

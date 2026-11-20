@@ -9,6 +9,7 @@ import {
   listSelection,
   mergeValues,
   nearEnd,
+  redrawnProblems,
   refreshes,
   rowsKey,
   toggleChecked,
@@ -124,5 +125,15 @@ describe('an addon’s refresh', () => {
     expect(refreshes({ projectTabs: true }, { projectTabs: true })).toBe(true);
     expect(refreshes({ projectTabs: true }, { view: 'changes' })).toBe(false);
     expect(refreshes({ projectTabs: false }, { projectTabs: true })).toBe(false);
+  });
+});
+
+describe('redrawnProblems', () => {
+  const text = (id: string, error?: string): AddonField => ({ type: 'field', id, label: id, input: 'text', ...(error ? { error } : {}) });
+  it('keeps the problems of fields the redrawn screen still has, and adds its own', () => {
+    expect(redrawnProblems({ name: 'A branch named "master" already exists', gone: 'x' }, [text('name'), text('url', "The URL can't be read")])).toEqual({
+      name: 'A branch named "master" already exists',
+      url: "The URL can't be read",
+    });
   });
 });

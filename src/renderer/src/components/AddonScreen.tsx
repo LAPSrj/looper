@@ -10,7 +10,7 @@ import { useDialogKeys } from './hooks';
 import { Markdown } from './Markdown';
 import { PropertyList, type Property } from './PropertyList';
 import { AddonListDetail } from './AddonListDetail';
-import { emptyValue, fieldRuns, fieldsOf, fillsScreen, isMissing, mergeValues, propsOf, refreshes, toggleChecked, type Values } from './addon-screen-model';
+import { emptyValue, fieldRuns, fieldsOf, fillsScreen, isEmpty, isMissing, mergeValues, redrawnProblems, propsOf, refreshes, toggleChecked, type Values } from './addon-screen-model';
 import { DiffPane } from './DiffPane';
 import { ListActions, ListButton, SelectList } from './SelectList';
 import { EmptyState } from './EmptyState';
@@ -92,8 +92,8 @@ export function AddonScreenView({
         setScreen(s);
         setError(null);
         setValues((v) => mergeValues(v, fieldsOf(s.body)));
-        // The problems the screen came with (a field's `error`); an event's answer replaces them.
-        setProblems(Object.fromEntries(fieldsOf(s.body).flatMap((f) => (f.error ? [[f.id, f.error]] : []))));
+        // An event's answer replaces the problems; a redraw (the addon refreshing after an action) keeps them.
+        setProblems((prev) => redrawnProblems(prev, fieldsOf(s.body)));
       })
       .catch((e: Error) => {
         if (n === latestLoad.current) setError(e.message);
@@ -112,6 +112,7 @@ export function AddonScreenView({
     setScreen(null);
     setError(null);
     setValues({});
+    setProblems({});
     setRevealed({});
     setTabSel({});
     setListSel({});
@@ -229,11 +230,14 @@ export function AddonScreenView({
     onTab: windowTabs ? selectTab(windowTabs) : undefined,
   });
 
+  /** A button that can't be used now: turned off, waiting for an answer, or one of the fields it needs is empty. */
+  const off = (b: AddonButton) => !!b.disabled || busy || !!b.requires?.some((id) => isEmpty(values[id]));
+
   const button = (b: AddonButton) => (
     <button
       key={b.id}
       className={`btn${b.primary ? ' primary' : ''}${b.danger ? ' danger' : ''}`}
-      disabled={b.disabled || busy}
+      disabled={off(b)}
       onClick={() => void send('click', b.id, b.confirm)}
     >
       {b.label}
@@ -244,7 +248,7 @@ export function AddonScreenView({
   const buttonRow = (key: number, items: AddonButton[]) => (
     <ListActions key={key}>
       {items.map((b) => (
-        <ListButton key={b.id} primary={b.primary} danger={b.danger} disabled={b.disabled || busy} onClick={() => void send('click', b.id, b.confirm)}>
+        <ListButton key={b.id} primary={b.primary} danger={b.danger} disabled={off(b)} onClick={() => void send('click', b.id, b.confirm)}>
           {b.label}
         </ListButton>
       ))}

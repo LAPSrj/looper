@@ -149,6 +149,8 @@ interface Pending {
 class AddonProcess {
   status: AddonStatus = 'starting';
   error?: string;
+  /** It stopped on its own after starting, not for a reason `error` gives. */
+  crashed = false;
   /** ${addonDir} as its process got it, once it has started. */
   addonDir?: string;
   private child: OffThreadChild | null = null;
@@ -187,6 +189,7 @@ class AddonProcess {
   start(): void {
     this.status = 'starting';
     this.error = undefined;
+    this.crashed = false;
     this.stopping = false;
     this.buf = '';
     this.stderrTail = '';
@@ -265,6 +268,7 @@ class AddonProcess {
     if (this.status !== 'stopped') {
       this.status = 'stopped';
       this.error = undefined;
+      this.crashed = false;
       this.d.onStatus();
     }
     if (!child) return Promise.resolve();
@@ -472,12 +476,15 @@ class AddonProcess {
     const tail = stripShellNoise(this.stderrTail).trim().split('\n').slice(-6).join('\n');
     const why = spawnError ?? (code === null ? 'It stopped unexpectedly.' : `It stopped unexpectedly.\nError code: ${exitCodeText(code)}`);
     this.d.log.warn(`addon ${this.manifest.id}: ${why}${tail ? `\n${tail}` : ''}`);
-    this.stopped(tail ? `${why}\n${tail}` : why);
+    // The exit code and what it wrote are for whoever writes the addon: the Engine Log has them.
+    if (spawnError) this.stopped(spawnError);
+    else this.stopped('It stopped unexpectedly. What it wrote last is in the Engine Log.', true);
   }
 
-  private stopped(error: string): void {
+  private stopped(error: string, crashed = false): void {
     this.status = 'stopped';
     this.error = error;
+    this.crashed = crashed;
     this.d.onStatus();
   }
 
@@ -671,6 +678,7 @@ export class AddonHost {
         enabled: this.enabled(p.manifest.id),
         status: p.status,
         error: p.error,
+        crashed: p.crashed || undefined,
       };
     });
   }
@@ -843,6 +851,7 @@ export class AddonHost {
       void p.stop();
       p.status = 'stopped';
       p.error = undefined;
+      p.crashed = false;
     }
     this.changed();
   }

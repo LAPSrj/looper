@@ -80,9 +80,23 @@ export function mergeValues(prev: Values, fields: AddonField[]): Values {
   return next;
 }
 
+/**
+ * A field's problems after the screen is drawn again: the ones it still has a field for stay, as Windows' in-place errors
+ * stay until the user commits again, and a field's own `error` is added.
+ */
+export function redrawnProblems(prev: Record<string, string>, fields: AddonField[]): Record<string, string> {
+  const ids = new Set(fields.map((f) => f.id));
+  const kept = Object.entries(prev).filter(([id]) => ids.has(id));
+  return Object.fromEntries([...kept, ...fields.flatMap((f) => (f.error ? [[f.id, f.error] as [string, string]] : []))]);
+}
+
 /** A required field without a value: an empty text, or a checklist with nothing checked. */
 export function isMissing(f: AddonField, v: AddonValue | undefined): boolean {
-  if (!f.required) return false;
+  return !!f.required && isEmpty(v);
+}
+
+/** An empty text, or a checklist with nothing checked. */
+export function isEmpty(v: AddonValue | undefined): boolean {
   if (v === undefined) return true;
   if (Array.isArray(v)) return v.length === 0;
   return String(v).trim() === '';

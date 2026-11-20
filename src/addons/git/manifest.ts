@@ -13,7 +13,7 @@ export const MANIFEST = {
   $version: 2 satisfies typeof ADDON_FORMAT,
   id: 'git',
   name: 'Git',
-  version: '1.0.0',
+  version: '1.1.0',
   description: "Your projects' git repositories: changes, history, commits, branches, pull and push.",
   run: { on: 'looper', command: ['${addonDir}/addon.js'] },
   panes: [{ id: 'repositories', title: 'Git' }],

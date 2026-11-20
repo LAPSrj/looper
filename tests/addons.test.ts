@@ -905,17 +905,19 @@ describe('AddonHost', () => {
   }, 20_000);
 
   it('reports why an addon stopped and restarts it', async () => {
-    const { host, manifest } = setup();
+    const { host, manifest, log } = setup();
     await host.install({ manifest });
     await until(() => host.list()[0]?.status === 'running');
     await expect(host.event('demo', { source: { pane: 'things' }, kind: 'click', id: 'crash' })).rejects.toThrow('Demo stopped.');
     await until(() => host.list()[0]?.status === 'stopped');
-    expect(host.list()[0].error).toBe('It stopped unexpectedly.\nError code: 3\nfatal: gone');
+    expect(host.list()[0]).toMatchObject({ error: 'It stopped unexpectedly. What it wrote last is in the Engine Log.', crashed: true });
+    expect(log.lines.some((l) => l.includes('It stopped unexpectedly.\nError code: 3\nfatal: gone'))).toBe(true);
     await expect(host.pane('demo', 'things')).rejects.toThrow("Demo isn't running.");
 
     host.restart('demo');
     await until(() => host.list()[0]?.status === 'running');
     expect(host.list()[0].error).toBeUndefined();
+    expect(host.list()[0].crashed).toBeUndefined();
   }, 20_000);
 
   it('loads installed addons on start and removes them', async () => {
