@@ -3,14 +3,11 @@ import { addonPaneKey, matchesSearch, type AddonInfo, type AddonPaneContent, typ
 import { contextMenu } from '@shared/commands/build';
 import type { CommandContext } from '@shared/commands/context';
 import { useAddonList } from '../live-state';
-import { platform } from '../platform';
 import { isPhone } from '../web/page-nav';
 import { refreshes } from './addon-screen-model';
 import { popupCommands } from './command-surfaces';
 import { GROUP_INDENT, GroupHeader } from './GroupHeader';
 import { ItemText, useGroupedTree, type TreeRow } from './GroupedTree';
-import { Icon } from './Icon';
-import { ICONS } from './icons';
 import { Row } from './phone/PhoneList';
 import { EmptyState } from './EmptyState';
 
@@ -104,6 +101,27 @@ export function showPaneItemMenu(c: CommandContext, addonId: string, pane: strin
   popupCommands(at, contextMenu('addonItem', at));
 }
 
+/**
+ * An addon that isn't running, in place of its panes and screens: starting, or stopped on its own with why and Restart
+ * (Windows' in-place error). The desktop draws it across the tab, without the panes' list.
+ */
+export function AddonNotRunning({ addon }: { addon: AddonInfo }) {
+  if (addon.status !== 'stopped') return <EmptyState busy>Starting {addon.name}…</EmptyState>;
+  return (
+    <EmptyState
+      level="error"
+      title={`${addon.name} stopped`}
+      action={
+        <button className="btn" onClick={() => void window.looper.addons.restart(addon.id)}>
+          Restart
+        </button>
+      }
+    >
+      {addon.error}
+    </EmptyState>
+  );
+}
+
 /** An addon pane's body in the sidebar: its items, drawn like the task list's. */
 export function AddonPaneList({
   addon,
@@ -182,22 +200,7 @@ export function AddonPaneList({
     itemMenu: onMenu,
   });
 
-  if (addon.status === 'stopped') {
-    return (
-      <EmptyState
-        level="error"
-        title={`${addon.name} stopped`}
-        action={
-          <button className="btn" onClick={() => void window.looper.addons.restart(addon.id)}>
-            Restart
-          </button>
-        }
-      >
-        {addon.error}
-      </EmptyState>
-    );
-  }
-  if (addon.status === 'starting' || !state) return <div className="addon-pane-note muted">Starting…</div>;
+  if (addon.status !== 'running' || !state) return <AddonNotRunning addon={addon} />;
   if (state.status === 'error') {
     return (
       <EmptyState
@@ -213,9 +216,8 @@ export function AddonPaneList({
       </EmptyState>
     );
   }
-  if (!total) return <div className="addon-pane-note muted">{state.content.empty ?? 'Nothing here.'}</div>;
-
-  if (!all.length) return <div className="addon-pane-note muted">No matches.</div>;
+  if (!total) return <EmptyState>{state.content.empty ?? 'Nothing here.'}</EmptyState>;
+  if (!all.length) return <EmptyState>No matches.</EmptyState>;
 
   const header = (r: Extract<PaneRow, { kind: 'group' }>) => (
     <GroupHeader
@@ -276,106 +278,3 @@ export function AddonPaneList({
 }
 
 type PaneRow = TreeRow<{ name: string; items: AddonPaneItem[] }, AddonPaneItem>;
-
-/**
- * An instant Search box as the Windows guidelines draw one: a prompt inside
- * it instead of a label, the magnifying glass as a symbol (not a button) while
- * it's empty, and an "x" that clears it once there's text. Focusing it selects
- * what was typed before; Esc clears it.
- */
-export function AddonSearchBox({
-  value,
-  onChange,
-  placeholder,
-  inputRef,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  inputRef?: (el: HTMLInputElement | null) => void;
-}) {
-  const ref = useRef<HTMLInputElement | null>(null);
-  // A click that focuses the box would undo the select-on-focus on mouse up.
-  const justFocused = useRef(false);
-  // A phone's search field keeps the magnifying glass at its start; on an iPhone, Cancel (an xmark in a glass circle) shows beside it while it has the focus.
-  const [focused, setFocused] = useState(false);
-  const prompt = placeholder ?? (isPhone ? 'Search' : 'Type to search');
-  const glass = (
-    <Icon size={14} className="addon-search-icon">
-      {ICONS.search}
-    </Icon>
-  );
-  const field = (
-    <>
-      {isPhone && glass}
-      <input
-        ref={(el) => {
-          ref.current = el;
-          inputRef?.(el);
-        }}
-        type="text"
-        enterKeyHint={isPhone ? 'search' : undefined}
-        aria-label={prompt}
-        placeholder={prompt}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onFocus={(e) => {
-          e.currentTarget.select();
-          justFocused.current = true;
-          setFocused(true);
-        }}
-        onBlur={() => setFocused(false)}
-        onMouseUp={(e) => {
-          if (justFocused.current) e.preventDefault();
-          justFocused.current = false;
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape' && value) {
-            e.stopPropagation();
-            onChange('');
-          }
-        }}
-      />
-      {value ? (
-        <button
-          type="button"
-          className="addon-search-clear"
-          aria-label="Clear"
-          // The field keeps the focus: losing it would take Cancel away and move this button from under the finger.
-          onPointerDown={(e) => e.preventDefault()}
-          onClick={() => {
-            onChange('');
-            ref.current?.focus();
-          }}
-        >
-          <Icon size={10} bold>
-            {ICONS.close}
-          </Icon>
-        </button>
-      ) : (
-        !isPhone && glass
-      )}
-    </>
-  );
-  if (!isPhone) return <div className="addon-search">{field}</div>;
-  return (
-    <div className="addon-search">
-      <span className="addon-search-field">{field}</span>
-      {focused && platform === 'ios' && (
-        <button
-          type="button"
-          className="addon-search-cancel"
-          aria-label="Cancel"
-          // Before the field's blur, which would take the button away first.
-          onPointerDown={(e) => e.preventDefault()}
-          onClick={() => {
-            onChange('');
-            ref.current?.blur();
-          }}
-        >
-          <Icon size={17}>{ICONS.close}</Icon>
-        </button>
-      )}
-    </div>
-  );
-}

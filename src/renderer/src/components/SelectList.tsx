@@ -93,10 +93,25 @@ export function SelectList<T>({ items, label, idPrefix, selectedKey, itemKey, it
  * One of a list's own buttons (Install…, Restore, Empty Recycle Bin). `row`: it acts on the selected row, so a phone,
  * which has no selected row, leaves it to the row's menu; any other is a command row of its own under the list there.
  */
-export function ListButton({ row, danger, disabled, onClick, children }: { row?: boolean; danger?: boolean; disabled?: boolean; onClick: () => void; children: string }) {
+export function ListButton({
+  row,
+  primary,
+  danger,
+  disabled,
+  onClick,
+  children,
+}: {
+  row?: boolean;
+  /** The default command of a row of buttons (a screen's Save): the desktop's primary button. */
+  primary?: boolean;
+  danger?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: string;
+}) {
   if (!isPhone) {
     return (
-      <button className={`btn${danger ? ' danger' : ''}`} disabled={disabled} onClick={onClick}>
+      <button className={`btn${primary ? ' primary' : ''}${danger ? ' danger' : ''}`} disabled={disabled} onClick={onClick}>
         {children}
       </button>
     );

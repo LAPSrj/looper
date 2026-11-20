@@ -14,6 +14,7 @@ import {
 import { baseName, dirName } from '@shared/paths';
 import { fmtDateTime } from '../format';
 import { RowList, type PhoneRowModel } from './DataTable';
+import { DetailRowText } from './RowList';
 import { EmptyState } from './EmptyState';
 import { ListDetail, selectsFirstRow } from './ListDetail';
 import { Group } from './phone/PhoneList';
@@ -36,15 +37,7 @@ interface FileLine {
 
 /** One file in a list: its name, its folder, and what happened to it. */
 function FileRow({ path, origPath, status }: FileLine) {
-  return (
-    <>
-      <div className="git-file-name">
-        <span>{baseName(path)}</span>
-        <span className="muted git-file-status">{status}</span>
-      </div>
-      <div className="muted mono git-file-dir">{origPath ? `from ${origPath}` : dirName(path) || ' '}</div>
-    </>
-  );
+  return <DetailRowText title={baseName(path)} value={status} sub={origPath ? `from ${origPath}` : dirName(path) || ' '} mono />;
 }
 
 /** The same on a phone: the name, its folder under it, what happened to it at the end. */
@@ -96,8 +89,8 @@ function ChangesView({ projectId, status, narrow, note, onDetail }: { projectId:
       empty="Select a file to see its changes."
       list={
         <RowList
-          listClass="git-list"
-          rowClass="git-file"
+          listClass="detail-rows"
+          rowClass="detail-row"
           label="Changes"
           idPrefix="change"
           rows={changes}
@@ -225,7 +218,7 @@ function HistoryView({ projectId, root, refreshKey, narrow, note, onDetail }: { 
       empty="Select a commit to see its changes."
       list={
         <RowList
-          listClass="git-list"
+          listClass="detail-rows"
           rowClass="git-commit"
           label="Commits"
           idPrefix="commit"
@@ -264,8 +257,8 @@ function HistoryView({ projectId, root, refreshKey, narrow, note, onDetail }: { 
           list={
             detail ? (
               <RowList
-                listClass="git-list"
-                rowClass="git-file"
+                listClass="detail-rows"
+                rowClass="detail-row"
                 label="Files"
                 idPrefix="commit-file"
                 rows={detail.files}
@@ -396,13 +389,13 @@ export function GitView({ projectId, watch, narrow: narrowPane = false }: { proj
       </div>
     );
   }
-  const branch = <span className="muted git-branch">{branchText(status)}</span>;
+  const branch = <span className="muted tabs-note">{branchText(status)}</span>;
   // On a phone or tablet the branch is the list's header (HIG: Lists and tables), not a strip of its own at the bottom.
   const note = selectsFirstRow ? undefined : <div className="pg-list-note">{branchText(status)}</div>;
   return (
     <div className={className}>
       {!detailOpen && (
-        <div className="git-head">
+        <div className="tabs-head">
           <TabBar
             tabs={[
               ['changes', 'Changes'],
@@ -422,7 +415,7 @@ export function GitView({ projectId, watch, narrow: narrowPane = false }: { proj
           <HistoryView projectId={projectId} root={status.root} refreshKey={refreshKey} narrow={narrow} note={note} onDetail={setDetailOpen} />
         )}
       </div>
-      {narrowPane && selectsFirstRow && !detailOpen && <div className="git-foot">{branch}</div>}
+      {narrowPane && selectsFirstRow && !detailOpen && <div className="tabs-foot">{branch}</div>}
     </div>
   );
 }

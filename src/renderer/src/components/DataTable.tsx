@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref, type RefObject, type UIEvent } from 'react';
 import { Measured } from '../perf';
 import { isPhone } from '../web/page-nav';
-import { AddonSearchBox } from './AddonPane';
+import { SearchBox } from './SearchBox';
 import { clickSelect, moveSelect, stepIndex, type MultiSelection } from './multi-select';
 import { PhoneRows, useRowKeys, type PhoneRowModel, type Rows } from './RowList';
 import { ResizableColumns, type TableCol } from './ui';
@@ -67,7 +67,7 @@ function TableBody<T>(props: DataTableProps<T>) {
     <div className="pg-rows-search">
       {list}
       <div className="addon-search-bar">
-        <AddonSearchBox value={props.search.value} onChange={props.search.onChange} />
+        <SearchBox value={props.search.value} onChange={props.search.onChange} />
       </div>
     </div>
   );

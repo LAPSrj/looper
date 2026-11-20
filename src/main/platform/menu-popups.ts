@@ -7,7 +7,7 @@
  * A level window costs about 5 MB of the shared page process (scripts/perf/popup-cost.mjs), so they're made on
  * a menu's first use and closed after IDLE_MS without one; until the first is ready, the page draws its menu.
  */
-import { BrowserWindow, screen } from 'electron';
+import { BrowserWindow, screen, type WebContents } from 'electron';
 import type { MenuItemSpec } from '../../shared/remote-access';
 
 /** What a page's open menu shows: its levels, the point it opens at in the page (CSS px), and whether access keys are underlined. */
@@ -15,6 +15,14 @@ export interface MenuPopupState {
   levels: { items: MenuItemSpec[]; active: number }[];
   at: { x: number; y: number };
   cues: boolean;
+}
+
+/** A box in a page, in CSS px. */
+export interface MenuMouseRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 /** A level as its window measured it: its size and the top of each item by index, in CSS px from the menu's top. */
@@ -180,6 +188,8 @@ export function menuLevelLayout(from: unknown, depth: number, layout: MenuLevelL
     level.win.setBackgroundColor('#00000000');
     park(level);
     level.win.showInactive();
+    // Topmost rather than owned: setParentWindow takes the focus from the owner, whose page then closes the menu.
+    level.win.setAlwaysOnTop(true, 'pop-up-menu');
     // A submenu opened while its window loaded.
     const lv = state?.levels[depth];
     if (lv) send(level, { ...lv, cues: state!.cues });
@@ -222,7 +232,6 @@ function place(depth: number): void {
   level.win.setBounds({ x: x - MENU_PAD, y: y - MENU_PAD, width: width + 2 * MENU_PAD, height: height + 2 * MENU_PAD });
   if (!level.win.webContents.isDestroyed()) level.win.webContents.send('ui:event', { type: 'menu-level-placed', seq: level.layout.seq });
   if (!level.shown) {
-    if (level.win.getParentWindow() !== owner) level.win.setParentWindow(owner);
     level.win.setIgnoreMouseEvents(false);
     level.win.setOpacity(1);
     level.shown = true;
@@ -235,4 +244,40 @@ export function menuLevelInput(from: unknown, depth: number, index: number, kind
   const level = levels[depth];
   if (!level || level.win.webContents !== from || !owner || owner.isDestroyed()) return;
   owner.webContents.send('ui:event', { type: 'menu-popup-input', depth, index, kind });
+}
+
+/** Where each window's page with an open menu still takes the mouse: what it draws of the menu, its menu bar. */
+const mouseHolds = new WeakMap<BrowserWindow, MenuMouseRect[]>();
+const holding = new WeakSet<WebContents>();
+
+/**
+ * The page `from` opened its menu (the boxes that still take the mouse) or closed it (null). Meanwhile, as under
+ * Win32's menus, the rest of its window gets no moves, so nothing there hovers, while a press still reaches it (and
+ * closes the menu). The page holds the wheel itself: before-mouse-event doesn't see it.
+ */
+export function holdMenuMouse(from: unknown, live: MenuMouseRect[] | null): void {
+  if (!(from instanceof BrowserWindow) || from.isDestroyed() || process.platform === 'darwin') return;
+  const wc = from.webContents;
+  if (!live) {
+    mouseHolds.delete(from);
+    return;
+  }
+  const started = !mouseHolds.has(from);
+  mouseHolds.set(from, live);
+  if (!holding.has(wc)) {
+    holding.add(wc);
+    wc.on('before-mouse-event', (event, mouse) => {
+      const boxes = mouseHolds.get(from);
+      if (!boxes || mouse.type === 'mouseUp' || mouse.type === 'contextMenu' || mouse.type === 'mouseLeave') return;
+      const zoom = wc.getZoomFactor() || 1;
+      const x = mouse.x / zoom;
+      const y = mouse.y / zoom;
+      if (boxes.some((r) => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)) return;
+      // A press outside closes the menu: the moves of its drag are the page's again.
+      if (mouse.type === 'mouseDown') mouseHolds.delete(from);
+      else event.preventDefault();
+    });
+  }
+  // What the pointer rests on (a right-clicked row) stops hovering, so its tooltip doesn't show beside the menu.
+  if (started) wc.sendInputEvent({ type: 'mouseLeave', x: -1, y: -1 });
 }

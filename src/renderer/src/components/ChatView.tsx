@@ -157,7 +157,7 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
   const conversation = useRef<ConversationHandle>(null);
   const composer = useRef<ComposerHandle>(null);
   const sectionRef = useRef<HTMLElement>(null);
-  // On iOS the message box floats over the conversation, and what the agent is doing is the conversation's last row.
+  // On iOS the message box floats over the conversation.
   const floatingBox = !embedded && document.documentElement.dataset.platform === 'ios';
   useDockHeight(sectionRef, floatingBox);
 
@@ -316,9 +316,8 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
               )}
             </div>
           ))}
-          {floatingBox && <ChatStatus state={state} />}
+          <ChatStatus state={state} />
         </Conversation>
-        {!floatingBox && <ChatStatus state={state} />}
         <Composer
           ref={composer}
           state={state}

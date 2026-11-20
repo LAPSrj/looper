@@ -58,6 +58,41 @@ describe('an addon command placed in a project', () => {
   });
 });
 
+describe('an addon submenu whose items the screen sends', () => {
+  const branch: Partial<AddonCommand> = { id: 'branch', label: '&Branch', labeled: true, menu: 'tools', entries: [{ id: 'branches', label: '&Branches…' }], in: { item: { toolbar: true } } };
+  const state = {
+    branch: {
+      label: '&Branch: main',
+      entries: [
+        { id: 'branch:6d61696e', label: 'main', check: 'radio' as const, checked: true },
+        { id: 'branch:66', label: 'feature', check: 'radio' as const, checked: false },
+        { separator: true as const },
+        { id: 'branches', label: '&Branches…' },
+      ],
+    },
+  };
+
+  it('lists them in place of the manifest’s, labeled with the state’s label, and sends the picked one’s id', async () => {
+    const popup = vi.fn((items: MenuItemSpec[]) => Promise.resolve(items.find((i) => i.label === 'feature')?.id ?? null));
+    const event = vi.fn(() => Promise.resolve({}));
+    const c: CommandContext = {
+      ...EMPTY_CONTEXT,
+      looper: { addons: { event }, commands: { popup } } as never,
+      addons: [addon([branch])],
+      addon: { id: 'git', panes: { pane: 'repositories' }, item: { pane: 'repositories', id: 'webapp', state } },
+    };
+    const item = commandToolbar(['addonItem'], c)
+      .flatMap((g) => g.items)
+      .find((i) => i.id === addonCommandId('git', 'branch'))!;
+    expect(item).toMatchObject({ label: 'Branch: main', labeled: true });
+    item.menu!.open!(0, 0);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(labels(popup.mock.calls[0][0])).toEqual(['main', 'feature', '&Branches…']);
+    expect(popup.mock.calls[0][0].find((i) => i.label === 'main')).toMatchObject({ checked: true });
+    expect(event).toHaveBeenCalledWith('git', { source: { pane: 'repositories' }, kind: 'command', id: 'branch:66', item: 'webapp' }, undefined);
+  });
+});
+
 describe('an addon command placed in the Projects tab', () => {
   it('carries the selected project, and none while none is', () => {
     const picked = context({ tab: 'projects', project, projectSelected: true });

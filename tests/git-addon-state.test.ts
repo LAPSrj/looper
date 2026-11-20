@@ -101,12 +101,12 @@ describe("reading the projects' states", () => {
     const states = await Promise.all(g.statesOf(projects()));
     expect(states.map((s) => s.repo)).toEqual([true, true, false, true]);
     expect(states[0]).toMatchObject({ root: path.join(tmp, "it's here"), changes: [{ path: 'a.txt', kind: 'untracked' }] });
-    // One for each WSL environment (from /, in the first project's), three at once for the Windows one.
+    // One for each WSL environment (from /, in the first project's), four at once for the Windows one.
     expect(execs.filter((e) => (e.argv as string[])[0] === 'sh').map((e) => [e.projectId, e.cwd])).toEqual([
       ['a', '/'],
       ['c', '/'],
     ]);
-    expect(execs.filter((e) => e.projectId === 'w')).toHaveLength(3);
+    expect(execs.filter((e) => e.projectId === 'w')).toHaveLength(4);
     execs.length = 0;
     await g.state(projects()[1]);
     expect(execs).toHaveLength(0);

@@ -68,6 +68,22 @@ export interface Rows<T> {
   sectionTitle?: (day: string, days: number) => string;
 }
 
+/**
+ * A list-detail row's text, as the Git tab's files and an addon's lists show it: the title, plain text at its end
+ * (what happened to a file), and a line under it (its folder), in a monospace font with `mono`.
+ */
+export function DetailRowText({ title, value, sub, mono }: { title: ReactNode; value?: ReactNode; sub?: ReactNode; mono?: boolean }) {
+  return (
+    <>
+      <div className="detail-row-name">
+        <span>{title}</span>
+        {shown(value) && <span className="muted detail-row-value">{value}</span>}
+      </div>
+      {shown(sub) && <div className={`muted detail-row-sub${mono ? ' mono' : ''}`}>{sub}</div>}
+    </>
+  );
+}
+
 const shown = (n: ReactNode) => n !== undefined && n !== null && n !== '' && n !== false;
 
 /**

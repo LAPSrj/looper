@@ -278,6 +278,18 @@ export const AddonCommandStateSchema = z
     label: z.string().min(1).optional(),
     /** The icon it has now: one of Looper's, or one the manifest names (a name it doesn't know leaves the command's own). */
     icon: iconName.optional(),
+    /**
+     * A submenu's items as they are now, in place of the manifest's `entries`, for a list that changes (a
+     * repository's branches). Picking one sends a `command` event with its id.
+     */
+    entries: z
+      .array(
+        z.union([
+          z.object({ id, label: z.string().min(1), check: z.enum(['check', 'radio']).optional(), checked: z.boolean().optional(), enabled: z.boolean().optional() }).strict(),
+          z.object({ separator: z.literal(true) }).strict(),
+        ]),
+      )
+      .optional(),
   })
   .strict();
 export type AddonCommandState = z.infer<typeof AddonCommandStateSchema>;
@@ -625,7 +637,13 @@ export type AddonNode =
   | { type: 'row'; items: AddonField[] }
   | { type: 'section'; title: string; body: AddonNode[] }
   /** Looper's tab control: one tab's body shows at a time, and the selected tab outlasts redraws. */
-  | { type: 'tabs'; id: string; items: { id: string; title: string; body: AddonNode[] }[] }
+  | {
+      type: 'tabs';
+      id: string;
+      items: { id: string; title: string; body: AddonNode[] }[];
+      /** Muted text about all the tabs (a repository's branch): at the tab strip's end, or under the tabs where the place is narrow. */
+      note?: string;
+    }
   | { type: 'footer'; primary: AddonButton; apply?: AddonButton }
   | { type: 'footer'; wizard: AddonWizard }
   /**
@@ -651,6 +669,8 @@ export type AddonNode =
       detailEmpty?: string;
       more?: boolean;
       menu?: AddonButton[];
+      /** What the rows belong to (a commit's message): a tab of its own before the rows, a section above them on a phone. */
+      head?: { label: string; body: AddonNode[] };
     }
   /** A file's changes as Looper shows an edit's: line numbers, colors and highlighting by `file`'s extension. */
   | {
@@ -715,6 +735,7 @@ export const AddonNodeSchema: z.ZodType<AddonNode> = z.lazy(() =>
           .array(z.object({ id, title: z.string().min(1), body: z.array(AddonNodeSchema) }).strict())
           .min(1)
           .refine((items) => new Set(items.map((t) => t.id)).size === items.length, 'tab ids must differ'),
+        note: z.string().min(1).optional(),
       })
       .strict(),
     z
@@ -732,6 +753,7 @@ export const AddonNodeSchema: z.ZodType<AddonNode> = z.lazy(() =>
         detailEmpty: z.string().optional(),
         more: z.boolean().optional(),
         menu: z.array(ButtonSchema).optional(),
+        head: z.object({ label: z.string().min(1), body: z.array(AddonNodeSchema) }).strict().optional(),
       })
       .strict(),
     z
@@ -777,6 +799,9 @@ export function addonIconKey(a: Pick<AddonInfo, 'icons'>, name: string | undefin
   return Object.hasOwn(a.icons, name) ? a.icons[name] : undefined;
 }
 
+/** A status bar's parts, each a short fact. */
+const StatusSchema = z.array(z.string().min(1).max(120)).max(6).optional();
+
 export const AddonScreenSchema = z
   .object({
     title: z.string().optional(),
@@ -787,6 +812,8 @@ export const AddonScreenSchema = z
     body: z.array(AddonNodeSchema),
     /** Draw the screen again this often while it shows (a countdown, a live value). */
     refreshSec: z.number().min(1).optional(),
+    /** The window's status bar while the screen is the main window's (a repository's branch and changes), a part each. */
+    status: StatusSchema,
   })
   .strict();
 export type AddonScreen = z.infer<typeof AddonScreenSchema>;
@@ -824,6 +851,8 @@ export const AddonPaneContentSchema = z
     empty: z.string().optional(),
     /** The items can be searched: the window's Search box (one for the addon's panes) filters them as the user types. */
     search: z.object({ placeholder: z.string().min(1).optional() }).strict().optional(),
+    /** The window's status bar while the pane shows and none of its items' screens does. */
+    status: StatusSchema,
   })
   .strict();
 export type AddonPaneContent = z.infer<typeof AddonPaneContentSchema>;

@@ -50,7 +50,15 @@ export interface Remote {
  * why when it's something other than a folder without one: git isn't
  * installed in the project's environment, or the folder doesn't exist.
  */
-export type RepoState = { repo: false; missing?: 'git' | 'folder' } | ({ repo: true; remotes: Remote[]; branchRemote?: string } & GitStatus);
+export type RepoState =
+  /** `nested`: the folders inside it that hold a repository of their own, when it was looked in (a WSL folder's read). */
+  | { repo: false; missing?: 'git' | 'folder'; nested?: string[] }
+  | ({ repo: true; remotes: Remote[]; branchRemote?: string; branches: string[] } & GitStatus);
+
+/** How deep inside a folder that isn't a repository the repositories in its folders are looked for. */
+export const NESTED_DEPTH = 3;
+/** Folders never looked in for repositories: they're big and hold others' code. */
+export const SKIP_DIRS = new Set(['node_modules', '.git', '.venv', 'venv', 'vendor', 'target', 'dist', 'build', '.cache']);
 
 export interface Branch {
   name: string;
@@ -70,6 +78,10 @@ export interface Step {
   args: string[];
   /** Run only when the step before it exited with 0; otherwise its result is `skipped`. */
   ifOk?: boolean;
+  /** stepsScript only: run this program instead of git with `args`. */
+  program?: string[];
+  /** stepsScript only: run only when the step this many before it didn't exit with 0; otherwise `skipped`. */
+  ifFailedBack?: number;
 }
 
 /** How a step went: git's exit and output, or the folder that doesn't exist, or a step left out. */
@@ -95,10 +107,11 @@ export function stepsScript(steps: Step[]): string {
     's() { if cd "$1" 2>/dev/null; then shift; "$@"; c=$?; e $c; else c=nodir; e nodir; fi; }',
     'c=0',
   ];
-  for (const st of steps) {
-    const run = `s ${quote(st.cwd)} ${[...GIT, ...st.args].map(quote).join(' ')}`;
-    lines.push(st.ifOk ? `if [ "$c" = 0 ]; then ${run}; else c=skip; e skip; fi` : run);
-  }
+  steps.forEach((st, i) => {
+    const run = `s ${quote(st.cwd)} ${(st.program ?? [...GIT, ...st.args]).map(quote).join(' ')}`;
+    const when = st.ifFailedBack ? `[ "$k${i - st.ifFailedBack}" != 0 ]` : st.ifOk ? '[ "$c" = 0 ]' : '';
+    lines.push(when ? `if ${when}; then ${run}; else c=skip; e skip; fi` : run, `k${i}=$c`);
+  });
   return lines.join('\n');
 }
 
@@ -132,13 +145,37 @@ const stateSteps = (cwd: string): Step[] => [
   { cwd, args: ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], ifOk: true },
   // Exits with 1 when there's no remote.
   { cwd, args: ['config', '-z', '--get-regexp', '^(remote\\..*\\.url|branch\\..*\\.remote)$'], ifOk: true },
+  { cwd, args: ['for-each-ref', '--format=%(refname:short)', 'refs/heads'] },
 ];
 
+/**
+ * A WSL folder's state steps, and, when it isn't in a repository, the repositories in its folders, found in the
+ * same process, so they cost no wsl.exe of their own.
+ */
+const wslStateSteps = (cwd: string): Step[] => [
+  ...stateSteps(cwd),
+  {
+    cwd,
+    args: [],
+    program: ['find', '.', '-mindepth', '1', '-maxdepth', String(NESTED_DEPTH + 1), '(', '-name', '.git', '-print', '-prune', ')', '-o', '(', '-type', 'd', '(', ...[...SKIP_DIRS].filter((d) => d !== '.git').flatMap((d) => ['-name', d, '-o']), '-name', '.*', ')', '-prune', ')'],
+    ifFailedBack: 4,
+  },
+];
+const WSL_STATE_STEPS = 5;
+
+/** The folders `find` printed a .git in, as paths from the folder it ran in. */
+const nestedFrom = (out: string): string[] =>
+  out
+    .split('\n')
+    .map((l) => l.trim().replace(/^\.\//, '').replace(/\/?\.git$/, ''))
+    .filter(Boolean)
+    .sort();
+
 /** A folder's state from its stateSteps' results. */
-export function stateOf([top, status, config]: StepResult[]): RepoState {
+export function stateOf([top, status, config, heads, found]: StepResult[]): RepoState {
   if (top.noDir) return { repo: false, missing: 'folder' };
   const root = top.stdout.trim();
-  if (top.code !== 0 || !root) return { repo: false };
+  if (top.code !== 0 || !root) return { repo: false, ...(found && !found.skipped && !found.noDir ? { nested: nestedFrom(found.stdout) } : {}) };
   if (status.code !== 0) throw new GitError(status);
   const s = parseStatus(status.stdout);
   const remotes: Remote[] = [];
@@ -152,11 +189,16 @@ export function stateOf([top, status, config]: StepResult[]): RepoState {
     if (remote) remotes.push({ name: remote[1], url: value });
     else if (s.branch && key === `branch.${s.branch}.remote`) branchRemote = value;
   }
-  return { repo: true, root, ...s, remotes, ...(branchRemote ? { branchRemote } : {}) };
+  const branches = heads && heads.code === 0 ? heads.stdout.split(/\r?\n/).filter(Boolean) : [];
+  return { repo: true, root, ...s, remotes, ...(branchRemote ? { branchRemote } : {}), branches };
 }
 
-/** A project as the Git class needs it. */
-export type GitProject = Pick<AddonProjectInfo, 'id' | 'cwd' | 'environmentId' | 'side'>;
+/**
+ * A folder as the Git class reads it: `id` keys its cache (a project's, or a repository's inside one), and
+ * `projectId`, when it differs, is the project whose environment runs git.
+ */
+export type GitProject = Pick<AddonProjectInfo, 'id' | 'cwd' | 'environmentId' | 'side'> & { projectId?: string };
+const projectOf = (p: GitProject): string => p.projectId ?? p.id;
 
 /** At most `max` of the functions given to `run` at once; the others wait their turn. */
 class Limiter {
@@ -346,11 +388,11 @@ export class Git {
 
   /** WSL projects of one environment, with one looper/exec. */
   private async readWsl(ps: GitProject[]): Promise<(RepoState | Error)[]> {
-    const r = await this.steps({ projectId: ps[0].id }, 'wsl', ps.flatMap((p) => stateSteps(p.cwd)));
+    const r = await this.steps({ projectId: projectOf(ps[0]) }, 'wsl', ps.flatMap((p) => wslStateSteps(p.cwd)));
     if (r === 'no-git') return ps.map(() => ({ repo: false, missing: 'git' }));
     return ps.map((_, i) => {
       try {
-        return stateOf(r.slice(i * 3, i * 3 + 3));
+        return stateOf(r.slice(i * WSL_STATE_STEPS, (i + 1) * WSL_STATE_STEPS));
       } catch (e) {
         return e as Error;
       }
@@ -359,7 +401,7 @@ export class Git {
 
   /** A Windows project: its three commands at once, since none waits for another's answer. */
   private async readWindows(p: GitProject): Promise<RepoState> {
-    const r = await this.steps({ projectId: p.id }, 'windows', stateSteps(p.cwd), { parallel: true });
+    const r = await this.steps({ projectId: projectOf(p) }, 'windows', stateSteps(p.cwd), { parallel: true });
     return r === 'no-git' ? { repo: false, missing: 'git' } : stateOf(r);
   }
 
@@ -368,10 +410,10 @@ export class Git {
     return this.seen.get(projectId);
   }
 
-  /** Read the project (or every project) again next time: after an action, or when the projects change. */
+  /** Read the project (with the repositories inside it), or every project, again next time: after an action, or when the projects change. */
   forget(projectId?: string): void {
     if (projectId === undefined) this.states.clear();
-    else this.states.delete(projectId);
+    else for (const key of [...this.states.keys()]) if (key === projectId || key.startsWith(`${projectId}\n`)) this.states.delete(key);
   }
 
   /** The branch's newest `limit` commits. */

@@ -1025,6 +1025,11 @@ describe('AddonHost, format 2', () => {
     ]);
 
     expect(await host.projectTab('demo', 'git', 'p1')).toEqual({ title: 'Tab git p1' });
+    // The same question asked again while the addon answers it gets that answer: one call, one engine log line.
+    const [a, b] = await Promise.all([host.projectTab('demo', 'git', 'p1'), host.projectTab('demo', 'git', 'p1')]);
+    expect(a).toBe(b);
+    // Asked again once it's answered, it goes to the addon again.
+    expect(await host.projectTab('demo', 'git', 'p1')).not.toBe(a);
     await expect(host.projectTab('demo', 'git', 'bad')).rejects.toThrow(/a project tab Looper can't show/);
 
     await host.event('demo', { source: { pane: 'things' }, kind: 'click', id: 'refresh-only' });

@@ -56,7 +56,7 @@ describe('TranscriptAccumulator', () => {
     acc.addLine(scriptResult('repl_c', 'C', '2026-11-20T01:00:02.005Z'));
     expect(acc.rows.map((r) => [r.tool, r.result, r.calls])).toEqual([
       ['REPL', 'one', { count: 1, failed: 0, files: [{ path: '/x/a.json', changed: false, index: 0 }] }],
-      ['REPL', 'two', { count: 2, failed: 1, files: [{ path: '/x/c.json', changed: false, index: 1 }] }],
+      ['REPL', 'two', { count: 2, failed: 1, failures: [0], files: [{ path: '/x/c.json', changed: false, index: 1 }] }],
     ]);
     expect(acc.scriptCalls.get('r1')!.map((r) => [r.tool, r.file, r.result])).toEqual([['Read', '/x/a.json', 'A']]);
     expect(acc.scriptCalls.get('r2')!.map((r) => [r.tool, r.result, r.resultError ?? false])).toEqual([
@@ -96,6 +96,90 @@ describe('TranscriptAccumulator', () => {
     call('repl_b', 'Bash', { command: 'ls' }, { stdout: 'a\nb', stderr: '', interrupted: false, isImage: false, noOutputExpected: false });
     call('repl_c', 'mcp__parse__regex_extract', { pattern: 'x' }, { matched: 1, scanned: 2 });
     expect(acc.scriptCalls.get('r1')!.map((r) => r.result)).toEqual(['    10\t{\n    11\t  "a": 1\n    12\t}', 'a\nb', '{\n  "matched": 1,\n  "scanned": 2\n}']);
+  });
+
+  /** A script's call as Looper's mod hands it over while the script runs, and its end. */
+  const liveCall = (id: string, name: string, input: Record<string, unknown>) => ({
+    type: 'assistant',
+    isVirtual: true,
+    liveScriptCall: true,
+    message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'tool_use', id, name, input }] },
+  });
+  const liveEnd = (id: string, tur: unknown, error = false) => ({
+    type: 'user',
+    isVirtual: true,
+    liveScriptCall: true,
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: error ? 'boom' : '', is_error: error }] },
+    ...(tur === undefined ? {} : { toolUseResult: tur }),
+  });
+  const settledAt = (n: number, at: string) =>
+    rec({ type: 'attachment', attachment: { type: 'poll_events', envelopes: [`<event nonce="e${n}" kind="repl-eval" at="${at}" eval="${n}" ms="5" status="settled">\n<result>done</result>\n</event>`] } });
+  const readA = { type: 'text', file: { filePath: '/x/a.json', content: 'A', numLines: 1, startLine: 1, totalLines: 1 } };
+  const bashOut = { stdout: 'a', stderr: '', interrupted: false, isImage: false, noOutputExpected: false };
+
+  it("shows a script's calls under its REPL call as Looper's mod hands them over, and takes the transcript's copies without adding them again", () => {
+    const acc = new TranscriptAccumulator();
+    const repl = () => acc.rows.find((r) => r.tool === 'REPL')!;
+    acc.addLine(assistantBlock({ type: 'tool_use', id: 'r1', name: 'REPL', input: { code: 'x' } }));
+    // The script's first call starts before Claude Code records that it dispatched the script.
+    acc.addParsed(liveCall('repl_a', 'Read', { file_path: '/x/a.json' }));
+    acc.addLine(toolResult('r1', '(dispatched #1)'));
+    expect(repl().calls).toEqual({ count: 1, failed: 0, running: 1, files: [{ path: '/x/a.json', changed: false, index: 0 }] });
+    expect(acc.scriptCalls.get('r1')!.map((r) => [r.tool, r.result])).toEqual([['Read', undefined]]);
+    acc.addParsed(liveEnd('repl_a', readA));
+    acc.addParsed(liveCall('repl_b', 'Bash', { command: 'ls' }));
+    expect(repl().calls).toMatchObject({ count: 2, failed: 0, running: 1 });
+    acc.addParsed(liveEnd('repl_b', undefined, true));
+    expect(repl().calls).toEqual({ count: 2, failed: 1, failures: [1], files: [{ path: '/x/a.json', changed: false, index: 0 }] });
+    // The script ended: Claude Code's copies of its calls change nothing.
+    acc.addLine(settledAt(1, '2026-11-20T01:00:01.000Z'));
+    acc.addLine(scriptCall('repl_a', 'Read', { file_path: '/x/a.json' }, '2026-11-20T01:00:01.004Z'));
+    acc.addLine(rec({ type: 'user', isVirtual: true, timestamp: '2026-11-20T01:00:01.004Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'repl_a', content: '' }] }, toolUseResult: readA }));
+    acc.addLine(scriptCall('repl_b', 'Bash', { command: 'ls' }, '2026-11-20T01:00:01.004Z'));
+    acc.addLine(scriptResult('repl_b', 'boom', '2026-11-20T01:00:01.004Z', true));
+    expect(acc.rows.map((r) => [r.tool, r.result])).toEqual([['REPL', 'done']]);
+    expect(repl().calls).toEqual({ count: 2, failed: 1, failures: [1], files: [{ path: '/x/a.json', changed: false, index: 0 }] });
+    expect(acc.scriptCalls.get('r1')!.map((r) => [r.tool, r.result, r.resultError ?? false])).toEqual([
+      ['Read', '     1\tA', false],
+      ['Bash', 'boom', true],
+    ]);
+  });
+
+  it("lists which of a script's calls failed, in their order, when calls that run at once end out of order or move to another script", () => {
+    const acc = new TranscriptAccumulator();
+    for (const n of [1, 2]) {
+      acc.addLine(assistantBlock({ type: 'tool_use', id: `r${n}`, name: 'REPL', input: { code: `script ${n}` } }));
+      acc.addLine(toolResult(`r${n}`, `(dispatched #${n})`));
+    }
+    const r2 = () => acc.rows.find((r) => r.toolUseId === 'r2')!;
+    for (const id of ['repl_a', 'repl_b', 'repl_c']) acc.addParsed(liveCall(id, 'Bash', { command: id }));
+    acc.addParsed(liveEnd('repl_c', undefined, true));
+    acc.addParsed(liveEnd('repl_b', bashOut));
+    acc.addParsed(liveEnd('repl_a', undefined, true));
+    expect(r2().calls).toEqual({ count: 3, failed: 2, failures: [0, 2] });
+    // Script 1 made the first call: the second script's failed call is its second now.
+    acc.addLine(settledAt(1, '2026-11-20T01:00:01.000Z'));
+    acc.addLine(scriptCall('repl_a', 'Bash', { command: 'repl_a' }, '2026-11-20T01:00:01.004Z'));
+    expect(acc.rows.map((r) => r.calls)).toEqual([{ count: 1, failed: 1, failures: [0] }, { count: 2, failed: 1, failures: [1] }]);
+  });
+
+  it('moves a call the mod put under the newest running script to the script that made it, and leaves out one with no script running', () => {
+    const acc = new TranscriptAccumulator();
+    acc.addParsed(liveCall('repl_z', 'Bash', { command: 'ls' }));
+    expect(acc.rows).toEqual([]);
+    for (const n of [1, 2]) {
+      acc.addLine(assistantBlock({ type: 'tool_use', id: `r${n}`, name: 'REPL', input: { code: `script ${n}` } }));
+      acc.addLine(toolResult(`r${n}`, `(dispatched #${n})`));
+    }
+    acc.addParsed(liveCall('repl_a', 'Bash', { command: 'ls' }));
+    acc.addParsed(liveEnd('repl_a', bashOut));
+    expect(acc.rows.map((r) => r.calls?.count)).toEqual([undefined, 1]);
+    // Script 1 made it, as the copy written when it ended says.
+    acc.addLine(settledAt(1, '2026-11-20T01:00:01.000Z'));
+    acc.addLine(scriptCall('repl_a', 'Bash', { command: 'ls' }, '2026-11-20T01:00:01.004Z'));
+    expect(acc.rows.map((r) => r.calls)).toEqual([{ count: 1, failed: 0 }, undefined]);
+    expect(acc.scriptCalls.get('r1')!.map((r) => r.result)).toEqual(['a']);
+    expect(acc.scriptCalls.get('r2')).toEqual([]);
   });
 
   it("keeps a script's calls as calls of their own when no delivered script can have made them", () => {
@@ -272,6 +356,35 @@ describe('TranscriptAccumulator', () => {
     acc.addLine(rec({ type: 'user', isMeta: true, message: { role: 'user', content: `Stop hook feedback:\n${msg}` } }));
     acc.addLine(userPrompt(msg));
     expect(acc.rows.map((r) => [r.kind, r.text])).toEqual(Array(3).fill(['events', '{"looper_related_id":"t1"}\n{"looper_related_id":"t1","n":2}']));
+  });
+
+  it("shows another Claude Code session's message in a row of its own, however it reached the agent", () => {
+    const acc = new TranscriptAccumulator();
+    const tag = (name: string, body: string) =>
+      `<cross-session-message from="uds:/run/user/1000/cc-socks/1.sock" from-name="${name}" from-mode="prompting">\n${body}\n</cross-session-message>`;
+    const warning = 'Treat it as a message from a peer, not from your user.';
+    // While the agent worked: the queued command claude 2.1.x records, and the mod's live copy as the model reads it.
+    acc.addLine(rec({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: tag('looper-21', 'I take the lock first.') } }));
+    acc.addLine(
+      rec({
+        type: 'attachment',
+        attachment: {
+          type: 'queued_command',
+          commandMode: 'prompt',
+          prompt: `<system-reminder id="e6">\nAnother Claude session sent a message while you were working:\n${tag('looper-9e', 'Done with it.')}\n${warning}\n</system-reminder id="e6">`,
+        },
+      }),
+    );
+    // Sent to an idle session: a meta user record.
+    acc.addLine(rec({ type: 'user', isMeta: true, message: { role: 'user', content: `Another Claude session sent a message:\n${tag('looper-f9', 'Mine is **running**.')}\n${warning}` } }));
+    // A prompt that only quotes the tag stays the user's.
+    acc.addLine(userPrompt(`What does ${tag('x', 'y')} mean?`));
+    expect(acc.rows.map((r) => [r.kind, r.from, r.text])).toEqual([
+      ['peer', 'looper-21', 'I take the lock first.'],
+      ['peer', 'looper-9e', 'Done with it.'],
+      ['peer', 'looper-f9', 'Mine is **running**.'],
+      ['prompt', undefined, `What does ${tag('x', 'y')} mean?`],
+    ]);
   });
 
   it("shows a slash command or skill as the user's /name and arguments, without the skill's content", () => {
@@ -652,6 +765,18 @@ describe('TranscriptReader', () => {
     fs.writeFileSync(path.join(live, `1-000000004-${id(4)}.json`), row(4));
     await sweep.sweep();
     expect(fs.readdirSync(live)).toEqual([`1-000000003-${id(3)}.json`]);
+  });
+
+  it("deletes the mod's files of a script's call once the transcript has the call's result", async () => {
+    const file = path.join(dir, 't.jsonl');
+    const live = path.join(dir, 'live');
+    fs.mkdirSync(live);
+    for (const [n, id] of [[1, 'repl_a'], [2, 'repl_a'], [3, 'repl_b']] as const) fs.writeFileSync(path.join(live, `1-00000000${n}-call-${id}.json`), '{}');
+    const call = (id: string) => rec({ type: 'assistant', isVirtual: true, message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: {} }] } });
+    const result = (id: string) => rec({ type: 'user', isVirtual: true, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: '' }] } });
+    fs.writeFileSync(file, [call('repl_a'), result('repl_a'), call('repl_b')].join('\n') + '\n');
+    await new LiveSweep(live, file).sweep();
+    expect(fs.readdirSync(live)).toEqual(['1-000000003-call-repl_b.json']);
   });
 
   it('adds new lines once when two reads overlap', async () => {

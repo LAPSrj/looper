@@ -341,8 +341,9 @@ function Chat({ state, findAsked }: { state: BuilderState; findAsked: number }) 
         scrollRef={scrollRef}
         drawAll={finding}
         replyCard={showCard && <DraftCard state={state} />}
-      />
-      <ChatStatus state={state} />
+      >
+        <ChatStatus state={state} />
+      </Conversation>
       <MessageBox
         text={text}
         onText={setText}

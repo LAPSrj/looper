@@ -538,6 +538,8 @@ export interface LooperApi {
      * edges; true when they draw it, false when the page draws it itself. Pointer input comes back as `menu-popup-input`.
      */
     menuPopups(state: { levels: { items: MenuItemSpec[]; active: number }[]; at: { x: number; y: number }; cues: boolean } | null): Promise<boolean>;
+    /** The desktop app's page has a menu open: its window takes the mouse only over these boxes (CSS px), as under Win32's menus; null once it closes. */
+    menuMouse(live: { x: number; y: number; width: number; height: number }[] | null): void;
     /** A menu level window's page: ready or drawn empty after a menu (null), or its menu's size and each item's top; `seq` comes back in `menu-level-placed`. */
     menuLevelLayout(depth: number, layout: { width: number; height: number; tops: Record<number, number>; seq: number } | null): void;
     /** A menu level window's page: the pointer on an item. */

@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { createEngine, type CommandPlace, type Engine } from '../engine/engine';
 import { describeHolder, EngineLock, liveHolder, TAKEOVER_WAIT_MS, type LockHolder } from '../engine/lock';
-import { readWakeTimerPolicy } from '../engine/power-win';
+import { readWakeTimerPolicy, SystemAwake } from '../engine/power-win';
 import type { PowerAdapter } from '../engine/rest';
 import type { EngineEvent, PreventSleepTimer } from '../shared/types';
 import type { BuilderSetup } from '../shared/builder';
@@ -146,11 +146,16 @@ if (!app.requestSingleInstanceLock()) {
     }
     engine = createEngine({
       dataDir,
-      ...(process.platform === 'win32' ? { power: createPowerAdapter() } : {}),
+      ...(systemAwake ? { power: createPowerAdapter(systemAwake) } : {}),
       keepAwake: createKeepAwake(),
       showChat,
     });
     engine.start();
+    if (systemAwake) {
+      powerMonitor.on('resume', () => systemAwake.reapply());
+      powerMonitor.on('on-ac', () => systemAwake.reapply());
+      powerMonitor.on('on-battery', () => systemAwake.reapply());
+    }
     mark('engine');
     useWindowPlaces(path.join(dataDir, 'windows.json'));
     useMenuPopupPage({ preload: webPreferences().preload!, load: (w, hash) => loadRenderer(w, hash) });
@@ -568,19 +573,14 @@ function removeDevAumidHijackers(): void {
   }
 }
 
+/** Windows' keep-awake hold, shared by Prevent Sleep and Rest Mode. */
+const systemAwake = process.platform === 'win32' ? new SystemAwake((message) => engine?.log.error(message)) : null;
+
 /** Electron power hooks handed to the engine's Rest Mode controller. */
-function createPowerAdapter(): PowerAdapter {
-  let blockerId: number | null = null;
+function createPowerAdapter(awake: SystemAwake): PowerAdapter {
   return {
-    startBlocker() {
-      if (blockerId === null || !powerSaveBlocker.isStarted(blockerId)) {
-        blockerId = powerSaveBlocker.start('prevent-app-suspension');
-      }
-    },
-    stopBlocker() {
-      if (blockerId !== null && powerSaveBlocker.isStarted(blockerId)) powerSaveBlocker.stop(blockerId);
-      blockerId = null;
-    },
+    startBlocker: () => awake.hold('rest', true),
+    stopBlocker: () => awake.hold('rest', false),
     onSuspend: (cb) => void powerMonitor.on('suspend', cb),
     onResume: (cb) => void powerMonitor.on('resume', cb),
     isOnBattery: () => powerMonitor.isOnBatteryPower(),
@@ -589,6 +589,7 @@ function createPowerAdapter(): PowerAdapter {
 
 /** Prevent Sleep's blocker, apart from Rest Mode's. */
 function createKeepAwake(): (on: boolean) => void {
+  if (systemAwake) return (on) => systemAwake.hold('prevent-sleep', on);
   let blockerId: number | null = null;
   return (on) => {
     if (on) {

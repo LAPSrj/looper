@@ -32,12 +32,14 @@ import {
   caller,
   desktopMenuBar,
   dismissPageMenu,
+  holdMenuMouse,
   ipc,
   menuLevelInput,
   menuLevelLayout,
   pickPageMenu,
   showMenuPopups,
   type MenuLevelLayout,
+  type MenuMouseRect,
   type MenuPopupState,
   openOnHost,
   pickDesktopMenu,
@@ -1255,6 +1257,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   });
   // A desktop page's open menu, drawn in level windows past its edges (platform/menu-popups.ts).
   ipc.handle('commands:menuPopups', (e, next: MenuPopupState | null) => showMenuPopups(windowOf(e), next && Array.isArray(next.levels) && next.at ? next : null));
+  ipc.on('commands:menuMouse', (e, live: unknown) => {
+    const box = (r: unknown): r is MenuMouseRect =>
+      !!r && typeof r === 'object' && ['x', 'y', 'width', 'height'].every((k) => Number.isFinite((r as Record<string, unknown>)[k]));
+    holdMenuMouse(windowOf(e), Array.isArray(live) ? live.filter(box) : null);
+  });
   ipc.on('commands:menuLevelLayout', (e, depth: unknown, layout: MenuLevelLayout | null) => menuLevelLayout(e.sender, Number(depth), layout ?? null));
   ipc.handle('commands:openWindows', (e) => host.openWindows(windowOf(e)));
   ipc.on('commands:showOpenWindow', (e, id: unknown) => host.showOpenWindow(Number(id), windowOf(e)));

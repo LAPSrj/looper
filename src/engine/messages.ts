@@ -5,6 +5,7 @@ import {
   delegateText,
   eventsText,
   guidanceText,
+  peerMessages,
   CHANGE_TOOLS,
   scriptCallsPage,
   toolImageId,
@@ -98,17 +99,22 @@ export class LiveRows {
 const SWEEP_CHUNK = 4 * 1024 * 1024;
 const ROW_ID = /"uuid":"([0-9a-f-]{36})"/g;
 const LIVE_FILE_ID = /-([0-9a-f-]{36})\.json$/;
+const RESULT_ID = /"tool_use_id":"([\w-]+)"/g;
+const LIVE_CALL_FILE_ID = /-call-([\w-]+)\.json$/;
 
 /**
  * Keeps an interactive Claude Code session's live folder (LiveRows) down to the
  * rows its transcript doesn't have yet, whether or not anyone reads the
- * conversation: a file goes once the transcript has the row its name ends in.
+ * conversation: a file goes once the transcript has the row its name ends in,
+ * and a script call's (`-call-<id>`) once the transcript has the call's result.
  */
 export class LiveSweep {
   private offset = 0;
   private chunk = SWEEP_CHUNK;
   /** The transcript's newest row ids, for a file the mod writes after the transcript has its row. */
   private readonly ids = new Set<string>();
+  /** The calls whose results the transcript has, newest kept. */
+  private readonly results = new Set<string>();
 
   constructor(
     private readonly dir: string,
@@ -132,9 +138,14 @@ export class LiveSweep {
         }
         this.offset += end + 1;
         this.chunk = SWEEP_CHUNK;
-        for (const m of buf.toString('utf8', 0, end).matchAll(ROW_ID)) {
+        const text = buf.toString('utf8', 0, end);
+        for (const m of text.matchAll(ROW_ID)) {
           this.ids.add(m[1]);
           if (this.ids.size > TRANSCRIPT_IDS_KEPT) this.ids.delete(this.ids.values().next().value as string);
+        }
+        for (const m of text.matchAll(RESULT_ID)) {
+          this.results.add(m[1]);
+          if (this.results.size > TRANSCRIPT_IDS_KEPT) this.results.delete(this.results.values().next().value as string);
         }
       }
     } finally {
@@ -144,7 +155,8 @@ export class LiveSweep {
     await Promise.all(
       names.map(async (name) => {
         const id = LIVE_FILE_ID.exec(name)?.[1];
-        if (id && this.ids.has(id)) await fs.promises.rm(path.join(this.dir, name), { force: true }).catch(() => undefined);
+        const call = id ? undefined : LIVE_CALL_FILE_ID.exec(name)?.[1];
+        if ((id && this.ids.has(id)) || (call && this.results.has(call))) await fs.promises.rm(path.join(this.dir, name), { force: true }).catch(() => undefined);
       }),
     );
   }
@@ -160,6 +172,14 @@ const MAX_READERS = 16;
 /** Images kept per transcript (oldest evicted) and the largest base64 payload accepted. */
 const MAX_IMAGES = 40;
 const MAX_IMAGE_BYTES = 10_000_000;
+
+/** A REPL row's calls with these failed calls (their indices, in order) and running count; `running` and `failures` show only while there are some. */
+function callCounts(calls: NonNullable<MessageRow['calls']>, failures: number[], running: number): NonNullable<MessageRow['calls']> {
+  const rest = { ...calls };
+  delete rest.running;
+  delete rest.failures;
+  return { ...rest, failed: failures.length, ...(failures.length ? { failures } : {}), ...(running > 0 ? { running } : {}) };
+}
 
 function cap(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) + '\n… (truncated)' : text;
@@ -290,7 +310,7 @@ const WAITING_ON_OWN_WORK = /waiting on its own background work|background work 
 const STOP_HOOK_FEEDBACK = 'Stop hook feedback:';
 
 /** Rows of what the agent was given: a turn that starts with one of them isn't the one before going on. */
-const INPUT_KINDS = new Set<MessageRow['kind']>(['prompt', 'guidance', 'events', 'delegate', 'task']);
+const INPUT_KINDS = new Set<MessageRow['kind']>(['prompt', 'guidance', 'events', 'delegate', 'peer', 'task']);
 
 /** A message's text: the string itself, or its text blocks joined by newlines. */
 function textOf(content: unknown): string {
@@ -518,6 +538,8 @@ export class TranscriptAccumulator {
   private settled: { row: MessageRow; at: string }[] = [];
   /** Code Mode: the REPL row whose script made each call, by the call's tool_use id, until its result arrives. */
   private callOwners = new Map<string, MessageRow>();
+  /** Code Mode: the REPL row each script call is under, by the call's tool_use id. */
+  private callRepl = new Map<string, MessageRow>();
   /** Code Mode: the files each script's calls read or changed, by its REPL call's tool_use id. */
   private scriptFiles = new Map<string, Map<string, { changed: boolean; index: number }>>();
   /** Image payloads by row id; the rows only carry a marker. */
@@ -748,7 +770,9 @@ export class TranscriptAccumulator {
           const owner = this.callOwners.get(block.tool_use_id as string);
           if (owner?.calls) {
             this.callOwners.delete(block.tool_use_id as string);
-            if (block.is_error === true) owner.calls = { ...owner.calls, failed: owner.calls.failed + 1 };
+            const at = block.is_error === true ? (this.scriptCalls.get(owner.toolUseId!)?.indexOf(row) ?? -1) : -1;
+            const failures = owner.calls.failures ?? [];
+            owner.calls = callCounts(owner.calls, at === -1 ? failures : [...failures, at].sort((a, b) => a - b), (owner.calls.running ?? 0) - 1);
           }
           // Code Mode ran the script in the background: its result comes with a later Poll.
           const dispatched = row.tool === 'REPL' ? /^\(dispatched #(\d+)\)$/.exec(row.result.trim()) : null;
@@ -791,7 +815,7 @@ export class TranscriptAccumulator {
       this.push({ kind: 'error', ts, text });
       return;
     }
-    if (rec.isVirtual === true && this.takeScriptCalls(content as Rec[], ts)) return;
+    if (rec.isVirtual === true && this.takeScriptCalls(content as Rec[], ts, rec.liveScriptCall === true)) return;
     const messageId = typeof (msg as Rec).id === 'string' ? ((msg as Rec).id as string) : undefined;
     for (const block of content as Rec[]) {
       if (block?.type === 'tool_use' && this.turnEnd?.messageId === messageId) this.turnEnd = undefined;
@@ -839,30 +863,69 @@ export class TranscriptAccumulator {
   /**
    * Code Mode writes the tool calls a script made (isVirtual records) once the script's result is delivered, each
    * stamped with when it was written, a few ms after the script ended (claude 2.1.329): they go under the REPL row
-   * whose script ended last before then. False when no delivered script can have made them.
+   * whose script ended last before then. Looper's mod hands each call over as it starts (`live`), before the script
+   * has ended: it goes under the newest script still running, and the transcript's copy moves it if another script
+   * made it. False when no delivered script can have made them.
    */
-  private takeScriptCalls(content: Rec[], ts: string | undefined): boolean {
+  private takeScriptCalls(content: Rec[], ts: string | undefined, live: boolean): boolean {
     let owner: { row: MessageRow; at: string } | undefined;
-    for (const s of this.settled) if ((ts === undefined || s.at <= ts) && (!owner || s.at >= owner.at)) owner = s;
-    const row = owner?.row;
-    if (!row?.toolUseId) return false;
-    const calls = this.scriptCalls.get(row.toolUseId) ?? [];
-    this.scriptCalls.set(row.toolUseId, calls);
-    const files = this.scriptFiles.get(row.toolUseId) ?? new Map<string, { changed: boolean; index: number }>();
-    this.scriptFiles.set(row.toolUseId, files);
+    if (!live) for (const s of this.settled) if ((ts === undefined || s.at <= ts) && (!owner || s.at >= owner.at)) owner = s;
+    const row = live ? this.runningRepl() : owner?.row;
+    // A call the mod saw start with no script running waits for the transcript's copy.
+    if (!row?.toolUseId) return live;
     for (const block of content) {
       if (block?.type !== 'tool_use') continue;
-      const call = this.toolRow(block, ts);
-      calls.push(call);
-      if (typeof block.id === 'string') this.callOwners.set(block.id, row);
-      if (call.file) files.set(call.file, { changed: !!files.get(call.file)?.changed || CHANGE_TOOLS.has(call.tool ?? ''), index: calls.length - 1 });
+      const had = typeof block.id === 'string' ? this.callRepl.get(block.id) : undefined;
+      if (had) {
+        if (had !== row && !live) this.moveScriptCall(block.id as string, had, row);
+        continue;
+      }
+      this.addScriptCall(row, this.toolRow(block, ts));
     }
-    row.calls = {
-      count: calls.length,
-      failed: row.calls?.failed ?? 0,
-      ...(files.size ? { files: [...files].map(([path, f]) => ({ path, ...f })) } : {}),
-    };
     return true;
+  }
+
+  /** Code Mode: the newest REPL row whose script hasn't ended. */
+  private runningRepl(): MessageRow | undefined {
+    for (let i = this.rows.length - 1; i >= 0; i--) {
+      const r = this.rows[i];
+      if (r.kind === 'tool' && r.tool === 'REPL' && r.toolUseId && r.result === undefined) return r;
+    }
+    return undefined;
+  }
+
+  private addScriptCall(repl: MessageRow, call: MessageRow): void {
+    const calls = this.scriptCalls.get(repl.toolUseId!) ?? [];
+    this.scriptCalls.set(repl.toolUseId!, calls);
+    const files = this.scriptFiles.get(repl.toolUseId!) ?? new Map<string, { changed: boolean; index: number }>();
+    this.scriptFiles.set(repl.toolUseId!, files);
+    calls.push(call);
+    const open = call.result === undefined;
+    if (call.toolUseId) {
+      this.callRepl.set(call.toolUseId, repl);
+      if (open) this.callOwners.set(call.toolUseId, repl);
+    }
+    if (call.file) files.set(call.file, { changed: !!files.get(call.file)?.changed || CHANGE_TOOLS.has(call.tool ?? ''), index: calls.length - 1 });
+    repl.calls = callCounts(
+      { count: calls.length, failed: 0, ...(files.size ? { files: [...files].map(([path, f]) => ({ path, ...f })) } : {}) },
+      call.resultError ? [...(repl.calls?.failures ?? []), calls.length - 1] : (repl.calls?.failures ?? []),
+      (repl.calls?.running ?? 0) + (open ? 1 : 0),
+    );
+  }
+
+  /** A call the mod put under one running script that another one made, as the transcript says. */
+  private moveScriptCall(id: string, from: MessageRow, to: MessageRow): void {
+    const list = this.scriptCalls.get(from.toolUseId!) ?? [];
+    const at = list.findIndex((c) => c.toolUseId === id);
+    if (at === -1) return;
+    const [call] = list.splice(at, 1);
+    this.callOwners.delete(id);
+    this.scriptFiles.delete(from.toolUseId!);
+    this.scriptCalls.delete(from.toolUseId!);
+    delete from.calls;
+    for (const c of list) this.addScriptCall(from, c);
+    if (!list.length) this.scriptCalls.set(from.toolUseId!, []);
+    this.addScriptCall(to, call);
   }
 
   /** A REPL row's script ended at `at` (its repl-eval event's): the calls it made come after its result. */
@@ -935,6 +998,7 @@ export class TranscriptAccumulator {
       guidanceText(text) === null &&
       eventsText(text) === null &&
       delegateText(text) === null &&
+      peerMessages(text) === null &&
       !text.trimStart().startsWith('<task-notification>')
         ? last
         : undefined);
@@ -1039,12 +1103,15 @@ export class TranscriptAccumulator {
     }
   }
 
-  /** A row of its own when `text` is a guidance, events or delegated agents' message (see GUIDANCE_PREFIX, EVENTS_PREFIX, DELEGATE_PREFIX); false when it is none. */
   /** A message Looper's mod handed the agent mid-turn: a run's guidance, related events or delegated agents' messages show; its notice doesn't. */
   protected takeModNote(text: string, ts?: string): void {
     this.pushGuidance(text, ts);
   }
 
+  /**
+   * Rows of their own when `text` is a guidance, events or delegated agents' message (see GUIDANCE_PREFIX,
+   * EVENTS_PREFIX, DELEGATE_PREFIX) or other sessions' messages (peerMessages); false when it is none.
+   */
   protected pushGuidance(text: string, ts?: string): boolean {
     const g = guidanceText(text);
     if (g !== null) {
@@ -1061,8 +1128,16 @@ export class TranscriptAccumulator {
       return true;
     }
     const delegated = delegateText(text);
-    if (delegated === null) return false;
-    this.push({ kind: 'delegate', ts, text: delegated });
+    if (delegated !== null) {
+      this.push({ kind: 'delegate', ts, text: delegated });
+      return true;
+    }
+    const peers = peerMessages(text);
+    if (!peers) return false;
+    for (const p of peers) {
+      const row = this.push({ kind: 'peer', ts, text: p.text });
+      if (p.from) row.from = p.from;
+    }
     return true;
   }
 

@@ -1,4 +1,4 @@
-import { execOffThread } from './exec-worker';
+import { execOffThread, spawnOffThread, type OffThreadChild } from './exec-worker';
 import type { PowerOps } from './rest';
 
 /**
@@ -65,6 +65,60 @@ export function createWindowsPowerOps(): PowerOps {
       );
     },
   };
+}
+
+// ES_CONTINUOUS | ES_SYSTEM_REQUIRED, set again for each line Looper sends and held until it closes the helper's input or exits.
+const HOLD_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  `$k = Add-Type -Name ExecutionState -Namespace Looper -PassThru -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(int flags);'`,
+  'do { if ($k::SetThreadExecutionState(0x80000001) -eq 0) { exit 1 } } while ($null -ne [Console]::In.ReadLine())',
+].join('; ');
+
+/**
+ * Keeps Windows from sleeping on idle while anyone holds it: a PowerShell child calls SetThreadExecutionState and
+ * waits for its input to close. Electron's powerSaveBlocker can't do this. Its 'prevent-app-suspension' is an
+ * execution-required request, which keeps only a traditional (S3) sleep computer awake, not a Modern Standby one,
+ * and 'prevent-display-sleep' keeps the screen on. As PowerToys Awake does, the hold is set again after a resume and
+ * when the power source changes (`reapply`), because Windows drops it on a sleep the user starts.
+ */
+export class SystemAwake {
+  private readonly holders = new Set<string>();
+  private child: OffThreadChild | null = null;
+
+  constructor(
+    private readonly onError: (message: string) => void,
+    private readonly spawn = spawnOffThread,
+  ) {}
+
+  hold(holder: string, on: boolean): void {
+    if (on) this.holders.add(holder);
+    else this.holders.delete(holder);
+    if (this.holders.size > 0 && !this.child) this.start();
+    else if (this.holders.size === 0 && this.child) {
+      this.child.stdin?.end();
+      this.child = null;
+    }
+  }
+
+  reapply(): void {
+    this.child?.stdin?.write('\n');
+  }
+
+  private start(): void {
+    const child = this.spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', HOLD_SCRIPT], {
+      stdio: ['pipe', 'ignore', 'pipe'],
+      windowsHide: true,
+    });
+    let why = '';
+    child.on('error', (err) => (why += err.message));
+    child.stderr?.on('data', (d: Buffer) => (why += d.toString()));
+    child.on('close', (code) => {
+      if (this.child !== child) return;
+      this.child = null;
+      this.onError(`keep awake: the helper ended while held (exit ${code})${why.trim() ? `: ${why.trim()}` : ''}`);
+    });
+    this.child = child;
+  }
 }
 
 /**

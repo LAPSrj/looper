@@ -207,11 +207,10 @@ describe('the Git addon with a fake Looper', () => {
     fresh();
     const s = await screen('repo', { projectId: 'repo' });
     expect(s.title).toBe('Repo');
-    expect(find(s.body, 'props')[0].items.map((i) => [i.label, i.value])).toEqual([
-      ['Folder', repoDir],
-      ['Branch', 'main'],
-      ['Status', 'Not tracking a remote branch'],
-    ]);
+    // The branch and its state are the status bar's, and the branch menu switches it.
+    expect(s.status).toEqual(['main', 'Not tracking a remote branch', '3 files changed']);
+    expect(find(s.body, 'props')).toEqual([]);
+    expect(s.commands?.branch).toMatchObject({ label: '&Branch: main', entries: [{ label: 'main', check: 'radio', checked: true }, { separator: true }, { id: 'branches' }] });
     const [changes, history] = find(s.body, 'listDetail');
     expect(changes.items.map((r) => [r.title, r.subtitle, r.value])).toEqual([
       ['a.txt', undefined, 'Modified'],
@@ -225,7 +224,8 @@ describe('the Git addon with a fake Looper', () => {
     expect(s.commands).toMatchObject({ commit: { enabled: true } });
 
     const project = await screen('project', { projectId: 'repo' });
-    expect(project.body[0]).toEqual({ type: 'text', text: 'On main · not tracking a remote branch', muted: true });
+    // A project's tab has no status bar of its own: the branch is beside its tabs.
+    expect(find(project.body, 'tabs')[0].note).toBe('On main · not tracking a remote branch');
     expect(project.refreshSec).toBe(60);
   });
 
@@ -245,9 +245,11 @@ describe('the Git addon with a fake Looper', () => {
 
     const commit = await screen(history.items[0].detail!.view, history.items[0].detail!.params);
     expect(commit.title).toBe('Second');
-    expect(commit.body[0]).toEqual({ type: 'text', text: 'With a body.' });
-    expect(find(commit.body, 'props')[0].items[0]).toEqual({ label: 'Author', value: 'Test User <test@example.com>' });
     const files = find(commit.body, 'listDetail')[0];
+    // The message, author, date and id are the list's head, as Looper's own Git tab shows them.
+    expect(files.head?.label).toBe('Message');
+    expect(files.head?.body[0]).toEqual({ type: 'text', text: 'Second\n\nWith a body.' });
+    expect(find(files.head!.body, 'props')[0].items[0]).toEqual({ label: 'Author', value: 'Test User <test@example.com>' });
     expect(files.items.map((f) => [f.title, f.value])).toEqual([['old name.ts', 'Added']]);
     const file = await screen(files.items[0].detail!.view, files.items[0].detail!.params);
     expect(find(file.body, 'diff')[0]).toMatchObject({ title: 'src/old name.ts', subtitle: 'Added', hunks: [{ lines: ['+export const x = 1;'] }] });
@@ -305,7 +307,7 @@ describe('the Git addon with a fake Looper', () => {
     expect(p.items.map((i) => i.group)).toEqual(['Repositories', 'Repositories']);
     expect(await addon.handle('projectTab', { tab: 'git', projectId: 'plain folder' })).toEqual({ title: 'Git' });
     const s = await screen('project', { projectId: 'plain folder' });
-    expect(find(s.body, 'text')[0].text).toBe('On main · no commits yet');
+    expect(find(s.body, 'tabs')[0].note).toBe('On main · no commits yet');
     expect(find(s.body, 'listDetail')[1].items).toEqual([]);
     // The first commit, of an untracked file.
     writeFileSync(path.join(plainDir, 'first.txt'), 'hello\n');
@@ -324,10 +326,7 @@ describe('the Git addon with a fake Looper', () => {
     expect(await event({ source: { app: true }, kind: 'command', id: 'push', project: 'repo' })).toEqual({});
     expect(sh(remoteDir, 'log', '--format=%s', 'main').trim().split('\n')).toEqual(['Third', 'Second', 'First']);
     const s = await screen('repo', { projectId: 'repo' });
-    expect(find(s.body, 'props')[0].items.slice(2)).toEqual([
-      { label: 'Status', value: 'Up to date with origin/main' },
-      { label: 'Remote', value: remoteDir, mono: true, copy: true },
-    ]);
+    expect(s.status).toEqual(['main', 'Up to date with origin/main', '1 file changed']);
     expect(await event({ source: { view: 'repo', params: { projectId: 'repo' } }, kind: 'command', id: 'sync' })).toEqual({});
     expect(await event({ source: { view: 'repo', params: { projectId: 'repo' } }, kind: 'command', id: 'fetch' })).toEqual({});
   });
@@ -412,6 +411,54 @@ describe('the Git addon with a fake Looper', () => {
     looper.execs = [];
     await Promise.all(['repo', 'plain folder'].map((projectId) => addon.handle('projectTab', { tab: 'git', projectId })));
     expect(looper.execs.map((e) => (e.argv as string[])[0])).toEqual(['sh']);
+  });
+
+  it('lists the repositories in folders inside a project whose folder has none, and switches their branches', async () => {
+    const outer = path.join(tmp, 'outer');
+    for (const sub of ['packages/one', 'two']) {
+      const dir = path.join(outer, sub);
+      mkdirSync(dir, { recursive: true });
+      sh(dir, 'init');
+      writeFileSync(path.join(dir, 'f.txt'), sub);
+      sh(dir, 'add', '.');
+      sh(dir, 'commit', '-m', `Start ${sub}`);
+    }
+    // Folders Looper never looks in.
+    mkdirSync(path.join(outer, 'node_modules', 'dep'), { recursive: true });
+    sh(path.join(outer, 'node_modules', 'dep'), 'init');
+    sh(path.join(outer, 'two'), 'branch', 'feature');
+    writeFileSync(path.join(outer, 'two', 'g.txt'), 'new');
+    looper.projects.push({ id: 'outer', name: 'Outer', cwd: outer, environmentId: 'wsl', side: 'wsl' });
+    fresh();
+    looper.execs = [];
+    const p = await pane();
+    // The projects' states, with the repositories inside the one that has none, in one sh; then the inner ones' states in another.
+    expect(looper.execs.map((e) => (e.argv as string[])[0])).toEqual(['sh', 'sh']);
+    const rows = p.items.filter((i) => (i.params as { projectId: string }).projectId === 'outer');
+    expect(rows.map((i) => [i.label, i.group, i.params])).toEqual([
+      ['Outer › packages/one', 'Repositories', { projectId: 'outer', repo: 'packages/one' }],
+      ['Outer › two', 'Repositories', { projectId: 'outer', repo: 'two' }],
+    ]);
+    expect(await addon.handle('projectTab', { tab: 'git', projectId: 'outer' })).toEqual({ title: 'Git (+1)' });
+
+    // The project's tab picks among them, and its commands act on the one picked.
+    const tab = await screen('project', { projectId: 'outer' });
+    expect(find(tab.body, 'field')[0]).toMatchObject({ id: 'repo', input: 'select', value: 'packages/one', options: [{ value: 'packages/one' }, { value: 'two' }], change: true });
+    expect(await event({ source: { view: 'project', params: { projectId: 'outer' } }, kind: 'change', id: 'repo', values: { repo: 'two' } })).toEqual({});
+    const two = await screen('project', { projectId: 'outer' });
+    expect(find(two.body, 'listDetail')[0].items.map((r) => r.title)).toEqual(['g.txt']);
+    const menu = two.commands?.branch.entries ?? [];
+    const feature = menu.find((e) => 'label' in e && e.label === 'feature');
+    expect(feature).toMatchObject({ check: 'radio', checked: false });
+    expect(await event({ source: { app: true }, kind: 'command', id: (feature as { id: string }).id, project: 'outer' })).toEqual({});
+    expect(sh(path.join(outer, 'two'), 'branch', '--show-current').trim()).toBe('feature');
+    expect(sh(path.join(outer, 'packages', 'one'), 'branch', '--show-current').trim()).toBe('main');
+
+    // A pane item names its repository.
+    const opened = await event({ source: { pane: 'repositories' }, kind: 'command', id: 'branches', item: rows[0].id });
+    expect(opened.actions?.[0]).toMatchObject({ type: 'openWindow', view: 'branches', params: { projectId: 'outer', repo: 'packages/one' } });
+    looper.projects.pop();
+    fresh();
   });
 
   it("says where git isn't installed and where the folder doesn't exist, and offers to install git", async () => {

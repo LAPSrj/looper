@@ -1,4 +1,4 @@
-import { stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type {
@@ -22,11 +22,29 @@ import { formatDateTime } from '../../shared/format';
 import { CHANGE_LABELS, branchText, changeText, gitTabLabel, type GitChangeKind, type GitStatus } from '../../shared/git';
 import { baseName, dirName } from '../../shared/paths';
 import { AskpassServer, askContext, randomId, type AskContext, type Asked, type Host, type Prompt } from './askpass';
-import { Git, type Place, type RepoState, type Step, type StepResult } from './git';
+import { Git, NESTED_DEPTH, SKIP_DIRS, type GitProject, type Place, type RepoState, type Step, type StepResult } from './git';
 import { INSTALL_SCRIPT, WINGET, installProblem, rootCommand, tail } from './install';
 import type { RepoCommand } from './manifest';
 import { promptAnswer, promptWindow } from './prompt-window';
-import { badFolderName, headText, itemId, joinSidePath, nameFromUrl, needsIdentity, pathRowId, repoDescription, toSidePath, syncText, gitProblem, gitWords } from './text';
+import {
+  badFolderName,
+  branchEntryId,
+  branchOfEntry,
+  changesText,
+  headText,
+  itemId,
+  joinSidePath,
+  menuText,
+  nameFromUrl,
+  needsIdentity,
+  pathRowId,
+  repoDescription,
+  toSidePath,
+  subFromRowId,
+  syncText,
+  gitProblem,
+  gitWords,
+} from './text';
 
 /** How the addon reaches Looper: its requests (ADDON_REQUESTS) and the `refresh` notification. */
 export interface LooperLink {
@@ -82,7 +100,21 @@ export class UnknownMethodError extends Error {
   readonly code = -32601;
 }
 
-const ALL_COMMANDS: RepoCommand[] = ['commit', 'pull', 'push', 'sync', 'fetch', 'branches', 'repo-settings', 'init'];
+const ALL_COMMANDS: RepoCommand[] = ['commit', 'pull', 'push', 'sync', 'fetch', 'branch', 'repo-settings', 'init'];
+
+/** How long the list of a Windows project's inner repositories is kept before it's looked for again. */
+const NESTED_TTL_MS = 30_000;
+
+/** The branch menu as it is for a repository: its branches to switch to, then the Branches window. */
+function branchState(s: RepoState & { repo: true }): AddonCommandStates[string] {
+  const branches = s.branches.map((b) => ({ id: branchEntryId(b), label: menuText(b), check: 'radio' as const, checked: b === s.branch }));
+  return {
+    hidden: false,
+    enabled: true,
+    label: `&Branch: ${menuText(headText(s))}`,
+    entries: [...branches, ...(branches.length ? [{ separator: true as const }] : []), { id: 'branches', label: '&Branches…' }],
+  };
+}
 
 /** How each repository command is for a project: what doesn't apply hidden, what can't run now off. */
 export function commandStates(state: RepoState): AddonCommandStates {
@@ -98,7 +130,7 @@ export function commandStates(state: RepoState): AddonCommandStates {
     push: { hidden: false, enabled: remote },
     sync: { hidden: false, enabled: remote },
     fetch: { hidden: false, enabled: remote },
-    branches: { hidden: false, enabled: true },
+    branch: branchState(state),
     'repo-settings': { hidden: false, enabled: true },
     init: { hidden: true },
   };
@@ -161,6 +193,12 @@ interface GlobalSettings {
 /** A failure of one of several steps: the first one that exited with an error, if any. */
 const failedStep = (r: StepResult[], ok: (s: StepResult) => boolean = (s) => s.code === 0): StepResult | undefined => r.find((s) => !s.skipped && !ok(s));
 
+/** A repository the addon shows: a project's folder (`sub` ''), or a folder inside it with a repository of its own, as a path from it with "/". */
+interface RepoRef {
+  proj: AddonProjectInfo;
+  sub: string;
+}
+
 export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): GitAddon {
   const exec = (params: Record<string, unknown>) => looper.request('looper/exec', params) as Promise<AddonExecResult>;
   const log = opts.log ?? ((line: string) => process.stderr.write(`${line}\n`));
@@ -187,6 +225,8 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
   let projectList: Promise<AddonProjectInfo[]> | undefined;
   /** Pages of history each project's History list shows. */
   const historyPages = new Map<string, number>();
+  /** Each watched project's repositories as last read, to tell whether a check found a change. */
+  const seenRepos = new Map<string, string>();
   /** The projects an agent works in, each with its check's timer. */
   const watched = new Map<string, ReturnType<typeof setInterval>>();
   /** The prompts whose windows are open, by the id in their params. */
@@ -200,6 +240,77 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
   let locale: string | undefined;
   /** A date as Looper shows it; formatDateTime keeps one formatter per locale. */
   const date = (at: number): string => formatDateTime(at, locale);
+
+  // ---------- Repositories ----------
+
+  /** A Windows environment's folder as this process reaches it; undefined when it can't. */
+  const localDir = (cwd: string): string | undefined => {
+    if (host === 'windows') return cwd;
+    try {
+      return toSidePath(cwd, 'wsl');
+    } catch {
+      return undefined;
+    }
+  };
+  /** The folder of a repository inside a project's, in its environment's form. */
+  const subCwd = (p: AddonProjectInfo, sub: string): string => (sub ? joinSidePath(p.cwd, p.side === 'windows' ? sub.replace(/\//g, '\\') : sub, p.side) : p.cwd);
+  const gitPlace = (ref: RepoRef): GitProject =>
+    ref.sub ? { id: `${ref.proj.id}\n${ref.sub}`, projectId: ref.proj.id, cwd: subCwd(ref.proj, ref.sub), environmentId: ref.proj.environmentId, side: ref.proj.side } : ref.proj;
+  const stateAt = (ref: RepoRef): Promise<RepoState> => git.state(gitPlace(ref));
+  const repoParams = (ref: RepoRef): Record<string, unknown> => ({ projectId: ref.proj.id, ...(ref.sub ? { repo: ref.sub } : {}) });
+  const repoTitle = (ref: RepoRef): string => (ref.sub ? `${ref.proj.name} › ${ref.sub}` : ref.proj.name);
+  const repoItemId = (ref: RepoRef): string => (ref.sub ? `${itemId(ref.proj.id)}:${pathRowId(ref.sub)}` : itemId(ref.proj.id));
+
+  /** The folders inside a Windows project's folder that hold a repository (a WSL folder's state read finds its own). */
+  async function findNested(p: AddonProjectInfo): Promise<string[]> {
+    const root = localDir(p.cwd);
+    if (!root) return [];
+    const found: string[] = [];
+    const walk = async (dir: string, rel: string, depth: number): Promise<void> => {
+      const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+      if (rel && entries.some((e) => e.name === '.git')) {
+        found.push(rel);
+        return;
+      }
+      if (depth >= NESTED_DEPTH) return;
+      const dirs = entries.filter((e) => e.isDirectory() && !SKIP_DIRS.has(e.name) && !e.name.startsWith('.'));
+      await Promise.all(dirs.map((e) => walk(path.join(dir, e.name), rel ? `${rel}/${e.name}` : e.name, depth + 1)));
+    };
+    await walk(root, '', 0);
+    return found.sort();
+  }
+
+  const nestedFound = new Map<string, { at: number; subs: Promise<string[]> }>();
+  function nested(p: AddonProjectInfo): Promise<string[]> {
+    const known = nestedFound.get(p.id);
+    if (known && Date.now() - known.at < NESTED_TTL_MS) return known.subs;
+    const subs = findNested(p).catch(() => []);
+    nestedFound.set(p.id, { at: Date.now(), subs });
+    return subs;
+  }
+
+  /** A project's repositories: its folder's own, or else the ones in folders inside it; the folder's state when it has neither. */
+  async function reposOf(p: AddonProjectInfo, root?: RepoState): Promise<{ sub: string; state: RepoState }[]> {
+    const own = root ?? (await git.state(p));
+    if (own.repo || own.missing) return [{ sub: '', state: own }];
+    const subs = own.nested ?? (await nested(p));
+    const states = await Promise.all(git.statesOf(subs.map((sub) => gitPlace({ proj: p, sub }))).map((s) => s.catch((): RepoState => ({ repo: false }))));
+    const found = subs.map((sub, i) => ({ sub, state: states[i] })).filter((r) => r.state.repo);
+    return found.length ? found : [{ sub: '', state: own }];
+  }
+
+  /** The repository picked on each project's Git tab, which the project's commands act on; the first until one is. */
+  const picked = new Map<string, string>();
+  async function projectRepo(p: AddonProjectInfo): Promise<RepoRef & { all: string[] }> {
+    const all = (await reposOf(p)).map((r) => r.sub);
+    const want = picked.get(p.id);
+    return { proj: p, sub: want !== undefined && all.includes(want) ? want : all[0], all };
+  }
+
+  /** A screen's repository, from its params. */
+  const refFrom = async (params: Record<string, unknown>): Promise<RepoRef> => ({ proj: await project(params.projectId), sub: str(params.repo) });
+  /** The repository a view shows: a project tab's is the one picked on it. */
+  const viewRef = async (view: string, params: Record<string, unknown>): Promise<RepoRef> => (view === 'project' ? projectRepo(await project(params.projectId)) : refFrom(params));
 
   function projects(): Promise<AddonProjectInfo[]> {
     projectList ??= (looper.request('looper/projects', {}) as Promise<AddonProjectInfo[]>).catch((e: unknown) => {
@@ -226,8 +337,8 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
   /** A folder every environment has, where a command that isn't about a project runs. */
   const envRoot = (side: AddonSide): string => (side === 'wsl' ? '/' : host === 'windows' ? homedir() : 'C:\\');
 
-  async function repo(p: AddonProjectInfo): Promise<RepoState & { repo: true }> {
-    const s = await git.state(p);
+  async function repo(ref: RepoRef): Promise<RepoState & { repo: true }> {
+    const s = await stateAt(ref);
     if (!s.repo) throw new Error(s.missing === 'git' ? "Git isn't installed in the project's environment." : s.missing === 'folder' ? "The project's folder doesn't exist." : "The project's folder isn't in a git repository.");
     return s;
   }
@@ -244,17 +355,19 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
     );
   }
 
-  /** Read the project's status again, and redraw its screens when it changed. */
+  /** Read the project's repositories again, and redraw its screens when they changed. */
   async function check(projectId: string): Promise<void> {
-    const before = git.lastSeen(projectId);
     git.forget(projectId);
     const after = await project(projectId)
-      .then((p) => git.state(p))
+      .then((p) => reposOf(p))
       .then(
-        (s) => JSON.stringify(s),
+        (r) => JSON.stringify(r),
         () => undefined,
       );
-    if (!closed && after !== undefined && after !== before) looper.refresh({ views: ['project', 'repo', 'change'], projectTabs: true });
+    if (after === undefined) return;
+    const before = seenRepos.get(projectId);
+    seenRepos.set(projectId, after);
+    if (!closed && after !== before) looper.refresh({ views: ['project', 'repo', 'change'], projectTabs: true });
   }
 
   function setWorking(projectId: string, working: boolean): void {
@@ -345,28 +458,39 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
   async function pane(params: Record<string, unknown>): Promise<AddonPaneContent> {
     if (params.pane !== PANE) throw new Error(`There's no pane "${str(params.pane)}".`);
     const list = await projects();
-    const states = await Promise.all(git.statesOf(list).map((s) => s.catch((e: unknown) => ({ repo: false as const, error: (e as Error).message }))));
+    const states: (RepoState | { repo: false; error: string })[] = await Promise.all(git.statesOf(list).map((s) => s.catch((e: unknown) => ({ repo: false as const, error: (e as Error).message }))));
     const envs = states.some((s) => !s.repo && 'missing' in s && s.missing === 'git') ? await environments().catch(() => []) : [];
     const envName = (p: AddonProjectInfo) => envs.find((e) => e.id === p.environmentId)?.name ?? (p.side === 'wsl' ? 'WSL' : 'Windows');
-    const rows = list.map((p, i) => {
-      const s = states[i];
-      return {
-        id: itemId(p.id),
-        label: p.name,
-        description: s.repo ? repoDescription(s) : 'error' in s ? s.error : s.missing ? missingText(s, envName(p)) : p.cwd,
-        // A project whose folder or git can't be read may be a repository or not: it has a group of its own.
-        group: s.repo ? 'Repositories' : 'error' in s || s.missing ? 'Unavailable' : 'No repository',
-        ...(!s.repo && !('error' in s) && !s.missing ? { mono: true } : {}),
-        keywords: p.cwd,
-        view: 'repo',
-        params: { projectId: p.id },
-        commands: commandStates('error' in s ? { repo: false } : s),
-      };
-    });
+    // A project whose folder isn't a repository may hold some in its folders: each is a row.
+    const repos = await Promise.all(
+      list.map(async (p, i): Promise<{ sub: string; state: (typeof states)[number] }[]> => {
+        const s = states[i];
+        return 'error' in s ? [{ sub: '', state: s }] : reposOf(p, s).catch(() => [{ sub: '', state: s }]);
+      }),
+    );
+    const rows = list.flatMap((p, i) =>
+      repos[i].map(({ sub, state: s }) => {
+        const ref = { proj: p, sub };
+        return {
+          id: repoItemId(ref),
+          label: repoTitle(ref),
+          description: s.repo ? repoDescription(s) : 'error' in s ? s.error : s.missing ? missingText(s, envName(p)) : p.cwd,
+          // A project whose folder or git can't be read may be a repository or not: it has a group of its own.
+          group: s.repo ? 'Repositories' : 'error' in s || s.missing ? 'Unavailable' : 'No repository',
+          ...(!s.repo && !('error' in s) && !s.missing ? { mono: true } : {}),
+          keywords: sub ? `${p.cwd} ${sub}` : p.cwd,
+          view: 'repo',
+          params: repoParams(ref),
+          commands: commandStates('error' in s ? { repo: false } : s),
+        };
+      }),
+    );
+    const count = rows.filter((r) => r.group === 'Repositories').length;
     return {
       items: ['Repositories', 'No repository', 'Unavailable'].flatMap((g) => rows.filter((r) => r.group === g)),
       search: { placeholder: 'Search repositories' },
       empty: 'No projects yet.',
+      status: [count === 1 ? '1 repository' : `${count} repositories`],
     };
   }
 
@@ -385,10 +509,12 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
   /** A screen without a repository is drawn again now and then, so git installed or a folder made elsewhere shows. */
   const MISSING_REFRESH_SEC = 15;
 
-  /** A repository's changes and history, as tabs. */
-  async function repoTabs(projectId: string, s: GitStatus): Promise<AddonNode> {
-    const limit = (historyPages.get(projectId) ?? 1) * PAGE;
-    const commits = s.initial ? [] : await git.log(projectId, s.root, limit);
+  /** A repository's changes and history, as tabs; `note`: its branch, where nothing else shows it. */
+  async function repoTabs(ref: RepoRef, s: GitStatus, note?: string): Promise<AddonNode> {
+    const key = gitPlace(ref).id;
+    const limit = (historyPages.get(key) ?? 1) * PAGE;
+    const commits = s.initial ? [] : await git.log(ref.proj.id, s.root, limit);
+    const at = repoParams(ref);
     const changes: AddonNode = {
       type: 'listDetail',
       id: 'changes',
@@ -396,7 +522,7 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
       items: s.changes.map((c) =>
         fileRow(c.path, c.origPath, changeText(c), {
           view: 'change',
-          params: { projectId, path: c.path, ...(c.origPath ? { origPath: c.origPath } : {}), kind: c.kind, initial: s.initial, staged: c.staged, unstaged: c.unstaged },
+          params: { ...at, path: c.path, ...(c.origPath ? { origPath: c.origPath } : {}), kind: c.kind, initial: s.initial, staged: c.staged, unstaged: c.unstaged },
         }),
       ),
       empty: 'There are no uncommitted changes.',
@@ -410,7 +536,7 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
         id: c.hash,
         title: c.subject,
         subtitle: [c.author, date(c.at), c.shortHash, ...(c.refs.length ? [c.refs.join(', ')] : [])].join(' · '),
-        detail: { view: 'commit', params: { projectId, hash: c.hash } },
+        detail: { view: 'commit', params: { ...at, hash: c.hash } },
       })),
       empty: 'The branch has no commits yet.',
       detailEmpty: 'Select a commit to see its changes.',
@@ -423,6 +549,28 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
         { id: 'changes', title: 'Changes', body: [changes] },
         { id: 'history', title: 'History', body: [history] },
       ],
+      ...(note ? { note } : {}),
+    };
+  }
+
+  /**
+   * A repository's screen: its changes and history. The main window's status bar says its branch and state; a
+   * project's tab, where no status bar is the project's, says them beside its tabs and lets the user pick among the
+   * project's repositories when it has several.
+   */
+  async function repoScreen(ref: RepoRef, all: string[] = [], inProject = false): Promise<AddonScreen> {
+    const s = await stateAt(ref);
+    const choose: AddonNode[] =
+      all.length > 1 ? [{ type: 'field', id: 'repo', label: 'Repository', input: 'select', value: ref.sub, options: all.map((sub) => ({ value: sub, label: sub })), change: true }] : [];
+    if (!s.repo) {
+      return { title: repoTitle(ref), commands: commandStates(s), status: [subCwd(ref.proj, ref.sub)], body: [...choose, await notRepo(ref.proj, s)], ...(s.missing ? { refreshSec: MISSING_REFRESH_SEC } : {}) };
+    }
+    return {
+      title: repoTitle(ref),
+      commands: commandStates(s),
+      status: [headText(s), syncText(s), changesText(s.changes.length)],
+      body: [...choose, await repoTabs(ref, s, inProject ? branchText(s) : undefined)],
+      refreshSec: 60,
     };
   }
 
@@ -437,12 +585,12 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
   }
 
   /** Repository Settings: the repository's own name and email (with the global ones), and origin's URL. */
-  async function readRepo(p: AddonProjectInfo): Promise<{ local: Map<string, string>; global: Map<string, string> }> {
+  async function readRepo(ref: RepoRef, root: string): Promise<{ local: Map<string, string>; global: Map<string, string> }> {
     const steps: Step[] = [
-      { cwd: p.cwd, args: ['config', '--local', '-z', '--get-regexp', REPO_KEYS] },
-      { cwd: p.cwd, args: ['config', '--global', '-z', '--get-regexp', REPO_KEYS] },
+      { cwd: root, args: ['config', '--local', '-z', '--get-regexp', REPO_KEYS] },
+      { cwd: root, args: ['config', '--global', '-z', '--get-regexp', REPO_KEYS] },
     ];
-    const r = await git.steps({ projectId: p.id }, p.side, steps);
+    const r = await git.steps({ projectId: ref.proj.id }, ref.proj.side, steps);
     if (r === 'no-git') throw new Error("Git isn't installed in the project's environment");
     const bad = failedStep(r, (s) => s.code === 0 || s.code === 1);
     if (bad) throw new Error(gitProblem(bad, "read the repository's settings").message);
@@ -479,9 +627,9 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
     };
   }
 
-  async function repoSettingsScreen(proj: AddonProjectInfo): Promise<AddonScreen> {
-    await repo(proj);
-    const { local, global } = await readRepo(proj);
+  async function repoSettingsScreen(ref: RepoRef): Promise<AddonScreen> {
+    const s = await repo(ref);
+    const { local, global } = await readRepo(ref, s.root);
     return {
       title: 'Repository Settings',
       body: [
@@ -504,78 +652,54 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
     const view = str(params.view);
     const p = (params.params ?? {}) as Record<string, unknown>;
     switch (view) {
-      case 'repo': {
-        const proj = await project(p.projectId);
-        const s = await git.state(proj);
-        const folder = { label: 'Folder', value: proj.cwd, mono: true, copy: true };
-        if (!s.repo) return { title: proj.name, commands: commandStates(s), body: [{ type: 'props', items: [folder] }, await notRepo(proj, s)], ...(s.missing ? { refreshSec: MISSING_REFRESH_SEC } : {}) };
-        // The remote the branch tracks, else origin, else the first.
-        const remote = s.remotes.find((r) => r.name === s.branchRemote) ?? s.remotes.find((r) => r.name === 'origin') ?? s.remotes[0];
-        return {
-          title: proj.name,
-          commands: commandStates(s),
-          body: [
-            {
-              type: 'props',
-              items: [
-                folder,
-                { label: 'Branch', value: headText(s) },
-                { label: 'Status', value: syncText(s) },
-                ...(remote ? [{ label: 'Remote', value: remote.url, mono: true, copy: true }] : []),
-              ],
-            },
-            await repoTabs(proj.id, s),
-          ],
-          refreshSec: 60,
-        };
-      }
+      case 'repo':
+        return repoScreen(await refFrom(p));
       case 'project': {
-        const proj = await project(p.projectId);
-        const s = await git.state(proj);
-        if (!s.repo) return { commands: commandStates(s), body: [await notRepo(proj, s)], ...(s.missing ? { refreshSec: MISSING_REFRESH_SEC } : {}) };
-        return {
-          commands: commandStates(s),
-          body: [{ type: 'text', text: branchText(s), muted: true }, await repoTabs(proj.id, s)],
-          refreshSec: 60,
-        };
+        const ref = await projectRepo(await project(p.projectId));
+        return repoScreen(ref, ref.all, true);
       }
       case 'change': {
-        const proj = await project(p.projectId);
-        const s = await repo(proj);
+        const ref = await refFrom(p);
+        const s = await repo(ref);
         const path = str(p.path);
         const kind = str(p.kind) as GitChangeKind;
         if (!path || !(kind in CHANGE_LABELS)) throw new Error("The change's file or kind is missing.");
         const origPath = str(p.origPath) || undefined;
-        const diff = await git.changeDiff(proj.id, s.root, { path, origPath, kind }, p.initial === true);
+        const diff = await git.changeDiff(ref.proj.id, s.root, { path, origPath, kind }, p.initial === true);
         const subtitle = changeText({ path, origPath, kind, staged: p.staged === true, unstaged: p.unstaged === true });
         return { title: baseName(path), body: [diffNode(path, subtitle, diff)] };
       }
       case 'commit': {
-        const proj = await project(p.projectId);
-        const s = await repo(proj);
-        const hash = str(p.hash);
-        const d = await git.commit(proj.id, s.root, hash);
+        const ref = await refFrom(p);
+        const s = await repo(ref);
+        const d = await git.commit(ref.proj.id, s.root, str(p.hash));
         return {
           title: d.subject,
           body: [
-            ...(d.body ? [{ type: 'text' as const, text: d.body }] : []),
-            {
-              type: 'props',
-              items: [
-                { label: 'Author', value: `${d.author} <${d.email}>` },
-                { label: 'Date', value: date(d.at) },
-                { label: 'Commit', value: d.hash, mono: true, copy: true },
-                ...(d.refs.length ? [{ label: 'Refs', value: d.refs.join(', ') }] : []),
-              ],
-            },
             {
               type: 'listDetail',
               id: 'files',
               label: 'Files',
+              // The commit's message, author, date and id, as Looper's own Git tab shows them over its files.
+              head: {
+                label: 'Message',
+                body: [
+                  { type: 'text', text: d.body ? `${d.subject}\n\n${d.body}` : d.subject },
+                  {
+                    type: 'props',
+                    items: [
+                      { label: 'Author', value: `${d.author} <${d.email}>` },
+                      { label: 'Date', value: date(d.at) },
+                      { label: 'Commit', value: d.hash, mono: true },
+                      ...(d.refs.length ? [{ label: 'Refs', value: d.refs.join(', ') }] : []),
+                    ],
+                  },
+                ],
+              },
               items: d.files.map((f) =>
                 fileRow(f.path, f.origPath, CHANGE_LABELS[f.kind], {
                   view: 'commitFile',
-                  params: { projectId: proj.id, hash: d.hash, path: f.path, ...(f.origPath ? { origPath: f.origPath } : {}), kind: f.kind },
+                  params: { ...repoParams(ref), hash: d.hash, path: f.path, ...(f.origPath ? { origPath: f.origPath } : {}), kind: f.kind },
                 }),
               ),
               empty: 'This commit changed no files.',
@@ -585,13 +709,13 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
         };
       }
       case 'commitFile': {
-        const proj = await project(p.projectId);
-        const s = await repo(proj);
+        const ref = await refFrom(p);
+        const s = await repo(ref);
         const path = str(p.path);
         const origPath = str(p.origPath) || undefined;
         const kind = str(p.kind) as GitChangeKind;
         const label = CHANGE_LABELS[kind] ?? 'Changed';
-        const diff = await git.commitDiff(proj.id, s.root, str(p.hash), path, origPath);
+        const diff = await git.commitDiff(ref.proj.id, s.root, str(p.hash), path, origPath);
         return { title: baseName(path), body: [diffNode(path, origPath ? `${label} from ${origPath}` : label, diff)] };
       }
       case 'clone': {
@@ -617,9 +741,9 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
         };
       }
       case 'commit-window': {
-        const proj = await project(p.projectId);
-        git.forget(proj.id);
-        const s = await repo(proj);
+        const ref = await refFrom(p);
+        git.forget(ref.proj.id);
+        const s = await repo(ref);
         return {
           title: 'Commit',
           body: [
@@ -639,9 +763,9 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
         };
       }
       case 'branches': {
-        const proj = await project(p.projectId);
-        const s = await repo(proj);
-        const branches = await git.branches(proj.id, s.root);
+        const ref = await refFrom(p);
+        const s = await repo(ref);
+        const branches = await git.branches(ref.proj.id, s.root);
         return {
           title: 'Branches',
           body: [
@@ -663,7 +787,7 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
       case 'settings':
         return settingsScreen(p);
       case 'repo-settings':
-        return repoSettingsScreen(await project(p.projectId));
+        return repoSettingsScreen(await refFrom(p));
       case 'askpass':
         return askpassScreen(p);
     }
@@ -672,43 +796,52 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
 
   // ---------- Events ----------
 
-  /** The project an event acts on: a project's command, a pane item's, or the screen's. */
-  async function eventProject(ev: AddonEvent): Promise<AddonProjectInfo> {
-    if (ev.project) return project(ev.project);
-    if ('view' in ev.source) return project(ev.source.params.projectId);
+  /** The repository an event acts on: a screen's, a project's (the one picked on its tab), or a pane item's. */
+  async function eventRef(ev: AddonEvent): Promise<RepoRef> {
+    if ('view' in ev.source) return viewRef(ev.source.view, ev.source.params);
+    if (ev.project) return projectRepo(await project(ev.project));
     if ('pane' in ev.source && ev.item) {
-      const p = (await projects()).find((x) => itemId(x.id) === ev.item);
-      if (p) return p;
+      for (const p of await projects()) {
+        const base = itemId(p.id);
+        if (ev.item === base) return { proj: p, sub: '' };
+        if (ev.item.startsWith(`${base}:`)) {
+          const sub = subFromRowId(ev.item.slice(base.length + 1));
+          if (sub !== undefined) return { proj: p, sub };
+        }
+      }
     }
     throw new Error('The project no longer exists.');
   }
 
   /**
-   * git commands one after another in the project, stopping at the first that
+   * git commands one after another in the repository, stopping at the first that
    * fails: one whose prompt the user closed shows nothing, another failure is
    * `failed` with git's output.
    */
-  async function runSteps(proj: AddonProjectInfo, steps: { args: string[]; action: string }[], request?: number): Promise<AddonEventResult> {
+  async function runSteps(ref: RepoRef, steps: { args: string[]; action: string }[], request?: number): Promise<AddonEventResult> {
     const ctx = askContext(request);
     try {
+      const s = await repo(ref);
       for (const step of steps) {
-        const r = await remoteGit({ projectId: proj.id }, proj.side, step.args, ctx);
+        const r = await remoteGit({ projectId: ref.proj.id, cwd: s.root }, ref.proj.side, step.args, ctx);
         if (r.code === 0) continue;
         return ctx.cancelled ? {} : problem(r, step.action);
       }
       return {};
     } finally {
-      afterAction(proj.id);
+      afterAction(ref.proj.id);
     }
   }
 
   function afterAction(projectId?: string): void {
     git.forget(projectId);
+    if (projectId === undefined) nestedFound.clear();
+    else nestedFound.delete(projectId);
     looper.refresh(AFTER_ACTION);
   }
 
-  async function push(proj: AddonProjectInfo): Promise<{ args: string[]; action: string }> {
-    const s = await repo(proj);
+  async function push(ref: RepoRef): Promise<{ args: string[]; action: string }> {
+    const s = await repo(ref);
     const args = !s.upstream && s.remotes.length === 1 ? ['push', '-u', s.remotes[0].name, 'HEAD'] : ['push'];
     return { args, action: 'push' };
   }
@@ -724,28 +857,30 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
   async function command(ev: AddonEvent, request?: number): Promise<AddonEventResult> {
     if (ev.id === 'clone') return { actions: [{ type: 'openWindow', view: 'clone', title: 'Clone Repository', width: 560, height: 440 }] };
     if (ev.id === 'settings') return settingsWindow({});
-    const proj = await eventProject(ev);
-    git.forget(proj.id);
+    const ref = await eventRef(ev);
+    git.forget(ref.proj.id);
+    const branch = branchOfEntry(ev.id);
+    if (branch !== undefined) return switchTo(ref, branch);
     switch (ev.id) {
       case 'commit':
-        await repo(proj);
-        return { actions: [{ type: 'openWindow', view: 'commit-window', params: { projectId: proj.id }, title: 'Commit', width: 560, height: 560 }] };
+        await repo(ref);
+        return { actions: [{ type: 'openWindow', view: 'commit-window', params: repoParams(ref), title: 'Commit', width: 560, height: 560 }] };
       case 'branches':
-        await repo(proj);
-        return { actions: [{ type: 'openWindow', view: 'branches', params: { projectId: proj.id }, title: 'Branches', width: 480, height: 520 }] };
+        await repo(ref);
+        return { actions: [{ type: 'openWindow', view: 'branches', params: repoParams(ref), title: 'Branches', width: 480, height: 520 }] };
       case 'repo-settings':
-        await repo(proj);
-        return { actions: [{ type: 'openWindow', view: 'repo-settings', params: { projectId: proj.id }, ...REPO_SETTINGS_WINDOW }] };
+        await repo(ref);
+        return { actions: [{ type: 'openWindow', view: 'repo-settings', params: repoParams(ref), ...REPO_SETTINGS_WINDOW }] };
       case 'pull':
-        return runSteps(proj, [{ args: ['pull'], action: 'pull' }], request);
+        return runSteps(ref, [{ args: ['pull'], action: 'pull' }], request);
       case 'push':
-        return runSteps(proj, [await push(proj)], request);
+        return runSteps(ref, [await push(ref)], request);
       case 'sync':
-        return runSteps(proj, [{ args: ['pull'], action: 'pull' }, await push(proj)], request);
+        return runSteps(ref, [{ args: ['pull'], action: 'pull' }, await push(ref)], request);
       case 'fetch':
-        return runSteps(proj, [{ args: ['fetch', '--all', '--prune'], action: 'fetch' }], request);
+        return runSteps(ref, [{ args: ['fetch', '--all', '--prune'], action: 'fetch' }], request);
       case 'init':
-        return init(proj.id);
+        return init(ref.proj.id);
     }
     throw new Error(`There's no command "${ev.id}".`);
   }
@@ -759,14 +894,14 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
     }
   }
 
-  async function commit(proj: AddonProjectInfo, values: Record<string, AddonValue>): Promise<AddonEventResult> {
-    const projectId = proj.id;
+  async function commit(ref: RepoRef, values: Record<string, AddonValue>): Promise<AddonEventResult> {
+    const projectId = ref.proj.id;
     const text = str(values.message).trim();
     if (!text) return invalid('message', 'The commit message is empty');
     const checked = new Set(Array.isArray(values.files) ? values.files : []);
     const amend = values.amend === true;
     git.forget(projectId);
-    const s = await repo(proj);
+    const s = await repo(ref);
     const files = s.changes.filter((c) => checked.has(c.path));
     if (!files.length && !amend) return invalid('files', "There aren't any files chosen to commit");
     const at: Place = { projectId, cwd: s.root };
@@ -780,40 +915,46 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
       const r = await git.run(at, ['commit', '-m', text, ...(amend ? ['--amend'] : []), ...(paths.length ? ['--', ...paths] : [])], { timeoutSec: COMMIT_TIMEOUT_SEC });
       if (r.code === 0) return { actions: [{ type: 'closeWindow' }] };
       // No name or email: Git Settings over the Commit window, which keeps its message for when they're saved.
-      if (needsIdentity(`${r.stderr}\n${r.stdout}`)) return settingsWindow({ environmentId: proj.environmentId, identity: true }, true);
+      if (needsIdentity(`${r.stderr}\n${r.stdout}`)) return settingsWindow({ environmentId: ref.proj.environmentId, identity: true }, true);
       return problem(r, 'commit');
     } finally {
       afterAction(projectId);
     }
   }
 
-  async function switchBranch(proj: AddonProjectInfo, values: Record<string, AddonValue>): Promise<AddonEventResult> {
+  /** The Branches window's Switch: the branch selected in its list. */
+  async function switchBranch(ref: RepoRef, values: Record<string, AddonValue>): Promise<AddonEventResult> {
     const name = str(values.branch);
     if (!name) return invalid('branch', "There isn't a branch selected");
-    const s = await repo(proj);
+    return switchTo(ref, name);
+  }
+
+  /** Make `name` the repository's current branch: the Branches window's Switch, or a branch in the branch menu. */
+  async function switchTo(ref: RepoRef, name: string): Promise<AddonEventResult> {
+    const s = await repo(ref);
     if (name === s.branch) return {};
     if (name.startsWith('-')) return invalid('branch', `"${name}" isn't a branch`);
     try {
-      const r = await git.run({ projectId: proj.id, cwd: s.root }, ['switch', name]);
+      const r = await git.run({ projectId: ref.proj.id, cwd: s.root }, ['switch', name]);
       return r.code === 0 ? {} : problem(r, `switch to "${name}"`);
     } finally {
-      afterAction(proj.id);
+      afterAction(ref.proj.id);
     }
   }
 
-  async function createBranch(proj: AddonProjectInfo, values: Record<string, AddonValue>): Promise<AddonEventResult> {
+  async function createBranch(ref: RepoRef, values: Record<string, AddonValue>): Promise<AddonEventResult> {
     const name = str(values.newBranch).trim();
     if (!name) return invalid('newBranch', 'The new branch needs a name');
     if (name.startsWith('-')) return invalid('newBranch', `"${name}" can't be a branch's name`);
-    const s = await repo(proj);
+    const s = await repo(ref);
     try {
-      const r = await git.run({ projectId: proj.id, cwd: s.root }, ['switch', '-c', name]);
+      const r = await git.run({ projectId: ref.proj.id, cwd: s.root }, ['switch', '-c', name]);
       if (r.code === 0) return { values: { newBranch: '' } };
       // A name git refuses, or one a branch already has, is the field's problem.
       const p = gitProblem(r, `create the branch "${name}"`);
       return /already exists|can't be a branch's name/.test(p.message) ? invalid('newBranch', p.message) : message('error', p.message, p.detail);
     } finally {
-      afterAction(proj.id);
+      afterAction(ref.proj.id);
     }
   }
 
@@ -863,7 +1004,7 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
       if (!env) throw new Error('The environment no longer exists.');
       return env;
     }
-    const proj = await eventProject(ev);
+    const { proj } = await eventRef(ev);
     return { ...(await environmentOf(proj)), side: proj.side, projectId: proj.id };
   }
 
@@ -963,12 +1104,12 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
     return { actions: [{ type: 'closeWindow' }] };
   }
 
-  async function saveRepoSettings(proj: AddonProjectInfo, values: Record<string, AddonValue>): Promise<AddonEventResult> {
-    await repo(proj);
-    const { local } = await readRepo(proj);
+  async function saveRepoSettings(ref: RepoRef, values: Record<string, AddonValue>): Promise<AddonEventResult> {
+    const s = await repo(ref);
+    const { local } = await readRepo(ref, s.root);
     const url = str(values.remote).trim();
     if (url.startsWith('-')) return invalid('remote', `"${url}" isn't a URL`);
-    const cwd = proj.cwd;
+    const cwd = s.root;
     const steps: Step[] = [];
     for (const [field, key] of [
       ['name', 'user.name'],
@@ -982,13 +1123,13 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
     if (url !== before) steps.push({ cwd, args: !url ? ['remote', 'remove', 'origin'] : before ? ['remote', 'set-url', 'origin', url] : ['remote', 'add', 'origin', url] });
     if (!steps.length) return { actions: [{ type: 'closeWindow' }] };
     try {
-      const r = await git.steps({ projectId: proj.id }, proj.side, steps);
+      const r = await git.steps({ projectId: ref.proj.id }, ref.proj.side, steps);
       if (r === 'no-git') return message('error', "Git isn't installed in the project's environment");
-      const bad = failedStep(r, (s) => s.code === 0 || (s.code === 5 && s.stdout === ''));
+      const bad = failedStep(r, (x) => x.code === 0 || (x.code === 5 && x.stdout === ''));
       if (bad) return problem(bad, "save the repository's settings");
       return { actions: [{ type: 'closeWindow' }] };
     } finally {
-      afterAction(proj.id);
+      afterAction(ref.proj.id);
     }
   }
 
@@ -1006,14 +1147,19 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
   async function event(ev: AddonEvent, request?: number): Promise<AddonEventResult> {
     if (ev.kind === 'more') {
       if (ev.id !== 'history' || !('view' in ev.source)) return {};
-      const projectId = str(ev.source.params.projectId);
-      historyPages.set(projectId, (historyPages.get(projectId) ?? 1) + 1);
+      const key = gitPlace(await viewRef(ev.source.view, ev.source.params)).id;
+      historyPages.set(key, (historyPages.get(key) ?? 1) + 1);
       looper.refresh({ views: [ev.source.view] });
       return {};
     }
     if (ev.kind === 'command') return command(ev, request);
     if (ev.kind === 'change') {
       if ('view' in ev.source && ev.source.view === 'settings' && ev.id === 'environment') return environmentChanged(ev);
+      // A project's tab shows another of its repositories, which its commands then act on.
+      if ('view' in ev.source && ev.source.view === 'project' && ev.id === 'repo') {
+        picked.set(str(ev.source.params.projectId), str(ev.values?.repo));
+        looper.refresh({ views: ['project'] });
+      }
       return {};
     }
     // Double-clicking a repository does nothing more than selecting it.
@@ -1025,18 +1171,18 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
       if (ev.id === 'clone') return clone(values, request);
       if (ev.id === 'save-settings') return saveSettings(ev);
       if (ev.id === 'install-git') return installGit(await installTarget(ev), request);
-      const proj = await eventProject(ev);
+      const ref = await eventRef(ev);
       switch (ev.id) {
         case 'init':
-          return init(proj.id);
+          return init(ref.proj.id);
         case 'commit':
-          return commit(proj, values);
+          return commit(ref, values);
         case 'switch':
-          return switchBranch(proj, values);
+          return switchBranch(ref, values);
         case 'create-branch':
-          return createBranch(proj, values);
+          return createBranch(ref, values);
         case 'save-repo-settings':
-          return saveRepoSettings(proj, values);
+          return saveRepoSettings(ref, values);
       }
     }
     throw new Error(`There's no action "${ev.id}".`);
@@ -1044,10 +1190,12 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
 
   async function projectTab(params: Record<string, unknown>): Promise<AddonProjectTabState> {
     if (params.tab !== 'git') throw new Error(`There's no project tab "${str(params.tab)}".`);
-    const s = await project(params.projectId)
-      .then((p) => git.state(p))
-      .catch((): RepoState => ({ repo: false }));
-    return s.repo ? { title: gitTabLabel(s.changes) } : { hidden: true };
+    const repos = await project(params.projectId)
+      .then((p) => reposOf(p))
+      .catch(() => []);
+    // A project with several repositories counts all of their changes.
+    const changes = repos.flatMap((r) => (r.state.repo ? r.state.changes : []));
+    return repos.some((r) => r.state.repo) ? { title: gitTabLabel(changes) } : { hidden: true };
   }
 
   return {
@@ -1075,6 +1223,7 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
       if (method === 'projectsChanged') {
         projectList = undefined;
         git.forget();
+        nestedFound.clear();
         looper.refresh({ panes: [PANE], projectTabs: true });
       } else if (method === 'activity' && typeof params.projectId === 'string') {
         setWorking(params.projectId, params.working === true);

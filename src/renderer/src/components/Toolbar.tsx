@@ -16,7 +16,7 @@ export function ToolbarButton({ item }: { item: ToolbarItem }) {
   const menu = item.menu;
   if (menu?.open) {
     const open = menu.open;
-    return <SplitToolButton icon={iconOf(item)} title={title} menuTitle={menu.label} enabled={isEnabled(item)} onClick={item.run ?? null} onMenu={(x, y) => open(x, y)} />;
+    return <SplitToolButton icon={iconOf(item)} title={item.labeled ? item.label : title} labeled={item.labeled} menuTitle={menu.label} enabled={isEnabled(item)} onClick={item.run ?? null} onMenu={(x, y) => open(x, y)} />;
   }
   return <ToolButton icon={iconOf(item)} title={title} labeled={item.labeled} enabled={isEnabled(item)} pressed={item.pressed} onClick={() => item.run?.()} />;
 }

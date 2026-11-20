@@ -603,6 +603,8 @@ export interface AddonPackage {
 /** The installed addons: their folders on disk and their processes. */
 export class AddonHost {
   private readonly procs = new Map<string, AddonProcess>();
+  /** projectTab calls the addons are still answering, by addon, tab and project. */
+  private readonly pendingTabs = new Map<string, Promise<AddonProjectTabState>>();
   /** The bundled packages' ids, by their file, read once. */
   private bundled: Promise<Map<string, string>> | null = null;
 
@@ -858,11 +860,25 @@ export class AddonHost {
     return this.proc(id).call('render', { view, params }, `render ${view}`, (r) => check('a screen', AddonScreenSchema, r));
   }
 
-  /** Whether the addon's project tab shows for the project, and its title now. */
-  async projectTab(id: string, tab: string, projectId: string): Promise<AddonProjectTabState> {
-    return this.proc(id).call('projectTab', { tab, projectId }, `projectTab ${tab}`, (r) =>
-      check('a project tab', AddonProjectTabStateSchema, r ?? {}),
-    );
+  /**
+   * Whether the addon's project tab shows for the project, and its title now. The same question asked again
+   * while the addon is answering it (every window showing the project asks at once) waits for that answer.
+   */
+  projectTab(id: string, tab: string, projectId: string): Promise<AddonProjectTabState> {
+    const key = `${id}\n${tab}\n${projectId}`;
+    const pending = this.pendingTabs.get(key);
+    if (pending) return pending;
+    const asked = (async () =>
+      this.proc(id).call('projectTab', { tab, projectId }, `projectTab ${tab}`, (r) => check('a project tab', AddonProjectTabStateSchema, r ?? {})))().finally(() => {
+      if (this.pendingTabs.get(key) === asked) this.pendingTabs.delete(key);
+    });
+    this.pendingTabs.set(key, asked);
+    return asked;
+  }
+
+  /** The addon said something changed: a project tab asked about after this gets a new answer. */
+  private forgetPendingTabs(id: string): void {
+    for (const key of this.pendingTabs.keys()) if (key.startsWith(`${id}\n`)) this.pendingTabs.delete(key);
   }
 
   /** `origin` is whatever sent the event (a window): originOf gives it back while the addon is still answering. */
@@ -903,7 +919,10 @@ export class AddonHost {
       log: this.d.log,
       launch: () => this.launchOf(manifest),
       onStatus: () => this.changed(),
-      onRefresh: (only) => this.d.onRefresh(manifest.id, only),
+      onRefresh: (only) => {
+        this.forgetPendingTabs(manifest.id);
+        this.d.onRefresh(manifest.id, only);
+      },
       request: (method, params) => this.d.request(manifest.id, method, params),
       onStopped: () => this.d.onStopped?.(manifest.id),
     });

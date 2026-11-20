@@ -11,10 +11,13 @@ export interface MessageRow {
    * guidance: text the user sent the agent mid-run (see GUIDANCE_PREFIX).
    * events: related trigger events sent to the agent mid-run (see EVENTS_PREFIX).
    * delegate: results and questions of the agents this one started in other folders (see DELEGATE_PREFIX).
+   * peer: a message another Claude Code session sent the agent (see peerMessages).
    * task: the task a workflow script computed for one of its agents (not the user's own message).
    * error: an API error Claude Code recorded as the assistant's reply (usage limit, overloaded…).
    */
-  kind: 'prompt' | 'guidance' | 'events' | 'delegate' | 'agent' | 'thinking' | 'tool' | 'raw' | 'task' | 'error';
+  kind: 'prompt' | 'guidance' | 'events' | 'delegate' | 'peer' | 'agent' | 'thinking' | 'tool' | 'raw' | 'task' | 'error';
+  /** Peer rows: the name of the session that sent the message, when Claude Code gave one. */
+  from?: string;
   /** Set on rows from the classifier's conversation; assistant rows then show "Classifier". */
   source?: 'classifier';
   /** An agent row that is Looper's own line in a chat ("Stopped.", why a turn failed), not the agent's. */
@@ -47,10 +50,11 @@ export interface MessageRow {
   /** A Code Mode REPL call: the lines its script logged, apart from `result` (what it returned, or the error that ended it). */
   logs?: string;
   /**
-   * A Code Mode REPL call: how many tool calls its script made, how many failed, and the files they read or changed,
-   * each with the last call on it (runs.scriptCalls reads the calls).
+   * A Code Mode REPL call: how many tool calls its script made, how many failed and which (their indices), how many are
+   * still running (none: left out), and the files they read or changed, each with the last call on it (runs.scriptCalls
+   * reads the calls).
    */
-  calls?: { count: number; failed: number; files?: { path: string; changed: boolean; index: number }[] };
+  calls?: { count: number; failed: number; failures?: number[]; running?: number; files?: { path: string; changed: boolean; index: number }[] };
   /** Edit/Write rows: the diff hunks the harness recorded for the change. */
   patch?: PatchHunk[];
   /** Prompt rows of a task chat: the files sent with the message. */
@@ -226,4 +230,20 @@ export function delegateMessage(entries: readonly string[]): string {
 /** The entries' text when `text` is a delegated agents' message, else null. */
 export function delegateText(text: string): string | null {
   return bodyAfterHeader(text, DELEGATE_PREFIX);
+}
+
+/**
+ * The messages other Claude Code sessions sent the agent, with each sender's name, when `text` is how Claude Code
+ * hands them over: `<cross-session-message from-name="…">` blocks alone (a queued_command's prompt), or after a header
+ * line ("Another Claude session sent a message:"), maybe inside a system-reminder (claude 2.1.x). Null for any other text.
+ */
+export function peerMessages(text: string): { from?: string; text: string }[] | null {
+  const t = text.trim().replace(/^<system-reminder\b[^>]*>\s*([\s\S]*?)\s*<\/system-reminder\b[^>]*>$/, '$1');
+  if (!/^(?:[^<\n][^\n]*\n)?<cross-session-message\b/.test(t)) return null;
+  const messages: { from?: string; text: string }[] = [];
+  for (const m of t.matchAll(/<cross-session-message\b([^>]*)>([\s\S]*?)<\/cross-session-message>/g)) {
+    const from = /\bfrom-name="([^"]+)"/.exec(m[1])?.[1];
+    messages.push({ ...(from ? { from } : {}), text: m[2].trim() });
+  }
+  return messages.length ? messages : null;
 }

@@ -3,8 +3,8 @@ import { errMsg, type Logger } from './log';
 
 /**
  * Electron power hooks, injected by the app host so the engine (which also
- * runs headless) never imports Electron. The blocker is
- * `powerSaveBlocker.start('prevent-app-suspension')`: while armed, Looper owns
+ * runs headless) never imports Electron. The blocker is power-win.ts's
+ * SystemAwake: while armed, Looper owns
  * the sleep policy — Windows' own idle sleep can't kill the schedule, and the
  * blocker is released only to suspend deliberately. Start/stop are idempotent.
  */

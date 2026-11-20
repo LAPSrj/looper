@@ -5,7 +5,8 @@ import { listSelection, nearEnd, rowsKey } from './addon-screen-model';
 import { EmptyState } from './EmptyState';
 import { ListDetail, selectsFirstRow } from './ListDetail';
 import { NavBar } from './NavBar';
-import { RowList, showRowMenu, type ListMenuItem } from './RowList';
+import { DetailRowText, RowList, showRowMenu, type ListMenuItem } from './RowList';
+import { Group } from './phone/PhoneList';
 
 export type ListDetailNode = Extract<AddonNode, { type: 'listDetail' }>;
 
@@ -13,7 +14,9 @@ export type ListDetailNode = Extract<AddonNode, { type: 'listDetail' }>;
  * An addon's `listDetail` node, drawn as the Git tab draws its changes: the
  * rows (a name, its line under it, a value at the end as plain text), and the
  * selected row's `detail` screen beside them, under them where `stack` (a
- * narrow place, or a detail inside another), pushed over them on a phone.
+ * narrow place, or a detail inside another), pushed over them on a phone. Its
+ * `head` (a commit's message) is a tab of its own before the rows, and a
+ * section above them on a phone.
  */
 export function AddonListDetail({
   node,
@@ -25,8 +28,11 @@ export function AddonListDetail({
   onMore,
   onPushed,
   detail,
+  head,
 }: {
   node: ListDetailNode;
+  /** The node's `head`, drawn. */
+  head?: ReactNode;
   /** The row picked, by id; undefined: none yet (the node's `selected` or the first), null: back on the list (a phone). */
   picked: string | null | undefined;
   onPick: (id: string | null) => void;
@@ -57,7 +63,7 @@ export function AddonListDetail({
   return (
     <ListDetail
       panes={{ axis: stack ? 'y' : 'x', initial: stack ? 160 : 360 }}
-      tabs={stack ? { list: node.label, detail: 'Details' } : undefined}
+      tabs={stack || head ? { list: node.label, detail: 'Details', ...(head && node.head ? { head: { label: node.head.label, body: <div className="detail-head">{head}</div> } } : {}) } : undefined}
       open={open}
       onClose={() => onPick(null)}
       detailTitle={current?.title}
@@ -66,8 +72,8 @@ export function AddonListDetail({
       empty={node.detailEmpty ?? ''}
       list={
         <RowList
-          listClass="git-list"
-          rowClass="git-file"
+          listClass="detail-rows"
+          rowClass="detail-row"
           label={node.label}
           idPrefix={`addon-row-${node.id}`}
           rows={node.items}
@@ -82,15 +88,14 @@ export function AddonListDetail({
             onMore();
           }}
           empty=""
-          row={(r) => (
-            <>
-              <div className="git-file-name">
-                <span>{r.title}</span>
-                {r.value && <span className="muted git-file-status">{r.value}</span>}
-              </div>
-              {r.subtitle && <div className={`muted git-file-dir${r.mono ? ' mono' : ''}`}>{r.subtitle}</div>}
-            </>
-          )}
+          head={
+            isPhone && head && node.head ? (
+              <Group title={node.head.label}>
+                <div className="pg-result">{head}</div>
+              </Group>
+            ) : undefined
+          }
+          row={(r) => <DetailRowText title={r.title} value={r.value} sub={r.subtitle} mono={r.mono} />}
           phoneRow={(r) => ({
             title: r.title,
             sub: r.subtitle && (r.mono ? <span className="pg-oneline mono">{r.subtitle}</span> : r.subtitle),

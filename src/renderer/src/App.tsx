@@ -8,7 +8,8 @@ import { sidebarHasPanes } from '@shared/panes';
 import { remoteAccessStatusItems } from '@shared/remote-access';
 import { AddonScreenView, type AddonScreenReport } from './components/AddonScreen';
 import { useSessionsState } from './live-state';
-import { AddonPaneList, AddonSearchBox, addonSearch, showPaneItemMenu, showPaneMenu } from './components/AddonPane';
+import { AddonNotRunning, AddonPaneList, addonSearch, showPaneItemMenu, showPaneMenu } from './components/AddonPane';
+import { SearchBox } from './components/SearchBox';
 import { useFindFocus } from './components/FindBar';
 import { commandToolbar, popupEntries } from './components/command-surfaces';
 import { setRowMenuContext } from './components/row-menus';
@@ -178,6 +179,9 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   const paneAddon = tabDef?.addon && !tabDef.addon.tab ? addons.find((a) => a.id === tabDef.addon!.id) : undefined;
   const search = paneAddon ? addonSearch(paneAddon, m.addonPanes) : null;
   const query = paneAddon ? (m.addonQueries[paneAddon.id] ?? '') : '';
+  // The status bar of an addon's panes tab with no item's screen showing: its first pane's.
+  const firstPane = paneAddon?.panes[0] && m.addonPanes[addonPaneKey(paneAddon.id, paneAddon.panes[0].id)];
+  const paneStatus = firstPane?.status === 'ready' ? firstPane.content.status : undefined;
   // View > Filter: the Search box takes the focus, or with the toolbar hidden the Filter dialog asks for the text.
   const openSearch = () => (toolbarShown ? searchField.focus() : commands.host('filter', 'Show items containing', query));
 
@@ -300,6 +304,8 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
     // An addon with only panes: its panes as the list, the item picked beside them.
     const addon = addons.find((a) => a.id === tabDef.addon!.id);
     const { addonShown } = m;
+    if (addon && addon.status !== 'running') body = alone(<AddonNotRunning addon={addon} />);
+    else {
     // Equal panes: the view has no place to keep an addon pane's height.
     const panes = (
       <PaneStack
@@ -345,9 +351,14 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
         </main>
       </WithSidebar>
     );
+    }
   } else if (tabDef?.addon?.tab) {
     const addon = { ...tabDef.addon, tab: tabDef.addon.tab };
+    const info = addons.find((a) => a.id === addon.id);
     body = alone(
+      info && info.status !== 'running' ? (
+        <AddonNotRunning addon={info} />
+      ) : (
       <AddonScreenView
         key={tabDef.id}
         addonId={addon.id}
@@ -356,7 +367,8 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
         params={addon.tab.params ?? {}}
         mode="main"
         onScreen={setAddonScreen}
-      />,
+      />
+      ),
     );
   } else {
     body = alone(m.addonsLoaded ? <EmptyState>The addon this tab comes from isn’t started.</EmptyState> : null);
@@ -392,6 +404,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
             {remoteOpen && <span>{remoteOpen.length} Remote Control conversation{remoteOpen.length === 1 ? '' : 's'}</span>}
           </>
         )}
+        {tabDef?.addon && addons.find((a) => a.id === tabDef.addon!.id)?.status === 'running' && (addonScreen?.status ?? paneStatus)?.map((text, n) => <span key={n}>{text}</span>)}
         {m.stoppedAddons.length > 0 && <span>{m.stoppedAddons.length === 1 ? `${m.stoppedAddons[0]} addon stopped` : `${m.stoppedAddons.length} addons stopped`}</span>}
       </StatusBar>
     ));
@@ -410,7 +423,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
             popupEntries(commands, 'addon-toolbars', addonToolbarEntries(commands));
           }}
         >
-          {search && <AddonSearchBox value={query} onChange={(q) => m.setAddonQuery(paneAddon!.id, q)} placeholder={search.prompt} inputRef={searchField.inputRef} />}
+          {search && <SearchBox value={query} onChange={(q) => m.setAddonQuery(paneAddon!.id, q)} placeholder={search.prompt} inputRef={searchField.inputRef} />}
         </Toolbar>
       )}
       {position === 'top' && strip}

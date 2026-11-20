@@ -56,6 +56,7 @@ export function compactRow(r: MessageRow): MessageRow | null {
     return { ...base, kind: r.kind, preview: r.preview, text: r.text, ...(r.attachments?.length ? { attachments: r.attachments } : {}) };
   }
   if (r.kind === 'agent' || r.kind === 'events' || r.kind === 'delegate') return { ...base, kind: r.kind, preview: r.preview, text: r.text };
+  if (r.kind === 'peer') return { ...base, kind: r.kind, preview: r.preview, text: r.text, ...(r.from ? { from: r.from } : {}) };
   if (r.kind !== 'tool') return null;
   if (r.sent) return { ...base, kind: 'tool', tool: r.tool, preview: r.preview, text: r.sent.caption ?? '', sent: r.sent };
   if (AGENT_TOOLS.has(r.tool ?? '') && r.resultChars === undefined) {
@@ -318,6 +319,7 @@ function proseBlock(r: MessageRow, path: (p: string) => string): { label: string
   if (r.kind === 'agent') return { label: '[Agent]', body: escapeLabels(r.text) };
   if (r.kind === 'events') return { label: '[Trigger events, while the agent worked]', body: escapeLabels(r.text) };
   if (r.kind === 'delegate') return { label: '[From the agents it started]', body: escapeLabels(r.text) };
+  if (r.kind === 'peer') return { label: `[Message from ${r.from ?? 'another session'}]`, body: escapeLabels(r.text) };
   const attached = fileAttachments(r.attachments ?? []);
   const files = attached.length ? `\n\nAttached files:\n${attached.map((a) => `- ${path(a.path)}`).join('\n')}` : '';
   // The commands the user ran go ahead of the text, as they went to the agent.

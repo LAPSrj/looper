@@ -1,9 +1,13 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEngine } from '../src/engine/engine';
 import { Logger } from '../src/engine/log';
+import type { OffThreadChild, spawnOffThread } from '../src/engine/exec-worker';
+import { SystemAwake } from '../src/engine/power-win';
 import { PreventSleep } from '../src/engine/prevent-sleep';
 import { SettingsSchema, type PreventSleepState } from '../src/shared/types';
 
@@ -113,5 +117,59 @@ describe('prevent sleep', () => {
     expect(engine.updateSettings({ preventSleepWhileWorking: true }).preventSleepWhileWorking).toBe(true);
     expect(held).toBe(false);
     expect(events.at(-1)).toEqual({ timer: 'off', until: null, active: false });
+  });
+});
+
+describe('windows keep awake', () => {
+  function makeAwake() {
+    const children: (EventEmitter & { stdin: PassThrough; stderr: PassThrough })[] = [];
+    const errors: string[] = [];
+    const spawn = (() => {
+      const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stderr: new PassThrough() });
+      children.push(child);
+      return child as unknown as OffThreadChild;
+    }) as typeof spawnOffThread;
+    return { awake: new SystemAwake((m) => errors.push(m), spawn), children, errors };
+  }
+
+  it('runs one helper for every holder and ends it when the last one lets go', () => {
+    const { awake, children } = makeAwake();
+    awake.hold('prevent-sleep', true);
+    awake.hold('rest', true);
+    awake.hold('prevent-sleep', true);
+    expect(children).toHaveLength(1);
+    awake.hold('prevent-sleep', false);
+    expect(children[0].stdin.writableEnded).toBe(false);
+    awake.hold('rest', false);
+    expect(children[0].stdin.writableEnded).toBe(true);
+    awake.hold('rest', true);
+    expect(children).toHaveLength(2);
+  });
+
+  it('sets the hold again on request while it runs', () => {
+    const { awake, children } = makeAwake();
+    awake.reapply();
+    awake.hold('prevent-sleep', true);
+    const sent: string[] = [];
+    children[0].stdin.on('data', (d: Buffer) => sent.push(d.toString()));
+    awake.reapply();
+    awake.reapply();
+    expect(sent.join('')).toBe('\n\n');
+  });
+
+  it('reports a helper that ends while held, and starts another on the next hold', () => {
+    const { awake, children, errors } = makeAwake();
+    awake.hold('rest', false);
+    expect(children).toHaveLength(0);
+    awake.hold('rest', true);
+    children[0].stderr.emit('data', Buffer.from('Add-Type failed'));
+    children[0].emit('close', 1, null);
+    expect(errors).toEqual(['keep awake: the helper ended while held (exit 1): Add-Type failed']);
+    awake.hold('prevent-sleep', true);
+    expect(children).toHaveLength(2);
+    awake.hold('rest', false);
+    awake.hold('prevent-sleep', false);
+    children[1].emit('close', 0, null);
+    expect(errors).toHaveLength(1);
   });
 });

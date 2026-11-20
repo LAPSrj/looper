@@ -188,7 +188,7 @@ export function Conversation({
   );
 }
 
-/** One line above the message box: what the agent is doing, or why the conversation ended. */
+/** The conversation's last line: what the agent is doing, or why the conversation ended. */
 export function ChatStatus({ state }: { state: Pick<ChatState, 'harnessKind' | 'status' | 'error'> & { permissions?: readonly unknown[] } }) {
   const harness = harnessKindLabel(state.harnessKind);
   if (state.permissions?.length) return <div className="chat-status chat-working muted">{harness} is waiting for your answer.</div>;

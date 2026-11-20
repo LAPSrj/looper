@@ -24,6 +24,8 @@ import { writeJsonAtomic, writeText } from './store/fsutil';
  *   are made, as the transcript records them. Interactive Claude Code writes
  *   its transcript seconds later, and holds some rows back until a tool call
  *   that waits ends, so chats and runs show the rows from there (LiveRows).
+ *   A Code Mode script's calls reach the transcript only once the script has
+ *   ended, so the mod hands each one over as it starts and as it ends.
  *
  * The mod writes `mod.json` when it loads; a session that started without it
  * (`--bare`, a managed setting that allows no such mod) is ended by the engine.
@@ -44,7 +46,10 @@ export const MOD_FILES = {
   usage: 'usage.json',
   /** The last tool call's end: `{ at, tool, key }` (toolKey). */
   toolEnd: 'tool-end.json',
-  /** The rows of the main conversation as they are made, one transcript record a file, named `<the mod's start>-<n>.json` to sort in order. */
+  /**
+   * The rows of the main conversation as they are made, one transcript record a file, named `<the mod's start>-<n>.json`
+   * to sort in order, then the row's id, or `call-<tool_use id>` for the start or end of a Code Mode script's call.
+   */
   live: 'live',
 } as const;
 
@@ -120,19 +125,26 @@ let liveStep = 0
 let lastDoor = null
 // Each main-thread tool call's record by its tool_use id, until its result row takes it.
 const toolRecords = new Map()
+// The tool_use ids of Code Mode's copies of a script's calls, until their result rows come.
+const scriptCalls = new Set()
+// The script calls handed over as they ran (scriptCallStart), until Code Mode's copy of their result comes.
+const liveCalls = new Set()
+// What tool.call's input holds beside the tool's own arguments.
+const CALL_KEYS = ['tool', 'tool_use_id', 'agentId', 'requestMeta', 'consent']
 // The engine's stand-in reply, and the rows after it, until the turn's end says whether an API error ended the turn.
 let held = null
 // Prompts typed while a turn ran, as typed, until their delivery into the turn is handed over.
 let typedMidTurn = []
 
 // Each file is written after the one before it, so a row appears only once the rows before it are whole.
-function writeLive($, record) {
+function writeLive($, record, callId) {
   if (held && record !== held.reply) {
     held.after.push(record)
     return
   }
-  // The row's id ends the name: the session step deletes the file once the transcript has the row.
-  const name = CONFIG.live + (CONFIG.windows ? '\\' : '/') + liveStamp + '-' + String(++liveSeq).padStart(9, '0') + (record.uuid ? '-' + record.uuid : '') + '.json'
+  // The row's id ends the name, or the call's: the session step deletes the file once the transcript has the row, or the call's result.
+  const id = record.uuid ? '-' + record.uuid : callId ? '-call-' + String(callId).replace(/[^\w-]/g, '') : ''
+  const name = CONFIG.live + (CONFIG.windows ? '\\' : '/') + liveStamp + '-' + String(++liveSeq).padStart(9, '0') + id + '.json'
   const text = JSON.stringify(record)
   liveWrites = liveWrites.then(() => $.fs.write(name, text)).catch(() => {})
 }
@@ -193,11 +205,43 @@ function liveRow($, e, stored) {
     record.toolUseResult = toolRecords.get(result.tool_use_id)
     toolRecords.delete(result.tool_use_id)
   }
+  // Code Mode copies a script's calls in once the script has ended, and session.append leaves out the isVirtual mark
+  // the transcript gives them, which tells the conversation they go under the script's REPL call.
+  if (m.type === 'assistant' && model === '<synthetic>' && content.length > 0 && content.every((b) => b && b.type === 'tool_use')) {
+    // Handed over as they ran: the transcript's copy is enough.
+    if (content.every((b) => liveCalls.has(b.id))) return
+    record.isVirtual = true
+    for (const b of content) scriptCalls.add(b.id)
+  } else if (result && liveCalls.delete(result.tool_use_id)) {
+    return
+  } else if (result && scriptCalls.delete(result.tool_use_id)) {
+    record.isVirtual = true
+  }
   if (m.type === 'assistant' && typeof model === 'string' && model.startsWith('<') && content.length > 0 && content.every((b) => b && b.type === 'text')) {
     held = { reply: record, after: [] }
     return
   }
   writeLive($, record)
+}
+
+// A Code Mode script's call as the transcript records it once the script has ended (isVirtual), handed over as it starts.
+function scriptCallStart($, e) {
+  const input = {}
+  for (const [k, v] of Object.entries(e)) if (!CALL_KEYS.includes(k)) input[k] = v
+  liveCalls.add(e.tool_use_id)
+  const content = [{ type: 'tool_use', id: e.tool_use_id, name: e.tool, input }]
+  const message = { role: 'assistant', model: '<synthetic>', content }
+  writeLive($, { type: 'assistant', isVirtual: true, liveScriptCall: true, timestamp: new Date().toISOString(), isSidechain: false, message }, e.tool_use_id)
+}
+
+// Its end: the tool's record, as the transcript keeps it, or what the model would read of a refusal or an error.
+function scriptCallEnd($, id, r) {
+  const failed = !r || r.deny !== undefined || r.isError === true
+  const text = failed ? (r && (r.deny || r.text)) || '' : r.result === undefined ? r.text || '' : ''
+  const message = { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text, is_error: failed }] }
+  const record = { type: 'user', isVirtual: true, liveScriptCall: true, timestamp: new Date().toISOString(), isSidechain: false, message }
+  if (!failed && r.result !== undefined) record.toolUseResult = r.result
+  writeLive($, record, id)
 }
 
 async function writeJson($, file, value) {
@@ -421,12 +465,17 @@ export function register(on) {
     const input = CONFIG.ask && command && new RegExp('(^|[\\s;&|(])' + CONFIG.ask.command + '(\\s|$)').test(command)
       ? { ...e, timeout: CONFIG.ask.timeoutMs }
       : e
+    // A model's own call was stored before it runs; one Claude Code makes for a Code Mode script wasn't, and reaches the transcript only once the script has ended.
+    const scriptCall = !!CONFIG.live && main && typeof e.tool_use_id === 'string' && !pendingCalls.has(e.tool_use_id) && !!next.origin && next.origin.plugin === 'engine'
+    if (scriptCall) scriptCallStart($, e)
     if (main) toolsInFlight += 1
+    let r
     try {
-      const r = await next(input)
-      if (CONFIG.live && main && r && !r.deny && r.result !== undefined && typeof e.tool_use_id === 'string') toolRecords.set(e.tool_use_id, r.result)
+      r = await next(input)
+      if (CONFIG.live && main && !scriptCall && r && !r.deny && r.result !== undefined && typeof e.tool_use_id === 'string') toolRecords.set(e.tool_use_id, r.result)
       return r
     } finally {
+      if (scriptCall) scriptCallEnd($, e.tool_use_id, r)
       if (main) toolsInFlight -= 1
       // A call that waited for permission is settled: answered in the terminal, Looper's card goes.
       if (CONFIG.files.toolEnd) await writeJson($, CONFIG.files.toolEnd, { at: Date.now(), tool: e.tool, key: toolKey(e) })

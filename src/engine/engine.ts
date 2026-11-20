@@ -86,7 +86,7 @@ export interface EngineOptions {
   power?: PowerAdapter;
   /** OS power command override (tests). */
   powerOps?: PowerOps;
-  /** Hold or release the app's sleep blocker (Electron's powerSaveBlocker); without it Prevent Sleep is unavailable (CLI serve). */
+  /** Hold or release the app's sleep blocker; without it Prevent Sleep is unavailable (CLI serve). */
   keepAwake?: (on: boolean) => void;
   /** Show a chat in a window (`looper chat --open`); without it the chat is only listed (CLI serve). */
   showChat?: (chatId: string) => void;

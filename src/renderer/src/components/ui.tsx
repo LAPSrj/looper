@@ -91,6 +91,60 @@ export function RadioField<T extends string>({
   );
 }
 
+/**
+ * A labelled group of check boxes for choosing several of a list (the files a commit takes), each with its description
+ * under it; a long list scrolls inside its box, so a dialog keeps its size. On an iPhone, rows with a check on each
+ * chosen one (HIG: Lists and tables). `error`: a problem with what's chosen, under the group.
+ */
+export function CheckboxGroup({
+  label,
+  options,
+  checked,
+  onChange,
+  error,
+  autoFocus,
+}: {
+  label: string;
+  options: { value: string; label: string; description?: string }[];
+  checked: readonly string[];
+  onChange: (value: string, on: boolean) => void;
+  error?: string;
+  autoFocus?: boolean;
+}) {
+  const problem = error && <FieldError>{error}</FieldError>;
+  if (onIos) {
+    return (
+      <div className="radio-rows checkbox-group" role="group" aria-label={label}>
+        <Group title={label}>
+          {options.map((o) => (
+            <Row key={o.value} title={o.label} sub={o.description} checked={checked.includes(o.value)} multiple onOpen={() => onChange(o.value, !checked.includes(o.value))} />
+          ))}
+        </Group>
+        {problem}
+      </div>
+    );
+  }
+  return (
+    <div className="radio-field checkbox-group" role="group" aria-label={label}>
+      <span className="field-label">{label}</span>
+      <div className="checkbox-group-box">
+        {options.map((o, n) => (
+          <CheckboxField
+            key={o.value}
+            className="radio-option"
+            label={o.label}
+            note={o.description}
+            checked={checked.includes(o.value)}
+            autoFocus={autoFocus && n === 0}
+            onChange={(on) => onChange(o.value, on)}
+          />
+        ))}
+      </div>
+      {problem}
+    </div>
+  );
+}
+
 /** iOS's choice of one: a row per option, a check on the chosen one (a radio group for assistive technology). */
 function CheckRows<T extends string>({
   label,

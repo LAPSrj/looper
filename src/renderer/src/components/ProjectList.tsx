@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Environment, Project, ProjectFolder } from '@shared/types';
 import { groupProjects, type ProjectGroup, type ProjectGroupBy } from '@shared/projects';
+import { EmptyState } from './EmptyState';
 import { FolderTree } from './FolderTree';
 import { GROUP_INDENT, GroupHeader } from './GroupHeader';
 import { ItemText, useGroupedTree, type TreeRow } from './GroupedTree';
@@ -39,17 +40,7 @@ export function ProjectList({
 }) {
   const paneMenu = showProjectsListMenu;
   if (!projects.length && !folders.length) {
-    return (
-      <div
-        className="addon-pane-note muted"
-        onContextMenu={(e) => {
-          e.preventDefault();
-          paneMenu();
-        }}
-      >
-        No projects yet.
-      </div>
-    );
+    return <EmptyState onMenu={paneMenu}>No projects yet.</EmptyState>;
   }
   if (groupBy !== 'none') return <GroupedProjects projects={projects} groupBy={groupBy} environments={environments} selected={selected} compact={compact} onSelect={onSelect} />;
   return (

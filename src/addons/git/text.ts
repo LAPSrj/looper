@@ -12,6 +12,26 @@ export const itemId = (projectId: string): string => (ID_RE.test(projectId) && !
 /** A list row's id for a file path: the same path always gets the same id, so the selection outlasts a redraw. */
 export const pathRowId = (path: string): string => `f${hex(path)}`;
 
+const unhex = (h: string): string | undefined => {
+  if (!/^(?:[0-9a-f]{2})*$/.test(h)) return undefined;
+  return new TextDecoder().decode(new Uint8Array(h.match(/../g)?.map((b) => parseInt(b, 16)) ?? []));
+};
+
+/** The path a pathRowId was made from; undefined for an id that isn't one. */
+export const subFromRowId = (id: string): string | undefined => (id.startsWith('f') ? unhex(id.slice(1)) : undefined);
+
+/** A branch's item in the branch menu, which picking sends as its command. */
+export const branchEntryId = (branch: string): string => `branch:${hex(branch)}`;
+
+/** The branch a branch menu item switches to; undefined for any other command. */
+export const branchOfEntry = (id: string): string | undefined => (id.startsWith('branch:') ? unhex(id.slice('branch:'.length)) : undefined);
+
+/** Text for a menu item's label: an "&" in it shows as itself, not an access key. */
+export const menuText = (s: string): string => s.replace(/&/g, '&&');
+
+/** How many files changed, for a status bar. */
+export const changesText = (n: number): string => (n === 0 ? 'No changes' : n === 1 ? '1 file changed' : `${n} files changed`);
+
 /** Where HEAD is: the branch, or the commit a detached HEAD is at. */
 export function headText(s: Pick<GitStatus, 'branch' | 'detachedAt'>): string {
   return s.branch ?? (s.detachedAt ? `Detached at ${s.detachedAt}` : 'Detached');

@@ -4,7 +4,7 @@ import type { MenuItemSpec } from '@shared/remote-access';
 import { platform } from '../platform';
 import { accessChar, eventMatches, parseAccelerator, pickChecked } from '../web/menu-model';
 import { useMenuState, type MenuState } from '../web/menu-state';
-import { Menu } from './Menu';
+import { Menu, useCloseOnPressOutside, useHoldWheel } from './Menu';
 import { Label } from './MenuList';
 
 // A desktop app's menu level window draws a level of an open menu itself.
@@ -48,7 +48,7 @@ export function WindowMenuBar({ initial }: { initial: MenuItemSpec[] | null }) {
  * platform/menu-popups.ts), else in the page. Either way the page keeps the menu, invisible while the windows
  * draw it, with the keyboard focus, so a screen reader reads its items and its keys work as before.
  */
-function OpenMenu({ menu, at, cues, focusActive, isMac }: { menu: MenuState; at: { x: number; y: number }; cues: boolean; focusActive: boolean; isMac: boolean }) {
+function OpenMenu({ menu, at, cues, focusActive, isMac, live }: { menu: MenuState; at: { x: number; y: number }; cues: boolean; focusActive: boolean; isMac: boolean; live?: string }) {
   const [drawn, setDrawn] = useState<'asking' | 'windows' | 'page'>(platform === 'electron' ? 'asking' : 'page');
   const drawnRef = useRef(drawn);
   drawnRef.current = drawn;
@@ -70,8 +70,33 @@ function OpenMenu({ menu, at, cues, focusActive, isMac }: { menu: MenuState; at:
       if (drawnRef.current !== 'page') void window.looper.commands.menuPopups(null);
     };
   }, []);
+  // The window takes the mouse only over what the page draws of the menu and `live` (a menu bar), as under Win32's menus.
+  const box = useRef<HTMLDivElement>(null);
+  useHoldWheel();
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (platform !== 'electron' || !el) return;
+    let sent = '';
+    const send = () => {
+      const boxes = [...(drawn === 'page' ? el.querySelectorAll('.ws-menu') : []), ...(live ? document.querySelectorAll(live) : [])].map((b) => {
+        const r = b.getBoundingClientRect();
+        return { x: r.left, y: r.top, width: r.width, height: r.height };
+      });
+      const json = JSON.stringify(boxes);
+      if (json === sent) return;
+      sent = json;
+      window.looper.commands.menuMouse(boxes);
+    };
+    send();
+    const moved = new MutationObserver(send);
+    moved.observe(el, { subtree: true, childList: true, attributes: true });
+    return () => {
+      moved.disconnect();
+      window.looper.commands.menuMouse(null);
+    };
+  }, [drawn, live]);
   return (
-    <div className={drawn === 'page' ? undefined : 'ws-menu-mirror'}>
+    <div ref={box} className={drawn === 'page' ? undefined : 'ws-menu-mirror'}>
       <Menu items={menu.nav[0]?.items ?? []} place={{ kind: 'point', ...at }} keys={{ state: menu, cues, focusActive }} isMac={isMac} />
     </div>
   );
@@ -132,6 +157,7 @@ function ContextMenu({ menu: m, back, onDone }: { menu: OpenContextMenu; back: R
     onDone();
   };
   const menu = useMenuState({ pick: (item) => finish(item), close: () => finish() });
+  useCloseOnPressOutside(() => finish());
   const at = useMemo(() => ({ x: m.x, y: m.y }), [m.x, m.y]);
   useLayoutEffect(() => menu.open(m.items, false), [m.items]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -156,7 +182,6 @@ function ContextMenu({ menu: m, back, onDone }: { menu: OpenContextMenu; back: R
   return createPortal(
     <div
       className="ws-catcher"
-      onPointerDown={() => finish()}
       onContextMenu={(e) => {
         e.preventDefault();
         finish();
@@ -381,9 +406,14 @@ export function MenuBar({ items, isMac, onPick, onOpenChange, systemKeys = false
       takeFocus();
       setCurrent(first());
     };
-    // A click anywhere else, or the window losing the focus, leaves the bar.
+    // A press anywhere else, or the window losing the focus, leaves the bar; as with Win32's menus, the press still
+    // reaches what's under it. The bar's own items open and close its menus.
     const onPointerDown = (e: PointerEvent) => {
-      if (state.current.current !== null && state.current.open === null && !(e.target as Element | null)?.closest?.('.ws-menubar')) leave(false);
+      const at = e.target instanceof Element ? e.target : null;
+      if (at?.closest('.ws-menubar')) return;
+      if (state.current.open !== null) {
+        if (!at?.closest('.ws-menu')) leave(true);
+      } else if (state.current.current !== null) leave(false);
     };
     const onBlur = () => {
       if (state.current.current !== null || state.current.open !== null) leave(false);
@@ -407,12 +437,6 @@ export function MenuBar({ items, isMac, onPick, onOpenChange, systemKeys = false
     if (open !== null && !items[open]?.submenu) leave(false);
   });
 
-  /** The top-level item under the pointer while a menu is open (the catcher covers the bar). */
-  const hit = (x: number, y: number): number =>
-    buttons.current.findIndex((b) => {
-      const r = b?.getBoundingClientRect();
-      return !!r && x >= r.left && x < r.right && y >= r.top && y < r.bottom;
-    });
   const anchor = open !== null ? buttons.current[open]?.getBoundingClientRect() : undefined;
 
   return (
@@ -439,6 +463,9 @@ export function MenuBar({ items, isMac, onPick, onOpenChange, systemKeys = false
               if (open === i) leave(true);
               else openAt(i, false);
             }}
+            onPointerEnter={() => {
+              if (open !== null && open !== i) openAt(i, byKeyboard);
+            }}
             onClick={() => {
               // A top-level item without a menu of its own is picked like any other.
               if (!top.submenu) {
@@ -454,20 +481,8 @@ export function MenuBar({ items, isMac, onPick, onOpenChange, systemKeys = false
       {open !== null &&
         anchor &&
         createPortal(
-          <div
-            className="ws-catcher"
-            onPointerDown={(e) => {
-              const i = hit(e.clientX, e.clientY);
-              if (i >= 0 && i !== open) openAt(i, false);
-              else leave(true);
-            }}
-            onPointerMove={(e) => {
-              const i = hit(e.clientX, e.clientY);
-              if (i >= 0 && i !== open && items[i]?.submenu) openAt(i, byKeyboard);
-            }}
-            onContextMenu={(e) => e.preventDefault()}
-          >
-            <OpenMenu menu={menu} at={{ x: anchor.left, y: anchor.bottom }} cues={cues} focusActive={systemKeys} isMac={isMac} />
+          <div className="ws-catcher" onContextMenu={(e) => e.preventDefault()}>
+            <OpenMenu menu={menu} at={{ x: anchor.left, y: anchor.bottom }} cues={cues} focusActive={systemKeys} isMac={isMac} live=".ws-menubar" />
           </div>,
           document.body,
         )}

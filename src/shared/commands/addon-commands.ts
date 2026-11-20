@@ -119,6 +119,8 @@ const where = (menu: Where['menu'], p: AddonPlacement): Where =>
 
 /** The command's submenu as it is now: what's left out takes its line with it. */
 function entriesOf(c: CommandContext, a: AddonInfo, cmd: AddonCommand, keyOf: KeyOf): Entry[] {
+  const now = stateOf(c, a.id, cmd.id).entries;
+  if (now) return entriesNow(c, a, cmd, now);
   const out: Entry[] = [];
   for (const e of cmd.entries ?? []) {
     if (!('id' in e)) {
@@ -138,6 +140,27 @@ function entriesOf(c: CommandContext, a: AddonInfo, cmd: AddonCommand, keyOf: Ke
       ...(key ? { accelerator: key } : {}),
       ...(e.destructive ? { destructive: true as const } : {}),
       run: () => run(c, a, cmd, e),
+    });
+  }
+  const last = out[out.length - 1];
+  if (last && 'separator' in last) out.pop();
+  return out;
+}
+
+/** A submenu whose items the screen or item sends (a repository's branches), in place of the manifest's. */
+function entriesNow(c: CommandContext, a: AddonInfo, cmd: AddonCommand, items: NonNullable<AddonCommandState['entries']>): Entry[] {
+  const out: Entry[] = [];
+  for (const e of items) {
+    if ('separator' in e) {
+      if (out.length && !('separator' in out[out.length - 1])) out.push({ separator: true });
+      continue;
+    }
+    out.push({
+      id: e.id,
+      label: e.label,
+      enabled: a.status === 'running' && e.enabled !== false && !!targetOf(c, a.id, cmd),
+      ...(e.check ? { checked: !!e.checked, ...(e.check === 'radio' ? { radio: true as const } : {}) } : {}),
+      run: () => run(c, a, cmd, { id: e.id, label: e.label }),
     });
   }
   const last = out[out.length - 1];

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from 'react';
 import { perfSpan } from '../perf';
-import { AddonSearchBox } from './AddonPane';
+import { SearchBox } from './SearchBox';
 
 /** How often a Find over changing content finds again (ms). */
 const AGAIN_MS = 150;
@@ -213,7 +213,7 @@ export function FindStrip({
           e.preventDefault();
         }}
       >
-        <AddonSearchBox value={query} placeholder="Find" inputRef={inputRef} onChange={onQuery} />
+        <SearchBox value={query} placeholder="Find" inputRef={inputRef} onChange={onQuery} />
       </div>
       <span className="muted">{status}</span>
       {children}

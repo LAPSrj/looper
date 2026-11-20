@@ -360,7 +360,7 @@ html.phone-window .pg-popup-mark {
 
 /* iOS: inset grouped sections, 16 pt from the edges, rounded, 52 pt rows, hairlines inset on both sides. */
 /* The picker's label is outside the :is(), which takes its most specific selector's weight and would outrank the form's inset below. */
-html.phone-window[data-platform='ios'] :is(.pg-group-title, .form-group-title, .form section h3, .addon-screen section h3),
+html.phone-window[data-platform='ios'] :is(.pg-group-title, .form-group-title, .form section h3),
 html.phone-window[data-platform='ios'] .picker-body > .field > .field-label {
   display: block;
   margin: 0;
@@ -697,7 +697,7 @@ html.phone-window[data-platform='ios'] .phone-main.pushed .pg-rows {
 html.phone-window[data-platform='ios'] .phone-main.pushed .phone-screen:not(:has(.status-pane, .pg-rows)) {
   padding-bottom: calc(var(--tabbar-h) + 8px);
 }
-html.phone-window:not(.tablet)[data-platform='ios'] .git-head .tabs-segmented {
+html.phone-window:not(.tablet)[data-platform='ios'] .tabs-head .tabs-segmented {
   flex: 1;
 }
 html.phone-window[data-platform='ios'] .phone-tab {
@@ -962,11 +962,11 @@ html.phone-window .list-detail {
   display: flex;
   flex-direction: column;
 }
-html.phone-window .pg-split-detail > :is(.messages-detail, .runlog-result, .compare-pane, .git-diff, .sessions-center) {
+html.phone-window .pg-split-detail > :is(.messages-detail, .runlog-result, .compare-pane, .diff-pane, .sessions-center) {
   flex: 1;
   min-height: 0;
 }
-html.phone-window .pg-split-detail > .git-diff {
+html.phone-window .pg-split-detail > .diff-pane {
   background: var(--bg);
 }
 /* A list's rows (components/DataTable.tsx), filling the screen. */
@@ -1594,12 +1594,9 @@ html.phone-window[data-platform='ios'] .builder-chat:has(> .phone-composer):not(
   grid-area: 2 / 1;
   z-index: 2;
 }
-/* What the agent is doing is the conversation's last row, as Messages shows its typing bubble, so it scrolls
-   with the messages instead of floating over them. */
+/* Lined up with the messages' text, as Messages lines up its typing bubble. */
 html.phone-window[data-platform='ios'] .chat-scroll > .chat-status {
   padding: 0 4px;
-  border-top: none;
-  background: none;
 }
 html.phone-window[data-platform='ios'] .builder-chat:has(> .phone-composer):not(.overview-chat *)::after {
   content: '';
@@ -1636,7 +1633,7 @@ html.phone-window[data-platform='ios'] .phone-plus-menu button:active:not(:disab
 html.phone-window .session-sub.error-text {
   color: var(--pg-red);
 }
-html.phone-window .chat-status.chat-working {
+html.phone-window .builder-chat > .chat-status {
   padding: 2px 14px 6px;
 }
 /* The commands and skills "/" lists: a floating card above the field, as an iOS suggestion list draws
@@ -1944,7 +1941,7 @@ html.phone-window .send-sessions-text,
 html.phone-window .inline-field .input-suffix input,
 html.phone-window .json-editor,
 html.phone-window .chat-find input,
-html.phone-window .addon-search input {
+html.phone-window .search-box input {
   font-size: calc(16 * var(--u));
   background: var(--pg-cell);
   color: var(--pg-label);
@@ -2422,15 +2419,11 @@ html.phone-window .addon-prop-actions .addon-reveal {
   flex: 1;
   margin: 0;
 }
-/* An addon's own sections; a list's rows (.pg-group) line up with the fields. */
-html.phone-window[data-platform='android'] .addon-screen section:not(.pg-group) {
-  margin-inline: 16px;
-}
-html.phone-window .addon-search input {
+html.phone-window .search-box input {
   min-height: 44px;
 }
 /* A pane window's search: a bottom toolbar of its own, which the keyboard pushes up with the page. */
-html.phone-window .addon-search-bar {
+html.phone-window .search-box-bar {
   flex: none;
   padding: 8px 16px calc(8px + var(--looper-safe-bottom, 0px));
   background: var(--pg-bg);
@@ -2465,12 +2458,12 @@ html.phone-window[data-platform='ios'] .phone-main:not(.pushed) > .phone-screen 
 html.phone-window:not(.tablet)[data-platform='ios'] .phone-main:has(> .phone-screen > .pg-search)::after {
   height: calc(var(--tabbar-h) + 48px + 8px + 16px);
 }
-html.phone-window .addon-search {
+html.phone-window .search-box {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-html.phone-window .addon-search-field {
+html.phone-window .search-box-field {
   position: relative;
   display: flex;
   flex: 1;
@@ -2478,7 +2471,7 @@ html.phone-window .addon-search-field {
 }
 /* An iPhone's Cancel: a 44 pt glass circle with an xmark (ios.md, Navigation bar), 48 beside a field at the
    bottom. An iPad has none (UIKit ignores showsCancelButton there). */
-html.phone-window .addon-search-cancel {
+html.phone-window .search-box-cancel {
   flex: none;
   display: flex;
   align-items: center;
@@ -2494,18 +2487,18 @@ html.phone-window .addon-search-cancel {
   box-shadow: var(--pg-glass-edge), var(--pg-glass-shadow);
   color: var(--pg-label);
 }
-html.phone-window .phone-main > .phone-screen > .pg-search .addon-search-cancel {
+html.phone-window .phone-main > .phone-screen > .pg-search .search-box-cancel {
   width: 48px;
   height: 48px;
   border-radius: 24px;
 }
-html.phone-window.tablet .addon-search-cancel {
+html.phone-window.tablet .search-box-cancel {
   display: none;
 }
 /* iOS's search field (ios.md, kit: _Search): a Small glass capsule, 44 high under a bar and 48 at the bottom,
    the magnifier in label on glass, 17 pt medium text, the placeholder in placeholder on glass, 11 in on the
    left and 10 on the right. */
-html.phone-window[data-platform='ios'] .addon-search input {
+html.phone-window[data-platform='ios'] .search-box input {
   flex: 1;
   min-width: 0;
   min-height: 44px;
@@ -2520,25 +2513,25 @@ html.phone-window[data-platform='ios'] .addon-search input {
   font-size: calc(17 * var(--u));
   font-weight: 500;
 }
-html.phone-window[data-platform='ios'] :is(.addon-search-bar, .phone-main > .phone-screen > .pg-search) .addon-search input {
+html.phone-window[data-platform='ios'] :is(.search-box-bar, .phone-main > .phone-screen > .pg-search) .search-box input {
   min-height: 48px;
   border-radius: 24px;
 }
-html.phone-window[data-platform='ios'] .addon-search input:focus {
+html.phone-window[data-platform='ios'] .search-box input:focus {
   outline: none;
 }
-html.phone-window[data-platform='ios'] .addon-search input::placeholder {
+html.phone-window[data-platform='ios'] .search-box input::placeholder {
   font-style: normal;
   color: var(--ios-glass-placeholder);
 }
-html.phone-window[data-platform='ios'] .addon-search-icon {
+html.phone-window[data-platform='ios'] .search-box-icon {
   left: 11px;
   right: auto;
   width: 17px;
   height: 17px;
   color: var(--pg-label);
 }
-html.phone-window[data-platform='ios'] .addon-search .addon-search-clear {
+html.phone-window[data-platform='ios'] .search-box .search-box-clear {
   right: 10px;
   width: 22px;
   height: 22px;
@@ -2549,7 +2542,7 @@ html.phone-window[data-platform='ios'] .addon-search .addon-search-clear {
 /* Material's search bar (md.comp.search-bar): 56 high and fully round on surface container high, no shadow,
    the 24 dp leading icon in on-surface 16 dp in and 16 dp from the text, body large text, the hint and the
    trailing icon in on-surface variant. */
-html.phone-window[data-platform='android'] .addon-search input {
+html.phone-window[data-platform='android'] .search-box input {
   flex: 1;
   min-width: 0;
   min-height: 56px;
@@ -2560,33 +2553,33 @@ html.phone-window[data-platform='android'] .addon-search input {
   color: var(--pg-label);
   font-size: calc(16 * var(--u));
 }
-html.phone-window[data-platform='android'] .addon-search input:focus {
+html.phone-window[data-platform='android'] .search-box input:focus {
   outline: none;
 }
-html.phone-window[data-platform='android'] .addon-search input::placeholder {
+html.phone-window[data-platform='android'] .search-box input::placeholder {
   font-style: normal;
   color: var(--pg-label-2);
 }
-html.phone-window[data-platform='android'] .addon-search-icon {
+html.phone-window[data-platform='android'] .search-box-icon {
   left: 16px;
   right: auto;
   width: 24px;
   height: 24px;
   color: var(--pg-label);
 }
-html.phone-window[data-platform='android'] .addon-search .addon-search-clear {
+html.phone-window[data-platform='android'] .search-box .search-box-clear {
   right: 4px;
   width: 48px;
   height: 48px;
   border-radius: 24px;
   color: var(--pg-label-2);
 }
-html.phone-window[data-platform='android'] .addon-search .addon-search-clear svg {
+html.phone-window[data-platform='android'] .search-box .search-box-clear svg {
   width: 14px;
   height: 14px;
 }
 /* A 22 pt button, a 44 pt target. */
-html.phone-window[data-platform='ios'] .addon-search .addon-search-clear::after {
+html.phone-window[data-platform='ios'] .search-box .search-box-clear::after {
   content: '';
   position: absolute;
   inset: -11px;
@@ -3404,8 +3397,8 @@ html.phone-window[data-platform='ios'] details[open] > :not(summary) {
 }
 
 /* A checklist on Android: Material's check boxes, not the switches a single check box is. */
-html.phone-window[data-platform='android'] .addon-checklist .checkbox-field input[type='checkbox'],
-html.phone-window[data-platform='android'] .addon-checklist .checkbox-field input[type='checkbox']:checked {
+html.phone-window[data-platform='android'] .checkbox-group .checkbox-field input[type='checkbox'],
+html.phone-window[data-platform='android'] .checkbox-group .checkbox-field input[type='checkbox']:checked {
   -webkit-appearance: auto;
   appearance: auto;
   width: 18px;
@@ -3415,27 +3408,97 @@ html.phone-window[data-platform='android'] .addon-checklist .checkbox-field inpu
   background: none;
   accent-color: var(--pg-tint);
 }
-html.phone-window[data-platform='android'] .addon-checklist .checkbox-field input[type='checkbox']::after {
+html.phone-window[data-platform='android'] .checkbox-group .checkbox-field input[type='checkbox']::after {
   content: none;
 }
 html.phone-window .addon-fill-part {
   padding: 0 16px;
 }
 /* An Android checklist row's description sits right under its label, as a two-line list item's does. */
-html.phone-window[data-platform='android'] .addon-checklist .checkbox-with-note > .checkbox-field {
+html.phone-window[data-platform='android'] .checkbox-group .checkbox-with-note > .checkbox-field {
   min-height: 0;
   margin-bottom: 0;
   padding-top: 12px;
 }
-html.phone-window[data-platform='android'] .addon-checklist .checkbox-with-note > .checkbox-note {
+html.phone-window[data-platform='android'] .checkbox-group .checkbox-with-note > .checkbox-note {
   margin: 2px 0 8px;
   color: var(--pg-label-2);
 }
 /* A phone's page scrolls, so the rows are part of it instead of a box of their own. */
-html.phone-window .addon-checklist-box {
+html.phone-window .checkbox-group-box {
   max-height: none;
   overflow: visible;
   padding: 0;
   border: none;
   background: none;
+}
+
+/*
+ * A problem with what's in a field, as each system shows one: iOS, a footnote in its red under the field and no
+ * symbol (it has no inline error symbol); Android, Material's error state: the field's outline and the supporting
+ * text under it in the error color.
+ */
+html.phone-window .field-error > .status-glyph {
+  display: none;
+}
+html.phone-window .field-error {
+  margin: 6px 0 0;
+  color: var(--pg-red);
+  font-size: calc(13 * var(--u));
+  line-height: calc(18 * var(--u));
+}
+html.phone-window[data-platform='ios'] .form-group .field > .field-error {
+  flex: 0 0 100%;
+  margin: 0;
+}
+html.phone-window[data-platform='android'] .field-error {
+  margin: 4px 0 0;
+  padding: 0 16px;
+  font-size: calc(12 * var(--u));
+  line-height: calc(16 * var(--u));
+}
+html.phone-window[data-platform='android'] .field :is(input, select, textarea)[aria-invalid='true'],
+html.phone-window[data-platform='android'] .field :is(input, select, textarea)[aria-invalid='true']:focus {
+  border-color: var(--pg-red);
+}
+
+/*
+ * A problem in place of the content (EmptyState with a level), as iOS's ContentUnavailableView and Android's empty
+ * states draw one: centered, the system's symbol large, the line under it, and the fix as a button under that.
+ */
+html.phone-window .empty-state-problem {
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+html.phone-window .empty-state-problem > .status-glyph {
+  width: 44px;
+  height: 44px;
+  margin: 0;
+}
+html.phone-window .empty-state-problem > .status-glyph .status-glyph-symbol {
+  fill: var(--pg-label-2);
+}
+html.phone-window .empty-state-text {
+  align-items: center;
+  gap: 4px;
+  max-width: 320px;
+}
+html.phone-window .empty-state-body {
+  color: var(--pg-label-2);
+  font-size: calc(15 * var(--u));
+  line-height: calc(20 * var(--u));
+}
+/* Without a title, its one line is the title. */
+html.phone-window .empty-state-text > .empty-state-body:only-child {
+  color: var(--pg-label);
+  font-size: calc(17 * var(--u));
+  line-height: calc(22 * var(--u));
+  font-weight: 600;
+}
+html.phone-window .empty-state-problem + .empty-state-action {
+  margin: 16px 0 0;
+  display: flex;
+  justify-content: center;
 }

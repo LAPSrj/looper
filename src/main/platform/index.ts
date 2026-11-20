@@ -22,7 +22,7 @@ export { RemoteClients } from './clients';
 export { RemoteWindow, type AppWindow, type AppWebContents } from './remote-window';
 export { WindowSlots, clientKey, clientKeyOf, ofCaller, DESKTOP } from './slots';
 export { useWindowPlaces, placeAs } from './window-places';
-export { isMenuLevelWindow, menuLevelInput, menuLevelLayout, showMenuPopups, useMenuPopupPage, type MenuLevelLayout, type MenuPopupState } from './menu-popups';
+export { holdMenuMouse, isMenuLevelWindow, menuLevelInput, menuLevelLayout, showMenuPopups, useMenuPopupPage, type MenuLevelLayout, type MenuMouseRect, type MenuPopupState } from './menu-popups';
 
 /** Every IPC handler and listener goes through this, so remote clients reach them too. */
 export const ipc = new IpcTable(ipcMain as unknown as IpcMainLike);

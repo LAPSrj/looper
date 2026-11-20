@@ -35,7 +35,8 @@ import { DEFAULT_SHOWN } from '../../useSessionsWindow';
 import type { MoreMenuInput } from '../../web/more-menu';
 import type { PageNavAction } from '../../web/nav-bar-model';
 import { NavBar } from '../NavBar';
-import { AddonPaneList, AddonSearchBox, addonSearch, showPaneItemMenu, showPaneMenu, shownItems } from '../AddonPane';
+import { AddonNotRunning, AddonPaneList, addonSearch, showPaneItemMenu, showPaneMenu, shownItems } from '../AddonPane';
+import { SearchBox } from '../SearchBox';
 import { AddonScreenView, type AddonScreenReport } from '../AddonScreen';
 import { phoneNav, popupCommands } from '../command-surfaces';
 import { setRowMenuContext, showProjectMenu, showTaskMenu } from '../row-menus';
@@ -371,7 +372,7 @@ function screenFor(
         <div
           className="phone-detail"
           onContextMenu={(e) => {
-            if ((e.target as HTMLElement).closest('.pg-row, .run-row, .git-file, .git-commit')) return;
+            if ((e.target as HTMLElement).closest('.pg-row, .run-row, .detail-row, .git-commit')) return;
             e.preventDefault();
             showProjectMenu(project);
           }}
@@ -617,13 +618,21 @@ function MoreView({ m, c, allTabs }: { m: MainWindow; c: CommandContext; allTabs
 function PhoneAddonPanes({ m, c, addonId }: { m: MainWindow; c: CommandContext; addonId: string }) {
   const addon = m.addons.find((a) => a.id === addonId);
   if (!addon) return <div className="pg-scroll" />;
+  // An addon that isn't running has no list: its state fills the screen, as on the desktop.
+  if (addon.status !== 'running') {
+    return (
+      <div className="pg-scroll">
+        <AddonNotRunning addon={addon} />
+      </div>
+    );
+  }
   const search = addonSearch(addon, m.addonPanes);
   const query = m.addonQueries[addon.id] ?? '';
   return (
     <>
       {search && (
         <div className="pg-search">
-          <AddonSearchBox value={query} onChange={(q) => m.setAddonQuery(addon.id, q)} placeholder={search.prompt} />
+          <SearchBox value={query} onChange={(q) => m.setAddonQuery(addon.id, q)} placeholder={search.prompt} />
         </div>
       )}
       <div className={`pg-scroll${search ? ' has-search' : ''}`}>

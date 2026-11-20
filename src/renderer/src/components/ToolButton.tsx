@@ -46,6 +46,7 @@ export function ToolButton({
  * A toolbar split button: the icon does the command in the current place, the
  * arrow beside it opens a list of places. With no current place, the icon
  * opens the list too. `onMenu` gets where the list goes, under the button.
+ * `labeled` shows the title beside the icon, as ToolButton's does.
  */
 export function SplitToolButton({
   icon,
@@ -54,11 +55,13 @@ export function SplitToolButton({
   enabled,
   onClick,
   onMenu,
+  labeled,
 }: {
   icon: React.ReactNode;
   title: string;
   menuTitle: string;
   enabled: boolean;
+  labeled?: boolean;
   /** Null: there's no current place, so the icon opens the list. */
   onClick: (() => void) | null;
   onMenu: (x: number, y: number) => void;
@@ -69,8 +72,15 @@ export function SplitToolButton({
   };
   return (
     <span className="split-button">
-      <button title={title} aria-label={title} disabled={!enabled} onClick={(e) => (onClick ? onClick() : menuAt(e.currentTarget))}>
+      <button
+        className={labeled ? 'labeled' : undefined}
+        title={labeled ? undefined : title}
+        aria-label={labeled ? undefined : title}
+        disabled={!enabled}
+        onClick={(e) => (onClick ? onClick() : menuAt(e.currentTarget))}
+      >
         <Icon>{icon}</Icon>
+        {labeled && title}
       </button>
       <button className="split-arrow" title={menuTitle} aria-label={menuTitle} aria-haspopup="menu" disabled={!enabled} onClick={(e) => menuAt(e.currentTarget)}>
         {MENU_ARROW}

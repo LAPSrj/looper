@@ -3702,6 +3702,19 @@
    "err": "Error invoking remote method 'commands:menuPopups': Error: boom commands:menuPopups"
   }
  },
+ "commands.menuMouse": {
+  "arity": 1,
+  "calls": [
+   [
+    "send",
+    "commands:menuMouse",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {}
+ },
  "commands.menuLevelLayout": {
   "arity": 2,
   "calls": [

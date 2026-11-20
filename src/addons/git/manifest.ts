@@ -32,7 +32,17 @@ export const MANIFEST = {
     { id: 'push', label: '&Push', icon: 'library:arrow-up-from-line', menu: 'tools', group: 'remote', in: onRepo() },
     { id: 'sync', label: '&Sync', icon: 'library:arrow-down-up', menu: 'tools', group: 'remote', in: onRepo(true) },
     { id: 'fetch', label: '&Fetch', icon: 'library:cloud-download', menu: 'tools', group: 'remote', in: onRepo() },
-    { id: 'branches', label: 'B&ranches…', icon: 'library:git-fork', menu: 'tools', group: 'repo', in: onRepo() },
+    // A drop-down named after the current branch: its branches to switch to, then the Branches window (the state's `entries`).
+    {
+      id: 'branch',
+      label: '&Branch',
+      icon: 'library:git-branch',
+      labeled: true,
+      menu: 'tools',
+      group: 'branch',
+      entries: [{ id: 'branches', label: '&Branches…' }],
+      in: onRepo(true),
+    },
     { id: 'repo-settings', label: 'Repositor&y Settings…', icon: 'library:folder-cog', menu: 'tools', group: 'repo', in: onRepo() },
     { id: 'init', label: 'Create Rep&ository', icon: 'library:folder-git', menu: 'tools', group: 'repo', in: onRepo() },
     { id: 'settings', label: 'Git Setti&ngs…', icon: 'settings', menu: 'tools', group: 'settings', in: { app: {}, panes: { toolbar: true } } },
@@ -40,4 +50,4 @@ export const MANIFEST = {
 } satisfies Omit<AddonManifest, 'tabs' | 'icons' | 'toolCalls'>;
 
 /** The commands that act on a project's repository, which each item, project tab and screen says how they are. */
-export type RepoCommand = 'commit' | 'pull' | 'push' | 'sync' | 'fetch' | 'branches' | 'repo-settings' | 'init';
+export type RepoCommand = 'commit' | 'pull' | 'push' | 'sync' | 'fetch' | 'branch' | 'repo-settings' | 'init';

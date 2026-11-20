@@ -289,6 +289,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       pickContextMenu: (menuId, id, checked) => t.send('commands:contextMenuPick', menuId, id, checked),
       dismissContextMenu: (menuId) => t.send('commands:contextMenuDismiss', menuId),
       menuPopups: (state) => t.invoke('commands:menuPopups', state),
+      menuMouse: (live) => t.send('commands:menuMouse', live),
       menuLevelLayout: (depth, layout) => t.send('commands:menuLevelLayout', depth, layout),
       menuLevelInput: (depth, index, kind) => t.send('commands:menuLevelInput', depth, index, kind),
       openWindows: () => t.invoke('commands:openWindows'),

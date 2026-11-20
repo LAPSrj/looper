@@ -138,6 +138,8 @@ export interface AddonContext {
     run(command: string, confirm?: string): void;
     /** It shows passwords or other secrets: what they are, whether they show, and Show's toggle. */
     secrets?: { label: string; shown: boolean; toggle(): void };
+    /** What the window's status bar says while it's the main window's screen. */
+    status?: string[];
   };
   /** One of its panes can be searched: what the window's Search box holds, and Filter's way to it. */
   search?: { query: string; open(): void };

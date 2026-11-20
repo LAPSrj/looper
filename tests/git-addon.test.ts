@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { commandStates } from '../src/addons/git/addon';
 import { MANIFEST } from '../src/addons/git/manifest';
-import { badFolderName, itemId, joinSidePath, nameFromUrl, needsIdentity, pathRowId, repoDescription, toSidePath } from '../src/addons/git/text';
+import { badFolderName, branchEntryId, branchOfEntry, itemId, joinSidePath, nameFromUrl, needsIdentity, pathRowId, repoDescription, toSidePath } from '../src/addons/git/text';
 import { AddonCommandStateSchema, readAddonManifest } from '../src/shared/addons';
 import type { GitStatus } from '../src/shared/git';
 
@@ -16,7 +16,7 @@ describe('the Git addon manifest', () => {
 
   it("names every command the item, project tab and screen states set", () => {
     const ids = new Set(MANIFEST.commands.map((c) => c.id));
-    for (const s of [commandStates({ repo: false }), commandStates({ repo: false, missing: 'git' }), commandStates({ repo: true, remotes: [], ...status() })]) {
+    for (const s of [commandStates({ repo: false }), commandStates({ repo: false, missing: 'git' }), commandStates({ repo: true, remotes: [], branches: ['main'], ...status() })]) {
       for (const [id, state] of Object.entries(s)) {
         expect(ids.has(id), id).toBe(true);
         expect(AddonCommandStateSchema.safeParse(state).success).toBe(true);
@@ -29,28 +29,43 @@ describe('command states', () => {
   it('shows only Create Repository for a folder that is not a repository', () => {
     const s = commandStates({ repo: false });
     expect(s.init).toMatchObject({ hidden: false, enabled: true });
-    for (const id of ['commit', 'pull', 'push', 'sync', 'fetch', 'branches', 'repo-settings']) expect(s[id]).toEqual({ hidden: true });
+    for (const id of ['commit', 'pull', 'push', 'sync', 'fetch', 'branch', 'repo-settings']) expect(s[id]).toEqual({ hidden: true });
   });
 
   it('hides every command, Create Repository too, without git or without the folder', () => {
     for (const missing of ['git', 'folder'] as const) {
       const s = commandStates({ repo: false, missing });
-      for (const id of ['commit', 'pull', 'push', 'sync', 'fetch', 'branches', 'repo-settings', 'init']) expect(s[id], id).toEqual({ hidden: true });
+      for (const id of ['commit', 'pull', 'push', 'sync', 'fetch', 'branch', 'repo-settings', 'init']) expect(s[id], id).toEqual({ hidden: true });
     }
   });
 
   it('turns off Commit without changes and the remote commands without a remote', () => {
-    const s = commandStates({ repo: true, remotes: [], ...status() });
+    const s = commandStates({ repo: true, remotes: [], branches: ['main'], ...status() });
     expect(s.init).toEqual({ hidden: true });
     expect(s.commit.enabled).toBe(false);
     expect(s.push.enabled).toBe(false);
     expect(s.sync.enabled).toBe(false);
-    expect(s.branches.enabled).toBe(true);
+    expect(s.branch).toMatchObject({ enabled: true, label: '&Branch: main' });
     expect(s['repo-settings']).toEqual({ hidden: false, enabled: true });
-    const ready = commandStates({ repo: true, remotes: [{ name: 'origin', url: 'u' }], ...status({ changes: [change('a')] }) });
+    const ready = commandStates({ repo: true, remotes: [{ name: 'origin', url: 'u' }], branches: ['main'], ...status({ changes: [change('a')] }) });
     expect(ready.commit.enabled).toBe(true);
     expect(ready.push.enabled).toBe(true);
     expect(ready.sync.enabled).toBe(true);
+  });
+});
+
+describe('the branch menu', () => {
+  it('lists the branches to switch to, the current one checked, then the Branches window', () => {
+    const s = commandStates({ repo: true, remotes: [], branches: ['feature/a&b', 'main'], ...status() });
+    expect(s.branch.label).toBe('&Branch: main');
+    expect(s.branch.entries).toEqual([
+      { id: branchEntryId('feature/a&b'), label: 'feature/a&&b', check: 'radio', checked: false },
+      { id: branchEntryId('main'), label: 'main', check: 'radio', checked: true },
+      { separator: true },
+      { id: 'branches', label: '&Branches…' },
+    ]);
+    expect(branchOfEntry(branchEntryId('feature/a&b'))).toBe('feature/a&b');
+    expect(branchOfEntry('branches')).toBeUndefined();
   });
 });
 

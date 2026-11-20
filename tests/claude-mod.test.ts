@@ -169,18 +169,37 @@ describe('the mod', () => {
     // One the turn goes on past isn't an error.
     await append('response', synthetic, { type: 'assistant', role: 'assistant', content: text('No response requested.') }); // u14
     await append('prompt', { kind: 'composer' }, { type: 'user', role: 'user', content: text('next') }); // u15
-    // Each file's name ends in its row's id, which the session step's sweep reads.
+    // A Code Mode script's call whose maker the mod can't read goes over as Claude Code copies it in, once the script has ended.
+    await hooks['tool.call']($, { tool: 'Bash', tool_use_id: 'repl_1', command: 'ls' }, async () => ({ result: { stdout: 'a.txt' }, text: 'a.txt' }));
+    await append('response', synthetic, { type: 'assistant', role: 'assistant', content: [{ type: 'tool_use', id: 'repl_1', name: 'Bash', input: { command: 'ls' } }] }); // u16
+    await append('tool-result', { kind: 'tool', tool: 'Bash' }, { type: 'user', role: 'user', content: [{ type: 'tool_result', tool_use_id: 'repl_1', content: '' }] }); // u17
+    // One Claude Code raised for a script goes over as it starts and as it ends, and Claude Code's copies of it don't.
+    const engine = <F extends object>(f: F) => Object.assign(f, { origin: { plugin: 'engine', tier: 'core' } });
+    await hooks['tool.call']($, { tool: 'Read', tool_use_id: 'repl_2', file_path: 'b.txt' }, engine(async () => ({ result: { type: 'text', file: { content: 'B' } }, text: 'B' })));
+    await append('response', synthetic, { type: 'assistant', role: 'assistant', content: [{ type: 'tool_use', id: 'repl_2', name: 'Read', input: { file_path: 'b.txt' } }] }); // u18
+    await append('tool-result', { kind: 'tool', tool: 'Read' }, { type: 'user', role: 'user', content: [{ type: 'tool_result', tool_use_id: 'repl_2', content: '' }] }); // u19
+    await hooks['tool.call']($, { tool: 'Bash', tool_use_id: 'repl_3', command: 'false' }, engine(async () => ({ isError: true, result: 'exit 1', text: 'exit 1' })));
+    // Each file's name ends in its row's id, or its call's, which the session step's sweep reads.
     const read = () =>
       fs.existsSync(live)
         ? fs.readdirSync(live).sort().map((f) => {
             const row = JSON.parse(fs.readFileSync(path.join(live, f), 'utf8'));
-            expect(f).toMatch(new RegExp(`^\\d+-\\d{9}-${row.uuid}\\.json$`));
+            const call = row.message?.content?.[0]?.id ?? row.message?.content?.[0]?.tool_use_id;
+            expect(f).toMatch(new RegExp(row.uuid ? `^\\d+-\\d{9}-${row.uuid}\\.json$` : `^\\d+-\\d{9}-call-${call}\\.json$`));
             return row;
           })
         : [];
-    for (let i = 0; i < 100 && read().length < 12; i++) await new Promise((r) => setTimeout(r, 20));
-    const rows = read();
-    expect(rows.map((r) => r.uuid)).toEqual(['u1', 'u2', 'u3', 'u4', 'u5', 'u9', 'u10', 'u11', 'u12', 'u13', 'u14', 'u15']);
+    for (let i = 0; i < 100 && read().length < 18; i++) await new Promise((r) => setTimeout(r, 20));
+    const all = read();
+    const rows = all.filter((r) => r.uuid);
+    expect(rows.map((r) => r.uuid)).toEqual(['u1', 'u2', 'u3', 'u4', 'u5', 'u9', 'u10', 'u11', 'u12', 'u13', 'u14', 'u15', 'u16', 'u17']);
+    expect(all.filter((r) => !r.uuid)).toEqual([
+      expect.objectContaining({ type: 'assistant', isVirtual: true, liveScriptCall: true, message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'tool_use', id: 'repl_2', name: 'Read', input: { file_path: 'b.txt' } }] } }),
+      expect.objectContaining({ type: 'user', isVirtual: true, toolUseResult: { type: 'text', file: { content: 'B' } }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'repl_2', content: '', is_error: false }] } }),
+      expect.objectContaining({ type: 'assistant', message: expect.objectContaining({ content: [{ type: 'tool_use', id: 'repl_3', name: 'Bash', input: { command: 'false' } }] }) }),
+      expect.objectContaining({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'repl_3', content: 'exit 1', is_error: true }] } }),
+    ]);
+    expect(all.at(-1).toolUseResult).toBeUndefined();
     const by = Object.fromEntries(rows.map((r) => [r.uuid, r]));
     expect(by.u1).toMatchObject({ type: 'user', isSidechain: false, message: { role: 'user', content: text('hi') } });
     expect(by.u3).toMatchObject({ type: 'assistant', message: { role: 'assistant', model: 'claude-x', content: [{ type: 'tool_use', id: 't1' }] } });
@@ -194,6 +213,11 @@ describe('the mod', () => {
     expect(by.u12.isApiErrorMessage).toBe(true);
     expect(by.u14.isApiErrorMessage).toBeUndefined();
     expect(by.u14.message.id).not.toBe(by.u12.message.id);
+    // The script's call is marked as the transcript marks it, so it goes under the REPL call; the model's own aren't.
+    expect(by.u16).toMatchObject({ isVirtual: true, message: { content: [{ type: 'tool_use', id: 'repl_1' }] } });
+    expect(by.u17).toMatchObject({ isVirtual: true, toolUseResult: { stdout: 'a.txt' } });
+    expect(by.u3.isVirtual).toBeUndefined();
+    expect(by.u4.isVirtual).toBeUndefined();
   });
 
   it("hands over a Stop hook's feedback, and a prompt typed mid-turn as typed", async () => {

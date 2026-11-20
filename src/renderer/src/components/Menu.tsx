@@ -87,6 +87,30 @@ function Win32Menu({ items, place, onPick, onClose, popup, keys, isMac = false }
   return <Win32Popup items={items} at={at} isMac={isMac} popup={!!popup} onPick={onPick} onClose={onClose} />;
 }
 
+/** As with Win32's menus, a press outside the open menu closes it and still reaches what's under the pointer. */
+export function useCloseOnPressOutside(close: () => void): void {
+  const latest = useRef(close);
+  latest.current = close;
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      if (!(e.target instanceof Element && e.target.closest('.ws-menu'))) latest.current();
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    return () => window.removeEventListener('pointerdown', onDown, true);
+  }, []);
+}
+
+/** As under Win32's menus, the wheel doesn't scroll the page while a menu is open (Electron's before-mouse-event doesn't see it). */
+export function useHoldWheel(): void {
+  useEffect(() => {
+    const hold = (e: WheelEvent) => {
+      if (!(e.target instanceof Element && e.target.closest('.ws-menu'))) e.preventDefault();
+    };
+    window.addEventListener('wheel', hold, { capture: true, passive: false });
+    return () => window.removeEventListener('wheel', hold, { capture: true });
+  }, []);
+}
+
 /** A menu of its own (a context menu the computer popped up): it takes the keys, and a click outside closes it. */
 function Win32Popup({ items, at, isMac, popup, onPick, onClose }: { items: MenuItemSpec[]; at: { x: number; y: number }; isMac: boolean; popup: boolean; onPick?: (item: MenuItemSpec) => void; onClose?: () => void }) {
   const box = useRef<HTMLDivElement>(null);
@@ -99,10 +123,11 @@ function Win32Popup({ items, at, isMac, popup, onPick, onClose }: { items: MenuI
   });
   useLayoutEffect(() => menu.open(items, false), [items]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => box.current?.focus(), []);
+  useCloseOnPressOutside(() => onClose?.());
+  useHoldWheel();
   return createPortal(
     <div
       className="ws-catcher"
-      onPointerDown={() => onClose?.()}
       onContextMenu={(e) => {
         e.preventDefault();
         onClose?.();

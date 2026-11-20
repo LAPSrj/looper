@@ -461,6 +461,21 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
           <MessageBody text={row.text} />
         </Disclosure>
       );
+    case 'peer':
+      // A message another Claude Code session sent the agent: that session's words, not the user's.
+      return (
+        <Disclosure
+          className="chat-aside"
+          onContextMenu={onContextMenu}
+          summary={
+            <summary>
+              Message from {row.from ?? 'another session'} <span className="chat-tool-preview">{row.preview}</span>
+            </summary>
+          }
+        >
+          <MessageBody text={row.text} />
+        </Disclosure>
+      );
     case 'error':
       return (
         <div className="chat-msg chat-agent error-text" onContextMenu={onContextMenu}>
@@ -550,7 +565,7 @@ function ScriptCalls({ calls, toolUseId, ctx }: { calls: NonNullable<MessageRow[
         </summary>
       }
     >
-      <ScriptCallBox toolUseId={toolUseId} count={calls.count} ctx={ctx} className="chat-tools-list chat-script-list">
+      <ScriptCallBox toolUseId={toolUseId} count={calls.count} running={calls.running} ctx={ctx} className="chat-tools-list chat-script-list">
         {(rows) => rows.map((r) => <ChatRow key={r.id} row={r} ctx={ctx} />)}
       </ScriptCallBox>
     </Disclosure>
@@ -560,12 +575,14 @@ function ScriptCalls({ calls, toolUseId, ctx }: { calls: NonNullable<MessageRow[
 /**
  * A script's calls in a box of their own (`className` scrolls it), which opens at its end: read from the engine a page
  * at a time, the newest first, and the ones before as the box's top comes near, keeping the reader where they are. A
- * box too short to scroll reads more until it's full. The list is read again as the script's count grows. `children`
+ * box too short to scroll reads more until it's full. The list reads the calls the script makes next, and again the ones
+ * that were running when it read them, as the script's counts change. `children`
  * draws the calls read so far, the first being the script's `start`th.
  */
 export function ScriptCallBox({
   toolUseId,
   count,
+  running,
   ctx,
   agentId,
   className,
@@ -573,6 +590,8 @@ export function ScriptCallBox({
 }: {
   toolUseId: string;
   count: number;
+  /** How many of its calls are still running (row.calls.running). */
+  running?: number;
   ctx: RowCtx;
   agentId?: string;
   className: string;
@@ -589,21 +608,30 @@ export function ScriptCallBox({
 
   useEffect(() => {
     let live = true;
-    const end = list && list !== 'gone' ? list.start + list.rows.length : 0;
-    if (list === 'gone' || (list && end >= count) || busy.current) return;
+    if (list === 'gone' || busy.current) return;
+    // From the first call that was running when it was read, or else the calls made since.
+    const open = list ? list.rows.findIndex((r) => r.result === undefined) : -1;
+    const from = !list ? 0 : open === -1 ? list.start + list.rows.length : list.start + open;
+    if (list && from >= count) return;
     busy.current = true;
-    void read(list ? count : null, list ? Math.min(count - end, 200) : SCRIPT_CALLS_PAGE).then((page) => {
+    void read(list ? count : null, list ? Math.min(count - from, 200) : SCRIPT_CALLS_PAGE).then((page) => {
       busy.current = false;
       if (!live) return;
       if (!page) setList((l) => l ?? 'gone');
-      else setList((l) => (l && l !== 'gone' ? { start: l.start, rows: [...l.rows, ...page.rows.slice(Math.max(0, l.start + l.rows.length - page.start))] } : { start: page.start, rows: page.rows }));
+      else
+        setList((l) =>
+          // The page replaces the calls it holds; one that starts past the list's end starts the list over.
+          l && l !== 'gone' && page.start <= l.start + l.rows.length
+            ? { start: l.start, rows: [...l.rows.slice(0, Math.max(0, page.start - l.start)), ...page.rows.slice(Math.max(0, l.start - page.start))] }
+            : { start: page.start, rows: page.rows },
+        );
     });
     return () => {
       live = false;
       busy.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [count, list === null, list === 'gone']);
+  }, [count, running, list === null, list === 'gone']);
 
   const older = () => {
     if (busy.current || !list || list === 'gone' || list.start === 0) return;
