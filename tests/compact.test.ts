@@ -192,30 +192,16 @@ describe('compactedText', () => {
 });
 
 describe('the transcript accumulators', () => {
-  it('keep a compact copy of every message past the row limit', () => {
+  it('keep every message of a long conversation for compaction', () => {
     const acc = new TranscriptAccumulator();
     for (let i = 0; i < 700; i++) {
       acc.addLine(JSON.stringify({ type: 'user', message: { role: 'user', content: `q${i}` } }));
       acc.addLine(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 't' }, { type: 'text', text: `a${i}` }] } }));
     }
-    expect(acc.rows).toHaveLength(1000);
-    const all = compactRows([...acc.evicted, ...acc.rows]);
+    const all = compactRows(acc.rows);
     expect(all).toHaveLength(1400);
     expect(all[0].text).toBe('q0');
     expect(all[1399].text).toBe('a699');
-  });
-
-  it('keep each call past the row limit as a line without its result', () => {
-    const acc = new TranscriptAccumulator();
-    for (let i = 0; i < 600; i++) {
-      acc.addLine(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: `t${i}`, name: 'Bash', input: { command: `echo ${i}` } }] } }));
-      acc.addLine(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: `out ${i}` }] } }));
-      acc.addLine(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: `a${i}` }] } }));
-    }
-    const calls = acc.evicted.filter(isCall);
-    expect(calls).toHaveLength(100);
-    expect(calls[0]).toMatchObject({ text: 'command: echo 0', resultChars: 5 });
-    expect(calls[0].result).toBeUndefined();
   });
 
   it("show a compacted chat's first message without the conversation it carried", () => {
@@ -244,7 +230,7 @@ describe("a compacted chat's run", () => {
     ];
     writeFileSync(transcript, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
     writeFileSync(join(runDir, 'session.json'), JSON.stringify({ session_id: 's2', transcript_path: transcript }));
-    const service = new MessagesService({ getTask: () => undefined, runDir: () => runDir, host: 'linux', settings: SettingsSchema.parse({}), log: new Logger() });
+    const service = new MessagesService({ getTask: () => undefined, runDir: () => runDir, attachment: () => null, host: 'linux', settings: SettingsSchema.parse({}), log: new Logger() });
 
     // The window shows the earlier conversation's messages only.
     const res = await service.read('t1', 'r1');
@@ -281,7 +267,7 @@ describe("a compacted chat's run", () => {
     writeFileSync(file, JSON.stringify([row({ id: 'c0', kind: 'prompt', text: 'q1' }), row({ id: 'c1', kind: 'agent', text: 'a1' })]));
     // The readers take only version 2.
     expect(readCompactedRows(runDir)).toEqual([]);
-    const service = new MessagesService({ getTask: () => undefined, runDir: () => runDir, host: 'linux', settings: SettingsSchema.parse({}), log: new Logger() });
+    const service = new MessagesService({ getTask: () => undefined, runDir: () => runDir, attachment: () => null, host: 'linux', settings: SettingsSchema.parse({}), log: new Logger() });
     const migrated = service.migrateCompacted(Promise.resolve([runDir, plain]));
     // Asked while the migration runs, it answers once the file is version 2.
     expect((await service.compactable('t1', 'r1')).map((r) => [r.text, r.layer])).toEqual([

@@ -4,11 +4,28 @@
 //   node scripts/perf/check.mjs            check
 //   node scripts/perf/check.mjs --update   write budgets.json from this run (after a change that's meant to cost more)
 //   node scripts/perf/check.mjs --only "window: Settings,ios:"   only the screens whose kind and name contain one of these
+//   node scripts/perf/check.mjs --on-battery --energy-saver   measure on battery power or in energy saver, where it stops otherwise
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// Battery power and energy saver slow every frame, so a run in either would be held to budgets set at full speed.
+const POWER_STATUS = `$ProgressPreference = 'SilentlyContinue'
+Add-Type -Namespace Perf -Name Power -MemberDefinition '[StructLayout(LayoutKind.Sequential)] public struct Status { public byte ACLineStatus; public byte BatteryFlag; public byte BatteryLifePercent; public byte SystemStatusFlag; public int BatteryLifeTime; public int BatteryFullLifeTime; } [DllImport("kernel32.dll")] public static extern bool GetSystemPowerStatus(out Status s);'
+$s = New-Object Perf.Power+Status
+[void][Perf.Power]::GetSystemPowerStatus([ref]$s)
+$s | ConvertTo-Json`;
+const power = JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(POWER_STATUS, 'utf16le').toString('base64')], { encoding: 'utf8' }));
+const unconfirmed = [
+  power.ACLineStatus === 0 && !process.argv.includes('--on-battery') && 'on battery power (--on-battery measures it anyway)',
+  power.SystemStatusFlag === 1 && !process.argv.includes('--energy-saver') && 'in energy saver (--energy-saver measures it anyway)',
+].filter(Boolean);
+if (unconfirmed.length) {
+  console.error(`Not measuring, because the computer is ${unconfirmed.join(' and ')}.`);
+  process.exit(2);
+}
 
 process.env.BENCH_ROOT ||= path.join(os.tmpdir(), 'looper-perf-check');
 process.env.BENCH_ADDONS = '1';
@@ -101,7 +118,7 @@ export async function remoteAccessUrl(page) {
     await window.looper.updateSettings({ remoteAccess: { ...s.settings.remoteAccess, enabled: true, sources: ['local'] } });
     for (let i = 0; i < 50; i++) {
       const st = await window.looper.remoteAccess.state();
-      const local = st.status?.sources?.find((x) => x.id === 'local' && x.phase === 'running');
+      const local = st.sources?.find((x) => x.id === 'local' && x.phase === 'running');
       if (local?.url) return local.url.replace(/\/$/, '');
       await new Promise((r) => setTimeout(r, 200));
     }

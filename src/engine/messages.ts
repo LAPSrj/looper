@@ -5,16 +5,20 @@ import {
   delegateText,
   eventsText,
   guidanceText,
+  CHANGE_TOOLS,
+  scriptCallsPage,
   toolImageId,
   type MessageImage,
   type MessageRow,
   type MessagesResult,
   type PatchHunk,
+  type ScriptCalls,
   type SentFiles,
 } from '../shared/messages';
-import { commandAttachment, parseCommands, parseOutputOnly, withOutput } from '../shared/bash-mode';
+import { commandAttachment, parseCommands, parseFileList, parseOutputOnly, withOutput } from '../shared/bash-mode';
+import type { Attachment } from '../shared/chat';
 import { parseTaskNotification, type SlashCommand } from '../shared/sessions';
-import { compactRow, compactRows, proseRows, slimCall, withoutCompacted } from '../shared/compact';
+import { compactRows, proseRows, withoutCompacted } from '../shared/compact';
 import { readCodexLastResponse, readContextTokens, readSubagentStats, type SubagentStats } from './context';
 import { readPendingGuidance } from './guidance';
 import { MOD_FILES } from './claude-mod';
@@ -146,10 +150,10 @@ export class LiveSweep {
   }
 }
 
-/** Oldest rows past this are dropped; a looper run rarely gets near it. */
-const MAX_ROWS = 1000;
 /** Full-text cap per row; transcripts can carry megabyte tool results. */
 const MAX_TEXT = 65_536;
+/** Code Mode: the delivered scripts kept to find whose calls a batch of them is (several can end together). */
+const SETTLED_KEPT = 16;
 const MAX_PREVIEW = 200;
 /** Transcript readers kept warm for polling; least recently used beyond this are dropped. */
 const MAX_READERS = 16;
@@ -205,6 +209,32 @@ function formatToolInput(input: unknown): string {
     parts.push(s.includes('\n') || s.length > 80 ? `${k}:\n${s}` : `${k}: ${s}`);
   }
   return parts.join('\n');
+}
+
+/**
+ * What a Code Mode script's call returned, from its record's toolUseResult (its tool_result is empty, claude
+ * 2.1.329), as the tool's own result reads: a Read's lines numbered from where it started, a command's output, and
+ * any other tool's answer as JSON. An image has no text.
+ */
+export function scriptCallResult(tur: unknown): string {
+  if (typeof tur === 'string') return tur;
+  const t = tur as Rec | null;
+  if (t?.type === 'image') return '';
+  const file = t?.file as Rec | undefined;
+  if (typeof file?.content === 'string') {
+    const start = typeof file.startLine === 'number' ? file.startLine : 1;
+    return file.content
+      .replace(/\n$/, '')
+      .split('\n')
+      .map((line, n) => `${String(start + n).padStart(6)}\t${line}`)
+      .join('\n');
+  }
+  if (typeof t?.stdout === 'string' || typeof t?.stderr === 'string') return [t.stdout, t.stderr].filter((s) => typeof s === 'string' && s).join('\n');
+  try {
+    return JSON.stringify(tur, null, 2) ?? '';
+  } catch {
+    return '';
+  }
 }
 
 /** Text of a tool_result content field: a string, or an array of text blocks.
@@ -415,6 +445,8 @@ export interface AccumulatorOpts {
   source?: 'classifier';
   /** Rows come from an agent session a context restart ended: its number, which prefixes their ids. */
   session?: number;
+  /** Looper's copy of a file the user attached, from the path the agent read it at: the message shows it as an attachment. */
+  attachment?: (agentPath: string) => Attachment | null;
 }
 
 /** Row-id prefix of classifier rows, so a run's merged list never collides. */
@@ -480,9 +512,14 @@ export function skillsListed(text: string): SlashCommand[] {
  */
 export class TranscriptAccumulator {
   rows: MessageRow[] = [];
-  dropped = 0;
-  /** The dropped rows a compacted conversation keeps (compactRow, calls slimmed), oldest first: compaction gets the whole conversation. */
-  evicted: MessageRow[] = [];
+  /** Code Mode: the tool calls each script made, by its REPL call's tool_use id, oldest first; its row counts them (`calls`). */
+  readonly scriptCalls = new Map<string, MessageRow[]>();
+  /** Code Mode: the REPL rows whose results were delivered last, with when each script ended. */
+  private settled: { row: MessageRow; at: string }[] = [];
+  /** Code Mode: the REPL row whose script made each call, by the call's tool_use id, until its result arrives. */
+  private callOwners = new Map<string, MessageRow>();
+  /** Code Mode: the files each script's calls read or changed, by its REPL call's tool_use id. */
+  private scriptFiles = new Map<string, Map<string, { changed: boolean; index: number }>>();
   /** Image payloads by row id; the rows only carry a marker. */
   readonly images = new Map<string, MessageImage>();
   private nextId = 0;
@@ -528,11 +565,13 @@ export class TranscriptAccumulator {
 
   reset(): void {
     this.rows = [];
-    this.dropped = 0;
     this.aiTitle = '';
     this.customTitle = '';
     this.skills.clear();
-    this.evicted = [];
+    this.scriptCalls.clear();
+    this.settled = [];
+    this.callOwners.clear();
+    this.scriptFiles.clear();
     this.nextId = 0;
     this.byToolId.clear();
     this.structuredAnswers.clear();
@@ -646,6 +685,8 @@ export class TranscriptAccumulator {
       }
       return;
     }
+    // A headless turn's end (stream-json): the next reply answers new input, even input the stream doesn't show, such as a cron job's prompt.
+    if (rec.type === 'result') this.turnEnd = undefined;
     if (rec.type !== 'user' && rec.type !== 'assistant') return;
     const msg = rec.message;
     if (msg === null || typeof msg !== 'object') return;
@@ -701,7 +742,14 @@ export class TranscriptAccumulator {
           const row = typeof block.tool_use_id === 'string' ? this.byToolId.get(block.tool_use_id) : undefined;
           if (!row) continue;
           row.result = cap(resultText(block.content), MAX_TEXT);
+          // A Code Mode script's call records what it returned only in the record's toolUseResult.
+          if (!row.result && rec.isVirtual === true && rec.toolUseResult !== undefined) row.result = cap(scriptCallResult(rec.toolUseResult), MAX_TEXT);
           if (block.is_error === true) row.resultError = true;
+          const owner = this.callOwners.get(block.tool_use_id as string);
+          if (owner?.calls) {
+            this.callOwners.delete(block.tool_use_id as string);
+            if (block.is_error === true) owner.calls = { ...owner.calls, failed: owner.calls.failed + 1 };
+          }
           // Code Mode ran the script in the background: its result comes with a later Poll.
           const dispatched = row.tool === 'REPL' ? /^\(dispatched #(\d+)\)$/.exec(row.result.trim()) : null;
           if (dispatched) {
@@ -743,6 +791,7 @@ export class TranscriptAccumulator {
       this.push({ kind: 'error', ts, text });
       return;
     }
+    if (rec.isVirtual === true && this.takeScriptCalls(content as Rec[], ts)) return;
     const messageId = typeof (msg as Rec).id === 'string' ? ((msg as Rec).id as string) : undefined;
     for (const block of content as Rec[]) {
       if (block?.type === 'tool_use' && this.turnEnd?.messageId === messageId) this.turnEnd = undefined;
@@ -758,27 +807,70 @@ export class TranscriptAccumulator {
         const row = this.push({ kind: 'agent', ts, text: structuredOutputText(block.input) });
         if (typeof block.id === 'string' && block.id) this.structuredAnswers.set(block.id, row);
       } else if (block?.type === 'tool_use') {
-        const row = this.push({
-          kind: 'tool',
-          ts,
-          tool: typeof block.name === 'string' ? block.name : 'tool',
-          text: formatToolInput(block.input),
-          preview: toolPreview(block.input),
-        });
-        if (typeof block.id === 'string' && block.id) row.toolUseId = block.id;
-        const input = block.input as Rec | undefined;
-        const file = input?.file_path ?? input?.notebook_path;
-        if (typeof file === 'string' && file.trim()) row.file = file.trim();
-        // The structured input, for custom renders. Oversized inputs fall back to the text form.
-        try {
-          const size = JSON.stringify(block.input)?.length ?? 0;
-          if (size > 0 && size <= MAX_TEXT) row.input = block.input;
-        } catch {
-          /* unserializable input stays text-only */
-        }
-        if (typeof block.id === 'string') this.byToolId.set(block.id, row);
+        this.rows.push(this.toolRow(block, ts));
       }
     }
+  }
+
+  /** A tool call's row, which the tool's result fills in (byToolId). */
+  private toolRow(block: Rec, ts: string | undefined): MessageRow {
+    const row = this.newRow({
+      kind: 'tool',
+      ts,
+      tool: typeof block.name === 'string' ? block.name : 'tool',
+      text: formatToolInput(block.input),
+      preview: toolPreview(block.input),
+    });
+    if (typeof block.id === 'string' && block.id) row.toolUseId = block.id;
+    const input = block.input as Rec | undefined;
+    const file = input?.file_path ?? input?.notebook_path;
+    if (typeof file === 'string' && file.trim()) row.file = file.trim();
+    // The structured input, for custom renders. Oversized inputs fall back to the text form.
+    try {
+      const size = JSON.stringify(block.input)?.length ?? 0;
+      if (size > 0 && size <= MAX_TEXT) row.input = block.input;
+    } catch {
+      /* unserializable input stays text-only */
+    }
+    if (typeof block.id === 'string') this.byToolId.set(block.id, row);
+    return row;
+  }
+
+  /**
+   * Code Mode writes the tool calls a script made (isVirtual records) once the script's result is delivered, each
+   * stamped with when it was written, a few ms after the script ended (claude 2.1.329): they go under the REPL row
+   * whose script ended last before then. False when no delivered script can have made them.
+   */
+  private takeScriptCalls(content: Rec[], ts: string | undefined): boolean {
+    let owner: { row: MessageRow; at: string } | undefined;
+    for (const s of this.settled) if ((ts === undefined || s.at <= ts) && (!owner || s.at >= owner.at)) owner = s;
+    const row = owner?.row;
+    if (!row?.toolUseId) return false;
+    const calls = this.scriptCalls.get(row.toolUseId) ?? [];
+    this.scriptCalls.set(row.toolUseId, calls);
+    const files = this.scriptFiles.get(row.toolUseId) ?? new Map<string, { changed: boolean; index: number }>();
+    this.scriptFiles.set(row.toolUseId, files);
+    for (const block of content) {
+      if (block?.type !== 'tool_use') continue;
+      const call = this.toolRow(block, ts);
+      calls.push(call);
+      if (typeof block.id === 'string') this.callOwners.set(block.id, row);
+      if (call.file) files.set(call.file, { changed: !!files.get(call.file)?.changed || CHANGE_TOOLS.has(call.tool ?? ''), index: calls.length - 1 });
+    }
+    row.calls = {
+      count: calls.length,
+      failed: row.calls?.failed ?? 0,
+      ...(files.size ? { files: [...files].map(([path, f]) => ({ path, ...f })) } : {}),
+    };
+    return true;
+  }
+
+  /** A REPL row's script ended at `at` (its repl-eval event's): the calls it made come after its result. */
+  private settle(row: MessageRow, attrs: string): void {
+    const at = /\bat="([^"]+)"/.exec(attrs)?.[1];
+    if (!at) return;
+    this.settled.push({ row, at });
+    if (this.settled.length > SETTLED_KEPT) this.settled.shift();
   }
 
   /** A reply of message `messageId`: it supersedes the replies of the message before when that one ended its turn (see turnEnd). */
@@ -864,14 +956,20 @@ export class TranscriptAccumulator {
       last!.attachments = [...last!.attachments!.slice(0, -1), commandAttachment(withOutput(waiting.command, output))];
       return;
     }
-    // The commands the user ran from the message box (or Claude Code's bash mode) show as the message's attachments.
-    const { commands, text } = parseCommands(full, `cmd${this.nextId}`);
-    const task = commands.length ? null : workflowTaskText(text);
+    // The commands the user ran from the message box (or Claude Code's bash mode), and the files the agent read by path, show as the message's attachments.
+    const { commands, text: said } = parseCommands(full, `cmd${this.nextId}`);
+    const { files, text } = this.fileList(said);
+    const task = commands.length || files.length ? null : workflowTaskText(text);
     if (task !== null) this.push({ kind: 'task', ts, text: task });
     else {
       const row = this.push({ kind: 'prompt', ts, text, preview: text || !commands.length ? undefined : previewOf(commands.map((c) => `! ${c.input}`).join(', ')) });
-      if (commands.length) row.attachments = commands.map(commandAttachment);
+      if (files.length || commands.length) row.attachments = [...files, ...commands.map(commandAttachment)];
     }
+  }
+
+  /** The files withFileList listed in a message, when the accumulator knows Looper's attachment copies. */
+  private fileList(text: string): { files: Attachment[]; text: string } {
+    return this.opts.attachment ? parseFileList(text, this.opts.attachment) : { files: [], text };
   }
 
   /**
@@ -882,23 +980,36 @@ export class TranscriptAccumulator {
   private takeReplResults(text: string): void {
     const listed = /authentic event nonces for this delivery: ([^—\n<]+)/.exec(text)?.[1] ?? '';
     const nonces = new Set(listed.split(/[\s,]+/).filter(Boolean));
-    for (const m of text.matchAll(/<event nonce="([^"]+)" kind="repl-eval"([^>]*)>\s*<result>([\s\S]*?)<\/result>\s*<\/event>/g)) {
+    for (const m of text.matchAll(/<event nonce="([^"]+)" kind="repl-eval"([^>]*)>([\s\S]*?)<\/event>/g)) {
       const evalNo = /\beval="(\d+)"/.exec(m[2])?.[1];
       const row = evalNo !== undefined && nonces.has(m[1]) ? this.replByEval.get(evalNo) : undefined;
-      if (!row) continue;
-      this.replByEval.delete(evalNo!);
-      row.result = cap(m[3].trim(), MAX_TEXT);
+      if (row) this.settleRepl(row, evalNo!, m[2], m[3]);
     }
   }
 
   /** One event the engine delivered (a poll_events record's own): nothing quoted it, so no nonce list vouches for it. */
   private takeReplEvent(envelope: string): void {
-    const m = /^<event nonce="[^"]+" kind="repl-eval"([^>]*)>\s*<result>([\s\S]*)<\/result>\s*<\/event>$/.exec(envelope.trim());
+    const m = /^<event nonce="[^"]+" kind="repl-eval"([^>]*)>([\s\S]*)<\/event>$/.exec(envelope.trim());
     const evalNo = m ? /\beval="(\d+)"/.exec(m[1])?.[1] : undefined;
     const row = evalNo !== undefined ? this.replByEval.get(evalNo) : undefined;
-    if (!m || !row) return;
-    this.replByEval.delete(evalNo!);
-    row.result = cap(m[2].trim(), MAX_TEXT);
+    if (row) this.settleRepl(row, evalNo!, m![1], m![2]);
+  }
+
+  /**
+   * A script's repl-eval event fills in its REPL row: its result, or the error that ended it, and the lines it
+   * logged. An event with neither (output logged after it ended) leaves the row as it is.
+   */
+  private settleRepl(row: MessageRow, evalNo: string, attrs: string, body: string): void {
+    const logs = [...body.matchAll(/<log>([\s\S]*?)<\/log>/g)].map((l) => l[1].trim());
+    const result = /<result>([\s\S]*)<\/result>/.exec(body);
+    const error = result ? null : /<error>([\s\S]*)<\/error>/.exec(body);
+    const end = result ?? error;
+    if (!end) return;
+    this.replByEval.delete(evalNo);
+    row.result = cap(end[1].trim(), MAX_TEXT);
+    if (logs.length) row.logs = cap(logs.join('\n'), MAX_TEXT);
+    if (error) row.resultError = true;
+    this.settle(row, attrs);
   }
 
   /** The image a tool call's result carried, by the call's tool_use id. */
@@ -938,9 +1049,10 @@ export class TranscriptAccumulator {
     const g = guidanceText(text);
     if (g !== null) {
       // The commands the user ran from the run's message box show as the guidance's attachments, as a prompt's do.
-      const { commands, text: rest } = parseCommands(g, `cmd${this.nextId}`);
+      const { commands, text: said } = parseCommands(g, `cmd${this.nextId}`);
+      const { files, text: rest } = this.fileList(said);
       const row = this.push({ kind: 'guidance', ts, text: rest, preview: rest || !commands.length ? undefined : previewOf(commands.map((c) => `! ${c.input}`).join(', ')) });
-      if (commands.length) row.attachments = commands.map(commandAttachment);
+      if (files.length || commands.length) row.attachments = [...files, ...commands.map(commandAttachment)];
       return true;
     }
     const events = eventsText(text);
@@ -955,6 +1067,13 @@ export class TranscriptAccumulator {
   }
 
   protected push(r: { kind: MessageRow['kind']; ts?: string; text: string; tool?: string; preview?: string }): MessageRow {
+    const row = this.newRow(r);
+    if (INPUT_KINDS.has(r.kind)) this.turnEnd = undefined;
+    this.rows.push(row);
+    return row;
+  }
+
+  private newRow(r: { kind: MessageRow['kind']; ts?: string; text: string; tool?: string; preview?: string }): MessageRow {
     const row: MessageRow = {
       id:
         (this.opts.source === 'classifier'
@@ -970,14 +1089,6 @@ export class TranscriptAccumulator {
       text: cap(r.text, MAX_TEXT),
     };
     if (this.recordUuid) row.uuid = this.recordUuid;
-    if (INPUT_KINDS.has(r.kind)) this.turnEnd = undefined;
-    this.rows.push(row);
-    if (this.rows.length > MAX_ROWS) {
-      // A call this far back never wins a result's place in a compaction, so it keeps only its line.
-      const old = compactRow(this.rows.shift()!);
-      if (old) this.evicted.push(slimCall(old));
-      this.dropped++;
-    }
     return row;
   }
 }
@@ -1441,6 +1552,8 @@ export interface SubagentMeta {
 export interface MessagesDeps {
   getTask(id: string): Task | undefined;
   runDir(taskId: string, runId: string): string;
+  /** Looper's copy of a file attached to a message, from the path the agent read it at (attachmentAt). */
+  attachment(agentPath: string): Attachment | null;
   host: HostKind;
   settings: Settings;
   log: Logger;
@@ -1484,7 +1597,7 @@ export class MessagesService {
   }
 
   async read(taskId: string, runId: string, agentId?: string, raw = false): Promise<MessagesResult> {
-    const none = (status: 'no-session' | 'no-transcript'): MessagesResult => ({ status, rows: [], dropped: 0 });
+    const none = (status: 'no-session' | 'no-transcript'): MessagesResult => ({ status, rows: [] });
     if (agentId !== undefined) {
       const reader = await this.subagentReader(taskId, runId, agentId, raw);
       if (typeof reader === 'string') return none(reader);
@@ -1493,13 +1606,12 @@ export class MessagesService {
       } catch {
         return none('no-transcript'); // not written yet, or cleaned up by the harness
       }
-      return { status: 'ok', rows: reader.acc.rows, dropped: reader.acc.dropped };
+      return { status: 'ok', rows: reader.acc.rows };
     }
     const pendingGuidance = readPendingGuidance(this.deps.runDir(taskId, runId)) ?? undefined;
     // A compacted chat's run starts with the messages of the conversation it was compacted from.
     if (!raw) await this.compactedReady;
     const rows: MessageRow[] = raw ? [] : proseRows(readCompactedRows(this.deps.runDir(taskId, runId)));
-    let dropped = 0;
     let refs = 0;
     let readable = 0;
     let commands: SlashCommand[] = [];
@@ -1520,19 +1632,15 @@ export class MessagesService {
         continue; // this step's transcript is not written yet (or was cleaned up)
       }
       rows.push(...reader.acc.rows);
-      dropped += reader.acc.dropped;
       // The classifier's session isn't the one guidance goes to; the newest agent session's list counts.
       if (source !== 'classifier' && reader.acc.commands.length) commands = reader.acc.commands;
     }
     if (refs === 0) return { ...none('no-session'), pendingGuidance };
     if (readable === 0) return { ...none('no-transcript'), pendingGuidance };
-    return { status: 'ok', rows, dropped, pendingGuidance, ...(commands.length ? { commands } : {}) };
+    return { status: 'ok', rows, pendingGuidance, ...(commands.length ? { commands } : {}) };
   }
 
-  /**
-   * The run's whole conversation as a compacted one keeps it (compactRows),
-   * the rows its readers dropped included; empty when it recorded none.
-   */
+  /** The run's whole conversation as a compacted one keeps it (compactRows); empty when it recorded none. */
   async compactable(taskId: string, runId: string): Promise<MessageRow[]> {
     const runDir = this.deps.runDir(taskId, runId);
     await this.compactedReady;
@@ -1545,7 +1653,7 @@ export class MessagesService {
       } catch {
         continue;
       }
-      rows.push(...reader.acc.evicted, ...reader.acc.rows);
+      rows.push(...reader.acc.rows);
     }
     return compactRows(rows);
   }
@@ -1601,6 +1709,30 @@ export class MessagesService {
   }
 
   /**
+   * `count` of the tool calls a Code Mode script made, the ones before the `before`th (the newest without it),
+   * by its REPL call's tool_use id, which holds in any list of rows of the run; null when no conversation has them.
+   */
+  async readScriptCalls(taskId: string, runId: string, toolUseId: string, before: number | null, count: number, agentId?: string): Promise<ScriptCalls | null> {
+    const sources: ('sub' | 'classifier' | 'agent' | number)[] =
+      agentId !== undefined ? ['sub'] : ['agent', ...endedSessions(this.deps.runDir(taskId, runId)).reverse(), 'classifier'];
+    for (const source of sources) {
+      const reader =
+        source === 'sub'
+          ? await this.subagentReader(taskId, runId, agentId!, false)
+          : await this.mainReader(taskId, runId, source, false);
+      if (typeof reader === 'string') continue;
+      try {
+        await reader.read();
+      } catch {
+        /* rows already parsed may still hold them */
+      }
+      const calls = reader.acc.scriptCalls.get(toolUseId);
+      if (calls) return scriptCallsPage(calls, before, count);
+    }
+    return null;
+  }
+
+  /**
    * One main conversation's reader, from its transcript ref (claude hooks, or
    * the codex ref pair): the classifier's, the agent's current session, or an
    * agent session a context restart ended (by its number). The ref is part of
@@ -1619,6 +1751,7 @@ export class MessagesService {
       raw,
       source: source === 'classifier' ? 'classifier' : undefined,
       session: typeof source === 'number' ? source : undefined,
+      attachment: this.deps.attachment,
     };
     const targetPath = readTranscriptRef(runDir, prefix);
     if (targetPath) {

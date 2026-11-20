@@ -959,6 +959,21 @@
    "err": "Error invoking remote method 'runtime:stopTask': Error: boom runtime:stopTask"
   }
  },
+ "runtime.clearNotices": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "runtime:clearNotices",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runtime:clearNotices': Error: boom runtime:clearNotices"
+  }
+ },
  "runs.list": {
   "arity": 2,
   "calls": [
@@ -976,14 +991,15 @@
   }
  },
  "runs.recent": {
-  "arity": 2,
+  "arity": 3,
   "calls": [
    [
     "invoke",
     "runs:recent",
     [
      "a0",
-     "a1"
+     "a1",
+     "a2"
     ]
    ]
   ],
@@ -1073,6 +1089,26 @@
   ],
   "result": {
    "err": "Error invoking remote method 'runs:messageImage': Error: boom runs:messageImage"
+  }
+ },
+ "runs.scriptCalls": {
+  "arity": 6,
+  "calls": [
+   [
+    "invoke",
+    "runs:scriptCalls",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3",
+     "a4",
+     "a5"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runs:scriptCalls': Error: boom runs:scriptCalls"
   }
  },
  "runs.pickFiles": {

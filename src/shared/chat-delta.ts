@@ -3,7 +3,7 @@ import type { MessageRow } from './messages';
 
 /**
  * A chat's state as its `chat` events carry it: a working chat changes every 100 ms, and sending its whole
- * conversation (up to 1,000 rows, 1-2 MB) each time cost the main process, every window showing it and every
+ * conversation (1,000 rows are 1-2 MB) each time cost the main process, every window showing it and every
  * phone a copy of all of it. The event carries `seq`, the history only when it changed, and either every row
  * (`rows`) or the rows' ids in order with only the rows that are new or changed since the event before (`delta`).
  * A page rebuilds the whole state from the one it has (applyChatWire), keeping its unchanged rows as they were.
@@ -45,6 +45,8 @@ export function rowSignature(r: MessageRow): string {
     // A "!" command's output is filled into the prompt's last attachment in place.
     r.attachments?.length ? `${r.attachments.length}:${JSON.stringify(r.attachments.at(-1)).length}` : '',
     r.input === undefined ? 0 : 1,
+    r.calls ? `${r.calls.count}:${r.calls.failed}` : '',
+    tail(r.logs),
   ].join('|');
 }
 

@@ -820,7 +820,7 @@ export const COMMANDS: readonly Command[] = [
     group: 'turn',
     icon: 'sendNow',
     accelerator: 'CmdOrCtrl+Enter',
-    enabled: (c) => (c.chats?.chat?.queued.length ?? 0) > 0 || !!c.chats?.runQueued,
+    enabled: (c) => !!c.chats?.chat?.queued.some((q) => !q.delivered) || !!c.chats?.runQueued,
     run: (c) => {
       const s = summaryOf(c);
       if (c.chats?.chat) void c.looper.chat.sendNow(c.chats.chat.id).catch(failed(c));

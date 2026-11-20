@@ -2262,6 +2262,18 @@ html.menu-level-window :is(body, #root, .window-frame, .window-body) {
   overflow: auto;
 }
 /* Code isn't capped: the conversation scrolls, not a box inside it. */
+/* A Code Mode script's calls, under its REPL call's input and result: their own box scrolls, so the call's doesn't. */
+.chat-tool-body:has(.chat-script-calls) {
+  max-height: none;
+  overflow: visible;
+}
+.chat-script-calls {
+  margin-top: 8px;
+}
+.chat-script-list {
+  max-height: 360px;
+  overflow: auto;
+}
 .chat-tool-body:has(.tc-code) {
   max-height: none;
   overflow: visible;
@@ -3886,6 +3898,96 @@ button:focus-visible,
   white-space: nowrap;
   color: var(--fg-muted);
 }
+/* A REPL call in Now: its script as code with what it returned, over the calls it made. */
+.now-script-code {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  background: var(--vs-bg);
+}
+.now-script-code > .now-editor {
+  flex: none;
+}
+.now-script-result {
+  flex: 1;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+.now-script-now {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.now-script-calls {
+  overflow: auto;
+  padding: 2px 0;
+  font-size: var(--font-body);
+  background: var(--bg);
+}
+/* A REPL call in the list: its line, and its script's calls under it, indented, in a box of their own. The selection
+   and the focus frame only the line. */
+.now-call:has(> .now-script-sub) {
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+}
+.now-call.selected:has(> .now-script-sub) {
+  background: none;
+}
+.now-call-head {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 12px;
+}
+.now-call.selected > .now-call-head {
+  background: var(--bg-3);
+}
+.now-calls:focus-visible .now-call.selected:has(> .now-script-sub) {
+  outline: none;
+}
+.now-calls:focus-visible .now-call.selected > .now-call-head {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.now-script-sub {
+  max-height: 240px;
+  overflow: auto;
+  margin: 2px 12px 6px 30px;
+  padding: 2px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+}
+.now-script-sub .now-call {
+  padding: 2px 8px;
+}
+.now-calls:focus-visible .now-script-sub .now-call.selected {
+  outline: none;
+}
+.tc-repl-value {
+  margin-top: 8px;
+}
+.now-call-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  margin-left: -4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+}
+.now-call-toggle svg {
+  transform: rotate(-90deg);
+}
+.now-call-toggle.open svg {
+  transform: none;
+}
 .now-call-state {
   flex: none;
 }
@@ -3986,6 +4088,8 @@ button:focus-visible,
   max-width: none;
   background: transparent;
   border: 1px dashed var(--accent);
+  /* The border takes its width from the padding, so the outline is the size the filled bubble will be. */
+  padding: 7px 11px;
   opacity: 0.8;
 }
 .chat-queued-actions {

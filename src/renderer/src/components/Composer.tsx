@@ -409,7 +409,7 @@ function chatBox(state: ChatState, onSent: () => void): Box {
     files: { taskId: state.taskId, runId: id },
     ended: state.status === 'ended',
     working,
-    queued: state.queued.length > 0,
+    queued: state.queued.some((q) => !q.delivered),
     commands: state.commands,
     prefix: state.commandPrefix,
     settings: state,

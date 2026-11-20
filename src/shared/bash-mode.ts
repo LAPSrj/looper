@@ -87,6 +87,33 @@ const commandsOf = (attachments: Attachment[]): CommandOutput[] => attachments.f
 /** The attachments that are files (the agent reads them, or sees an image), without the commands. */
 export const fileAttachments = (attachments: Attachment[]): Attachment[] => attachments.filter((a) => !a.command);
 
+/** The message the agent gets: the user's text, then the paths of the files it reads itself. */
+export function withFileList(text: string, files: string[]): string {
+  if (files.length === 0) return text;
+  const list = files.map((f) => `- ${f}`).join('\n');
+  return `${text}\n\nAttached files (read them from these paths):\n${list}`.trim();
+}
+
+const FILE_LIST = /(?:^|\n\n)Attached files \(read them from these paths\):((?:\n- [^\n]+)+)(?=\n\n|$)/g;
+
+/**
+ * A message from a transcript, the other way: the files of each list
+ * withFileList put in it (a turn's queued messages go as one, each with its
+ * own), through `attachment`, and the text without the lists. The text stays
+ * whole when a listed path isn't one of Looper's attachment copies.
+ */
+export function parseFileList(message: string, attachment: (agentPath: string) => Attachment | null): { files: Attachment[]; text: string } {
+  const files: Attachment[] = [];
+  for (const m of message.matchAll(FILE_LIST)) {
+    for (const line of m[1].split('\n').slice(1)) {
+      const a = attachment(line.slice(2));
+      if (!a) return { files: [], text: message };
+      files.push(a);
+    }
+  }
+  return files.length ? { files, text: message.replace(FILE_LIST, '').trim() } : { files, text: message };
+}
+
 const EXIT_LINE = /\n?Exit code (\d+)$/;
 const STOPPED_LINE = /\n?Stopped by the user$/;
 

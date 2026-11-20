@@ -1,5 +1,6 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { claudeUserMessage } from '../src/engine/chat';
+import { attachmentAt, claudeUserMessage } from '../src/engine/chat';
 import { CodexAccumulator, TranscriptAccumulator } from '../src/engine/messages';
 import {
   bashModeEntry,
@@ -7,8 +8,10 @@ import {
   commandAttachment,
   commandFrom,
   parseCommands,
+  parseFileList,
   sizeText,
   withCommands,
+  withFileList,
   type CommandOutput,
 } from '../src/shared/bash-mode';
 import { compactedText } from '../src/shared/compact';
@@ -133,5 +136,45 @@ describe('commands read back from a transcript', () => {
     const prompt = acc.rows.find((r) => r.kind === 'prompt')!;
     expect(prompt.text).toBe('and now?');
     expect(prompt.attachments?.[0].command).toMatchObject({ input: 'ls', stdout: 'a\nb', exitCode: 0 });
+  });
+});
+
+describe('files read back from a transcript', () => {
+  const copies = attachmentAt('/data/tasks');
+  const copy = (file: string) => path.join('/data/tasks', 't1', 'attachments', file);
+
+  it('show as the message’s attachments, in any of the agent’s path forms, and leave the text without their lists', () => {
+    const first = withFileList('look', ['/mnt/c/Users/me/looper/tasks/t1/attachments/20261119-181947-5x81-image.png', 'C:\\Users\\me\\looper\\tasks\\t1\\attachments\\20261119-181950-ab12-spec.pdf']);
+    const second = withFileList('', ['/mnt/c/Users/me/looper/tasks/t1/attachments/20261119-182000-cd34-b.jpg']);
+    expect(parseFileList(`${first}\n\nand this\n\n${second}`, copies)).toEqual({
+      text: 'look\n\nand this',
+      files: [
+        { name: 'image.png', path: copy('20261119-181947-5x81-image.png'), image: true },
+        { name: 'spec.pdf', path: copy('20261119-181950-ab12-spec.pdf'), image: false },
+        { name: 'b.jpg', path: copy('20261119-182000-cd34-b.jpg'), image: true },
+      ],
+    });
+  });
+
+  it('leave the text whole when a listed path isn’t an attachment copy', () => {
+    const outside = withFileList('look', ['/mnt/c/Users/me/looper/tasks/t1/attachments/a.png', '/home/me/notes.txt']);
+    expect(parseFileList(outside, copies)).toEqual({ files: [], text: outside });
+    const climbing = withFileList('look', ['/x/../attachments/a.png']);
+    expect(parseFileList(climbing, copies)).toEqual({ files: [], text: climbing });
+    expect(parseFileList('no files', copies)).toEqual({ files: [], text: 'no files' });
+  });
+
+  it('show on an interactive message’s prompt row beside its commands', () => {
+    const user = (text: string) => JSON.stringify({ type: 'user', timestamp: '2026-11-19T18:19:00Z', message: { role: 'user', content: text } });
+    const message = withFileList(withCommands('see', [commandAttachment(cmd())]), ['/mnt/c/looper/tasks/t1/attachments/20261119-181947-5x81-a.png']);
+    const acc = new TranscriptAccumulator({ attachment: copies });
+    acc.addLine(user(message));
+    expect(acc.rows.map((r) => [r.kind, r.text, r.attachments?.map((a) => [a.name, a.path])])).toEqual([
+      ['prompt', 'see', [['a.png', copy('20261119-181947-5x81-a.png')], ['! ls', '']]],
+    ]);
+    // Without Looper's attachment copies to map to, the agent's text shows as it read it.
+    const plain = new TranscriptAccumulator();
+    plain.addLine(user(message));
+    expect(plain.rows[0].text).toContain('Attached files (read them from these paths):');
   });
 });

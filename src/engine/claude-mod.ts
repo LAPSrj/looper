@@ -103,6 +103,8 @@ let stepsDone = 0
 // The main turn's tool calls by tool_use id, from their request until their result row is stored.
 const pendingCalls = new Map()
 let interrupting = false
+// The turn interrupt() ended to deliver a message: its end isn't a Stop.
+let delivering = null
 let polling = false
 let lastAbort = 0
 let usageAt = 0
@@ -301,6 +303,7 @@ async function interrupt($, id) {
       }
     }
     if (!text) return false
+    delivering = id
     try {
       await $.turn.abort({ turnId: id })
     } catch {
@@ -357,6 +360,8 @@ export function register(on) {
 
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined || e.agentId === null) {
+      const delivered = delivering !== null && delivering === turnId
+      delivering = null
       turnId = null
       turns += 1
       streaming = false
@@ -364,7 +369,7 @@ export function register(on) {
       toolRecords.clear()
       typedMidTurn = []
       releaseHeld($, e.reason === 'error')
-      await writeJson($, CONFIG.files.turnEnd, { at: Date.now(), answer: e.answer ?? '', aborted: e.isAborted === true, reason: e.reason ?? null })
+      await writeJson($, CONFIG.files.turnEnd, { at: Date.now(), answer: e.answer ?? '', aborted: e.isAborted === true && !delivered, reason: e.reason ?? null })
       await saveUsage($)
     }
     return next(e)

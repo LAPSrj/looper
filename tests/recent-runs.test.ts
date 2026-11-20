@@ -180,16 +180,20 @@ describe('engine recent runs', () => {
     store.append(rec('gone', 'd', '2026-10-23T10:00:00Z', 'result', 'success'));
 
     const hide = { hideSkipped: false, hideNoAction: true };
-    expect((await engine.recentRuns(10, hide)).map((r) => [r.taskName, r.runId, r.result])).toEqual([
+    expect((await engine.recentRuns(10, hide, Infinity)).map((r) => [r.taskName, r.runId, r.result])).toEqual([
       ['Second', 'c', 'started'],
       ['First', 'a', 'success'],
     ]);
-    expect((await engine.recentRuns(10, { ...hide, hideNoAction: false })).map((r) => r.runId)).toEqual(['c', 'b', 'a']);
-    expect((await engine.recentRuns(1, hide)).map((r) => r.runId)).toEqual(['c']);
+    expect((await engine.recentRuns(10, { ...hide, hideNoAction: false }, Infinity)).map((r) => r.runId)).toEqual(['c', 'b', 'a']);
+    expect((await engine.recentRuns(1, hide, Infinity)).map((r) => r.runId)).toEqual(['c']);
+    // Every run since the day's start shows, past the limit.
+    const all = { ...hide, hideNoAction: false };
+    expect((await engine.recentRuns(0, all, Date.parse('2026-10-21T00:00:00Z'))).map((r) => r.runId)).toEqual(['c', 'b']);
+    expect((await engine.recentRuns(1, all, Date.parse('2026-10-22T00:00:00Z'))).map((r) => r.runId)).toEqual(['c']);
 
     // A new record shows on the next read.
     store.append(rec('t1', 'e', '2026-10-23T11:00:00Z', 'result', 'error'));
-    expect((await engine.recentRuns(2, hide)).map((r) => [r.runId, r.details])).toEqual([
+    expect((await engine.recentRuns(2, hide, Infinity)).map((r) => [r.runId, r.details])).toEqual([
       ['e', ''],
       ['c', ''],
     ]);
@@ -204,6 +208,6 @@ describe('engine recent runs', () => {
     store.append(rec('t1', 'a', '2026-10-20T10:00:00Z', 'result', 'success'));
     store.append(rec('t1', 'b', '2026-10-21T10:00:00Z', 'chat', 'chat', 'a chat'));
     store.append(rec('t1', 'c', '2026-10-22T10:00:00Z', 'terminal', 'terminal', 'a terminal'));
-    expect((await engine.recentRuns(10, { hideSkipped: false, hideNoAction: false })).map((r) => r.runId)).toEqual(['a']);
+    expect((await engine.recentRuns(10, { hideSkipped: false, hideNoAction: false }, Infinity)).map((r) => r.runId)).toEqual(['a']);
   });
 });

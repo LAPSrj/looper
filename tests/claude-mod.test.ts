@@ -360,6 +360,9 @@ describe("the mod's messages for the agent", () => {
     expect(prompts).toEqual([{ text: 'also check the tests', asUser: true }]);
     expect(fs.existsSync(user)).toBe(false);
     await hooks['turn.complete']($, { reason: 'aborted', isAborted: true }, pass);
+    const ended = () => JSON.parse(fs.readFileSync(path.join(dir, 'turn-end.json'), 'utf8')) as { aborted: boolean };
+    // Ended to deliver the message, not stopped: the chat doesn't say "Stopped."
+    expect(ended().aborted).toBe(false);
 
     // A turn waiting in Poll ends for the message at once.
     await hooks['turn.start']($, { turnId: 't2' }, pass);
@@ -372,6 +375,17 @@ describe("the mod's messages for the agent", () => {
       { text: 'also check the tests', asUser: true },
       { text: 'stop after this file', asUser: true },
     ]);
+    await hooks['turn.complete']($, { reason: 'aborted', isAborted: true }, pass);
+    expect(ended().aborted).toBe(false);
+
+    // Stop ends a turn as stopped.
+    await hooks['turn.start']($, { turnId: 't3' }, pass);
+    await step('t3', 0);
+    fs.writeFileSync(path.join(dir, 'c.json'), JSON.stringify({ abort: 1 }));
+    await tick();
+    expect(aborted).toEqual(['t1', 't2', 't3']);
+    await hooks['turn.complete']($, { reason: 'aborted', isAborted: true }, pass);
+    expect(ended().aborted).toBe(true);
   });
 });
 

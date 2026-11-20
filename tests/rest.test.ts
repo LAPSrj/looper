@@ -29,6 +29,7 @@ function runtime(partial: Partial<TaskRuntime>): TaskRuntime {
     watcher: null,
     lastEventAt: null,
     session: null,
+    notices: [],
     ...partial,
   };
 }

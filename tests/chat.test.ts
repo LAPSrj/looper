@@ -18,8 +18,8 @@ import {
   permissionModeRequest,
   remoteControlRequest,
   userRecordText,
-  withFileList,
 } from '../src/engine/chat';
+import { withFileList } from '../src/shared/bash-mode';
 import { codexWindowOfLine } from '../src/engine/context';
 import { TranscriptAccumulator } from '../src/engine/messages';
 import { RunStore } from '../src/engine/store/runs';

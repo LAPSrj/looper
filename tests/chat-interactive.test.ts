@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -65,14 +65,24 @@ setInterval(() => {
   const taken = inbox.replace(/\\.json$/, '-' + Date.now() + '-mod.json');
   try { fs.renameSync(inbox, taken); } catch { return; }
   const text = JSON.parse(fs.readFileSync(taken, 'utf8'));
+  // With hold-prompt, the message is taken and goes nowhere, as when the session stops before it reaches the transcript.
+  if (fs.existsSync(path.join(dir, 'hold-prompt'))) return;
   fs.writeFileSync(path.join(run, 'turn.json'), '{}');
-  rec({ type: 'repl-mode', replMode: true });
-  rec({ type: 'user', message: { role: 'user', content: text } });
+  // With drop-prompt, a turn starts and ends without the message in the transcript.
+  if (fs.existsSync(path.join(dir, 'drop-prompt'))) {
+    setTimeout(() => fs.writeFileSync(path.join(run, 'turn-end.json'), '{}'), 300);
+    return;
+  }
+  // With prompt-delay, the message reaches the transcript a while after the mod took it, as a busy Claude Code does.
   setTimeout(() => {
-    rec({ type: 'assistant', message: { role: 'assistant', model: 'claude-fake', content: [{ type: 'text', text: 'echo: ' + text }] } });
-    fs.writeFileSync(path.join(run, 'usage.json'), JSON.stringify({ context: { tokens: 1234, window: 200000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 50, resetsAt: '2030-01-01T00:00:00.000Z' }] }));
-    fs.writeFileSync(path.join(run, 'turn-end.json'), '{}');
-  }, 400);
+    rec({ type: 'repl-mode', replMode: true });
+    rec({ type: 'user', message: { role: 'user', content: text } });
+    setTimeout(() => {
+      rec({ type: 'assistant', message: { role: 'assistant', model: 'claude-fake', content: [{ type: 'text', text: 'echo: ' + text }] } });
+      fs.writeFileSync(path.join(run, 'usage.json'), JSON.stringify({ context: { tokens: 1234, window: 200000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 50, resetsAt: '2030-01-01T00:00:00.000Z' }] }));
+      fs.writeFileSync(path.join(run, 'turn-end.json'), '{}');
+    }, 400);
+  }, fs.existsSync(path.join(dir, 'prompt-delay')) ? 1000 : 0);
 }, 100);
 }
 `,
@@ -149,6 +159,93 @@ describe('an interactive chat on Claude Code', { timeout: 30_000 }, () => {
     expect(chat.codeMode).toBe(true);
     await expect(e.configureChat(chatId, { mode: 'headless' })).rejects.toThrow(/Code Mode/);
     expect(e.getChat(chatId)?.settings.mode).toBe('interactive');
+  });
+
+  it('keeps showing a message the mod took as queued until the conversation has it', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'looper-engine-'));
+    const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
+    writeFileSync(join(dir, 'prompt-delay'), '');
+    const e = (engine = createEngine({ dataDir, authStatus: async () => Promise.reject(new Error('not asked in tests')) }));
+    e.start();
+    e.updateSettings({
+      environments: e.settings.environments.map((env) =>
+        env.id === 'local' ? { ...env, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : env,
+      ),
+    });
+    e.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'interactive', prompt: 'x' } }));
+    const chatId = e.startChat('t1').id;
+    await until(() => e.getChat(chatId)?.status === 'ready', 'the session to start');
+    e.sendChat(chatId, 'hello there', []);
+    const runDir = e.runDir('t1', chatId);
+    await until(() => existsSync(join(runDir, 'message.json')), 'the message in the inbox');
+    writeFileSync(join(dir, 'go'), '');
+    // The mod took it, and the transcript doesn't have it yet: it stays where it was, without Edit and Cancel.
+    await until(() => !!e.getChat(chatId)?.queued[0]?.delivered, 'the message handed over');
+    expect(e.getChat(chatId)!.rows.some((r) => r.kind === 'prompt')).toBe(false);
+    expect(e.getChat(chatId)!.queued.map((q) => q.text)).toEqual(['hello there']);
+    await until(() => !!e.getChat(chatId)?.rows.some((r) => r.kind === 'prompt'), 'the message in the conversation');
+    expect(e.getChat(chatId)!.queued).toEqual([]);
+  });
+
+  /** A chat on the fake Claude Code in `dir`, ready for a message. */
+  async function readyChat(dir: string): Promise<{ e: Engine; chatId: string; runDir: string }> {
+    const dataDir = mkdtempSync(join(tmpdir(), 'looper-engine-'));
+    const e = (engine = createEngine({ dataDir, authStatus: async () => Promise.reject(new Error('not asked in tests')) }));
+    e.start();
+    e.updateSettings({
+      environments: e.settings.environments.map((env) =>
+        env.id === 'local' ? { ...env, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) }] } : env,
+      ),
+    });
+    e.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'interactive', prompt: 'x' } }));
+    const chatId = e.startChat('t1').id;
+    await until(() => e.getChat(chatId)?.status === 'ready', 'the session to start');
+    return { e, chatId, runDir: e.runDir('t1', chatId) };
+  }
+
+  it('stops showing a message the mod took once a turn it started ends without it, a moment after', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
+    writeFileSync(join(dir, 'drop-prompt'), '');
+    const { e, chatId, runDir } = await readyChat(dir);
+    e.sendChat(chatId, 'hello there', []);
+    await until(() => existsSync(join(runDir, 'message.json')), 'the message in the inbox');
+    writeFileSync(join(dir, 'go'), '');
+    await until(() => !!e.getChat(chatId)?.queued[0]?.delivered, 'the message handed over');
+    await until(() => existsSync(join(runDir, 'turn-end.json')), 'the turn to end');
+    const ended = Date.now();
+    // Not at once: a row the transcript is still writing would show it again a moment later.
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(e.getChat(chatId)!.queued.map((q) => q.text)).toEqual(['hello there']);
+    await until(() => e.getChat(chatId)!.queued.length === 0, 'the handed-over message to go');
+    expect(Date.now() - ended).toBeGreaterThanOrEqual(2500);
+  });
+
+  it('sends a message still waiting for the mod to the agent that Restart Agent starts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
+    const { e, chatId, runDir } = await readyChat(dir);
+    e.sendChat(chatId, 'hello there', []);
+    await until(() => existsSync(join(runDir, 'message.json')), 'the message in the inbox');
+    await e.restartSession(chatId);
+    await until(() => lines(join(dir, 'argv')).length === 2 && e.getChat(chatId)?.status === 'ready', 'the new session');
+    await until(() => existsSync(join(runDir, 'message.json')), 'the message in the new inbox');
+    writeFileSync(join(dir, 'go'), '');
+    await until(() => !!e.getChat(chatId)?.rows.some((r) => r.kind === 'agent' && r.text === 'echo: hello there'), 'the reply');
+    expect(e.getChat(chatId)!.rows.filter((r) => r.kind === 'prompt').map((r) => r.text)).toEqual(['hello there']);
+  });
+
+  it('sends a message the mod took but the conversation never got to the agent that Restart Agent starts, once', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
+    writeFileSync(join(dir, 'hold-prompt'), '');
+    writeFileSync(join(dir, 'go'), '');
+    const { e, chatId, runDir } = await readyChat(dir);
+    e.sendChat(chatId, 'hello there', []);
+    await until(() => !!e.getChat(chatId)?.queued[0]?.delivered, 'the message handed over');
+    rmSync(join(dir, 'hold-prompt'));
+    await e.restartSession(chatId);
+    await until(() => !!e.getChat(chatId)?.rows.some((r) => r.kind === 'agent' && r.text === 'echo: hello there'), 'the reply');
+    expect(e.getChat(chatId)!.rows.filter((r) => r.kind === 'prompt').map((r) => r.text)).toEqual(['hello there']);
+    expect(e.getChat(chatId)!.queued).toEqual([]);
+    expect(existsSync(join(runDir, 'message.json'))).toBe(false);
   });
 
   it('shows the rows the mod hands over before the transcript has them, and each row once', async () => {

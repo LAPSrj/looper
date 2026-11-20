@@ -309,7 +309,7 @@ describe('the session hub', () => {
       harnessOf: (t) =>
         t.agent.harnessId === 'codex' ? { kind: 'codex', name: 'Codex', limitsKey: 'e/codex' } : { kind: 'claude-code', name: 'Claude Code', limitsKey: 'e/claude' },
       runDir: () => opts.dir ?? '/nowhere',
-      readRows: async () => ({ status: 'ok', rows: opts.rows ?? [], dropped: 0, pendingGuidance: opts.guidance?.(), commands: opts.commands }),
+      readRows: async () => ({ status: 'ok', rows: opts.rows ?? [], pendingGuidance: opts.guidance?.(), commands: opts.commands }),
       subagents: async () => [],
       subagentStats: async () => null,
       workflows: async (_taskId, _runId, o) => opts.workflows?.(o) ?? [],

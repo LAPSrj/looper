@@ -973,6 +973,26 @@ export interface TaskRuntime {
   lastEventAt: number | null;
   /** Rolling conversation (agent.session 'continue'): the id runs resume, and how many runs used it. */
   session: { id: string; runs: number } | null;
+  /** What Needs attention shows until the user clears it: the runs that ended in an error or a warning, the auto-pauses, and the task's completion; oldest first. */
+  notices: TaskNotice[];
+}
+
+/** A run that ended in an error or a warning, an auto-pause, or the task's completion, waiting for the user to see it. */
+export interface TaskNotice {
+  /** The run; null for an auto-pause or a completion that no run caused (a watcher that can't stay up, the schedule's end date). */
+  runId: string | null;
+  /** The run's result; null for a completion. */
+  result: RunResult | null;
+  /** What the run said, or why the task was completed. */
+  detail: string | null;
+  /** When the run started, or when the task paused or was completed. */
+  at: number | null;
+  /** The task was completed for good. */
+  completed?: true;
+  /** The task auto-paused at this run's end: the pause's reason. */
+  paused?: string;
+  /** The computer failed the run (no network, the environment didn't start, a sleep, a usage limit), not the task: a task keeps only its newest one. */
+  machine?: true;
 }
 
 export type RestPhase = 'off' | 'waiting' | 'countdown' | 'sleeping';

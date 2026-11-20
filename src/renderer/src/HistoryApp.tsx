@@ -308,7 +308,7 @@ export function HistoryApp() {
                   {follow && followed ? (
                     <TranscriptView key={`${item.id}:${follow}`} taskId={ctx.taskId} runId={ctx.runId} rows={subRows} waitingText="The subagent has no messages." rowMenu={false} />
                   ) : (
-                    <TranscriptView key={item.id} taskId={ctx.taskId} runId={ctx.runId} rows={rows} waitingText="The conversation has no messages." rowMenu={false} />
+                    <TranscriptView key={item.id} taskId={ctx.taskId} runId={ctx.runId} rows={rows} scriptCalls={conv?.scriptCalls} waitingText="The conversation has no messages." rowMenu={false} />
                   )}
                   {commands.chat && (
                     <div className="history-continue">
@@ -344,6 +344,7 @@ export function HistoryApp() {
                 working={false}
                 pos={nowPos}
                 onPos={setNowPos}
+                scriptCalls={follow ? undefined : conv?.scriptCalls}
               />
             </Inspector>
           )

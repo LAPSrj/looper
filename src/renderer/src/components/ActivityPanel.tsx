@@ -1,16 +1,17 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useThumbnail } from './hooks';
 import { findToolCall, toolCallTitle, type AddonInfo, type AddonToolCall } from '@shared/addons';
 import type { Attachment } from '@shared/chat';
 import { effortLabel } from '@shared/environments';
-import type { MessageRow, SentFile } from '@shared/messages';
+import { CHANGE_TOOLS, type MessageRow, type SentFile } from '@shared/messages';
 import { baseName, dirName } from '@shared/paths';
 import type { BackgroundTask, SubagentInfo } from '@shared/sessions';
 import { WORKFLOW_STATUS_TEXT, workflowAgents, type WorkflowRun } from '@shared/workflows';
 import { stripAnsi } from '../format';
 import { useAddonList } from '../live-state';
 import { AgentRow, tokensText, WorkflowAgentList } from './AgentRows';
-import { AttachmentList, SentFileList } from './ChatRows';
+import { AttachmentList, CHEVRON, localScriptCalls, ScriptCallBox, SentFileList, type RowCtx } from './ChatRows';
+import { SplitPane } from './SplitPane';
 import { WaitedFor } from './Live';
 import { changeRows, writtenLines, type EditorLine } from './editor-lines';
 import { gitTabLabel } from '@shared/git';
@@ -29,8 +30,6 @@ import { TabBar } from './ui';
 export type ActivityTab = 'now' | 'background' | 'subagents' | 'files' | 'git' | AddonProjectTabId;
 type Tab = ActivityTab;
 
-/** Tools that change a file (Delete and Patch are Codex's). */
-const CHANGES = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Delete', 'Patch']);
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp)$/i;
 const MARKDOWN_RE = /\.(md|markdown)$/i;
@@ -137,6 +136,54 @@ function DocScreen({ text }: { text: string }) {
   );
 }
 
+/** A call's state in a list: "Running" or "Failed", else nothing. */
+const callState = (t: MessageRow) => (t.result === undefined ? 'Running' : t.resultError ? 'Failed' : undefined);
+
+/** Where a REPL call's script calls are read from, and what showing one does. */
+interface ScriptView {
+  ctx: RowCtx;
+  agentId?: string;
+  onShow: (repl: MessageRow, index: number) => void;
+  /** The call the REPL call's lower half shows; unset, it follows the script's latest. */
+  shown?: number;
+  onShown?: (index: number | undefined) => void;
+}
+
+/** A Code Mode script's calls in a box of their own, newest last (ScriptCallBox): a click shows one; `shown` is selected. */
+function ScriptCallRows({ repl, script, addons, shown, className }: { repl: MessageRow; script: ScriptView; addons: AddonInfo[]; shown?: number; className: string }) {
+  return (
+    <ScriptCallBox key={repl.toolUseId} toolUseId={repl.toolUseId!} count={repl.calls!.count} ctx={script.ctx} agentId={script.agentId} className={className}>
+      {(calls, start) =>
+        calls.map((t, n) => {
+          const { title, subject } = callTitle(t, addons);
+          const show = () => script.onShow(repl, start + n);
+          return (
+            <div
+              key={t.id}
+              className={`now-call${start + n === shown ? ' selected' : ''}`}
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                show();
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                e.stopPropagation();
+                show();
+              }}
+            >
+              <span className="now-call-tool">{title}</span>
+              <span className="mono now-call-subject">{subject}</span>
+              {callState(t) && <span className={`now-call-state ${t.resultError ? 'error-text' : 'muted'}`}>{callState(t)}</span>}
+            </div>
+          );
+        })
+      }
+    </ScriptCallBox>
+  );
+}
+
 /**
  * Every tool call of the conversation, one row each: the tool, what it worked
  * on, and "Running" or "Failed". The shown call is selected; Up and Down move
@@ -148,14 +195,24 @@ function CallList({
   addons,
   onIndex,
   onShow,
+  expanded,
+  onToggle,
+  script,
+  shownCall,
 }: {
   tools: MessageRow[];
   index: number;
   addons: AddonInfo[];
   onIndex: (i: number) => void;
   onShow: (i: number) => void;
+  /** The REPL calls whose script calls show under them, by tool_use id. */
+  expanded: ReadonlySet<string>;
+  onToggle: (repl: MessageRow) => void;
+  script: ScriptView;
+  /** The script call Now shows, under its REPL call. */
+  shownCall: { repl: string; index: number } | null;
 }) {
-  const state = (t: MessageRow) => (t.result === undefined ? 'Running' : t.resultError ? 'Failed' : undefined);
+  const state = callState;
   return (
     <RowList
       rows={tools}
@@ -172,11 +229,40 @@ function CallList({
       empty={null}
       row={(t) => {
         const { title, subject } = callTitle(t, addons);
-        return (
+        const calls = t.calls && t.toolUseId ? t.calls : null;
+        const open = !!calls && expanded.has(t.toolUseId!);
+        const line = (
           <>
+            {calls && (
+              <button
+                className={`now-call-toggle${open ? ' open' : ''}`}
+                aria-label={open ? 'Hide the script’s calls' : 'Show the script’s calls'}
+                aria-expanded={open}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggle(t);
+                }}
+              >
+                {CHEVRON}
+              </button>
+            )}
             <span className="now-call-tool">{title}</span>
             <span className="mono now-call-subject">{subject}</span>
             {state(t) && <span className={`now-call-state ${t.resultError ? 'error-text' : 'muted'}`}>{state(t)}</span>}
+          </>
+        );
+        if (!open) return line;
+        // Open, the REPL call's line is the row's own (the selection and the focus frame it), and its calls are in a box under it.
+        return (
+          <>
+            <div className="now-call-head">{line}</div>
+            <ScriptCallRows
+              repl={t}
+              script={script}
+              addons={addons}
+              shown={shownCall && shownCall.repl === t.toolUseId ? shownCall.index : undefined}
+              className="now-script-sub"
+            />
           </>
         );
       }}
@@ -325,6 +411,7 @@ function NowScreen({
   addons,
   source,
   nameOf,
+  script,
 }: {
   row: MessageRow;
   taskId: string;
@@ -334,6 +421,8 @@ function NowScreen({
   source: boolean;
   /** An agent's name by its id; null: the main agent. */
   nameOf: (id: string | null) => string;
+  /** A REPL call's script calls, under its code. */
+  script?: ScriptView;
 }) {
   const ctx = { taskId, runId, agentId };
   const running = row.result === undefined;
@@ -341,8 +430,8 @@ function NowScreen({
   const { title, subject } = callTitle(row, addons);
   const image = row.tool === 'Read' && !running && (!!row.image || (!row.resultError && IMAGE_RE.test(row.file ?? '')));
   const lines = row.tool === 'Read' && !running && !image ? gutterLines(row.result ?? '') : null;
-  const changed = row.tool && CHANGES.has(row.tool) ? changeRows(row) : null;
-  const written = row.tool && CHANGES.has(row.tool) ? writtenLines(row) : null;
+  const changed = row.tool && CHANGE_TOOLS.has(row.tool) ? changeRows(row) : null;
+  const written = row.tool && CHANGE_TOOLS.has(row.tool) ? writtenLines(row) : null;
   const doc = source ? null : markdownDoc(row);
   const mail = custom ? null : mailOf(row, nameOf(agentId ?? null), nameOf);
   let body;
@@ -368,6 +457,30 @@ function NowScreen({
         )}
       </>
     );
+  } else if (row.tool === 'REPL') {
+    // The script as JavaScript, what it returned, and the calls it made under them.
+    const code = (str(inputOf(row).code) ?? row.text).replace(/\n+$/, '');
+    const top = (
+      <div className="now-script-code">
+        <EditorScreen file="script.js" lines={code.split('\n').map((text, n) => ({ n: String(n + 1), text }))} />
+        {running ? runningNote(row) : <div className="now-script-result"><ToolResultView row={row} ctx={ctx} /></div>}
+      </div>
+    );
+    body =
+      script && row.calls && row.toolUseId ? (
+        <SplitPane
+          axis="y"
+          initial={60}
+          unit="%"
+          min={15}
+          max={85}
+          storageKey="now-script-split"
+          first={top}
+          second={<ScriptNow repl={row} script={script} addons={addons} screen={{ taskId, runId, agentId, addons, source, nameOf }} />}
+        />
+      ) : (
+        top
+      );
   } else if (row.tool && TERMINALS.has(row.tool)) {
     body = <TerminalScreen row={row} />;
   } else if (row.tool === 'Read' && running) {
@@ -403,7 +516,7 @@ function NowScreen({
     body = <EditorScreen file={row.file} lines={written} />;
   } else if (row.tool === 'Delete') {
     body = <EditorScreen file={row.file} lines={[]} note="Deleted." />;
-  } else if (row.tool === 'Read' || (row.tool && CHANGES.has(row.tool))) {
+  } else if (row.tool === 'Read' || (row.tool && CHANGE_TOOLS.has(row.tool))) {
     screen = false;
     body = row.tool === 'Read' ? <ToolResultView row={row} ctx={ctx} /> : <ToolInputView row={row} />;
   } else {
@@ -468,6 +581,81 @@ function BackgroundOutput({ b, sessionId }: { b: BackgroundTask; sessionId: stri
 const effortText = (a: SubagentInfo) => (a.effort ? effortLabel('claude-code', a.effort) : undefined);
 const contextText = (a: SubagentInfo) => (a.contextTokens !== undefined ? tokensText(a.contextTokens) : undefined);
 
+/** One of a script's calls, read from the engine, as its own screen. */
+function ScriptCallScreen({ repl, index, script, ...screen }: { repl: MessageRow; index: number; script: ScriptView } & Omit<Parameters<typeof NowScreen>[0], 'row' | 'script'>) {
+  const [call, setCall] = useState<MessageRow | null | 'gone'>(null);
+  const toolUseId = repl.toolUseId!;
+  useEffect(() => {
+    let live = true;
+    setCall(null);
+    const { ctx, agentId } = script;
+    const read = ctx.scriptCalls ? ctx.scriptCalls(toolUseId, index + 1, 1) : window.looper.runs.scriptCalls(ctx.taskId, ctx.runId, toolUseId, index + 1, 1, agentId);
+    void read.then(
+      (page) => live && setCall(page?.rows[0] ?? 'gone'),
+      () => live && setCall('gone'),
+    );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toolUseId, index]);
+  if (call === null || call === 'gone') {
+    return <div className="now-body muted">{call === null ? 'Loading the call…' : 'The call can’t be shown.'}</div>;
+  }
+  return <NowScreen {...screen} row={call} />;
+}
+
+/**
+ * A REPL call's lower half, as Now is for the conversation: the script's latest call (or the one picked) as its
+ * screen, a toolbar that steps through the script's calls and follows its latest, and the list of them.
+ */
+function ScriptNow({ repl, script, addons, screen }: { repl: MessageRow; script: ScriptView; addons: AddonInfo[]; screen: Omit<Parameters<typeof NowScreen>[0], 'row' | 'script'> }) {
+  const count = repl.calls!.count;
+  const [listView, setListView] = useState(false);
+  const k = Math.min(script.shown ?? count - 1, count - 1);
+  const go = (to: number) => script.onShown?.(to >= count - 1 ? undefined : Math.max(0, to));
+  return (
+    <div className="now-script-now">
+      <Toolbar
+        inline
+        className="pane-toolbar"
+        groups={[
+          {
+            id: 'calls',
+            items: [
+              { id: 'previous', label: 'Previous Call in the Script', icon: 'previous', enabled: k > 0, run: () => go(k - 1) },
+              { id: 'next', label: 'Next Call in the Script', icon: 'next', enabled: k < count - 1, run: () => go(k + 1) },
+              { id: 'latest', label: 'Follow the Script’s Latest Call', icon: 'latest', pressed: script.shown === undefined, run: () => go(count - 1) },
+            ],
+          },
+          { id: 'view', items: [{ id: 'list', label: 'The Script’s Call List', icon: 'list', pressed: listView, run: () => setListView((v) => !v) }] },
+        ]}
+      >
+        <span className="muted now-place">
+          {k + 1} of {count}
+        </span>
+      </Toolbar>
+      {listView ? (
+        <ScriptCallRows
+          repl={repl}
+          script={{
+            ...script,
+            onShow: (_r, index) => {
+              go(index);
+              setListView(false);
+            },
+          }}
+          addons={addons}
+          shown={k}
+          className="now-script-calls"
+        />
+      ) : (
+        <ScriptCallScreen key={k} repl={repl} index={k} script={script} {...screen} />
+      )}
+    </div>
+  );
+}
+
 /** The tool call Now shows: the one at `pos`, or the latest when it's null. */
 export function nowIndex(count: number, pos: number | null): number {
   return pos === null ? count - 1 : Math.min(pos, count - 1);
@@ -501,6 +689,7 @@ export function ActivityPanel({
   projectId,
   initialTab = 'now',
   only,
+  scriptCalls,
 }: {
   sessionId: string;
   taskId: string;
@@ -532,6 +721,8 @@ export function ActivityPanel({
   initialTab?: Tab;
   /** The tabs it shows; unset: all of them. A past conversation (History) has nothing in the background. */
   only?: Tab[];
+  /** A transcript outside Looper's runs: its Code Mode scripts' calls (HistoryConversation.scriptCalls). */
+  scriptCalls?: Record<string, MessageRow[]>;
 }) {
   const [picked, setTab] = useState<Tab>(initialTab);
   const addonTabs = useAddonProjectTabs(projectId).filter((t) => !only || only.includes(t.id));
@@ -542,7 +733,23 @@ export function ActivityPanel({
   const tools = rows.filter((r) => r.kind === 'tool');
   const i = nowIndex(tools.length, pos);
   const row = tools[i];
-  const step = (to: number) => onPos(to >= tools.length - 1 ? null : Math.max(0, to));
+  // A script's call Now shows instead of its REPL call, which stays the call Now is at.
+  const [inner, setInner] = useState<{ repl: string; index: number } | null>(null);
+  const shownCall = inner && row?.toolUseId === inner.repl && row.calls ? inner : null;
+  const step = (to: number) => {
+    setInner(null);
+    onPos(to >= tools.length - 1 ? null : Math.max(0, to));
+  };
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const scriptCtx = useMemo<RowCtx>(() => ({ taskId, runId: sessionId, ...(scriptCalls ? { scriptCalls: localScriptCalls(scriptCalls) } : {}) }), [taskId, sessionId, scriptCalls]);
+  const script: ScriptView = {
+    ctx: scriptCtx,
+    agentId: rowsAgent ?? undefined,
+    onShow: (repl, index) => {
+      onPos(tools.indexOf(repl));
+      setInner({ repl: repl.toolUseId!, index });
+    },
+  };
   // Now as a list of every tool call instead of the one call's screen; a Markdown file as its source.
   const [listView, setListView] = useState(false);
   const [mdSource, setMdSource] = useState(false);
@@ -552,19 +759,23 @@ export function ActivityPanel({
   ]);
   const nameOf = (id: string | null) => (id === null ? MAIN_AGENT : (agentNames.get(id) ?? id));
 
-  const files = new Map<string, { changed: boolean; index: number }>();
+  // A file a script's call worked on shows that call (`call`) under its REPL call.
+  const files = new Map<string, { changed: boolean; index: number; call?: number }>();
   tools.forEach((t, n) => {
+    for (const f of t.calls?.files ?? []) files.set(f.path, { changed: (files.get(f.path)?.changed ?? false) || f.changed, index: n, call: f.index });
     if (!t.file) return;
     const prev = files.get(t.file);
-    files.set(t.file, { changed: (prev?.changed ?? false) || CHANGES.has(t.tool ?? ''), index: n });
+    files.set(t.file, { changed: (prev?.changed ?? false) || CHANGE_TOOLS.has(t.tool ?? ''), index: n });
   });
   const changed = [...files].filter(([, f]) => f.changed);
   const read = [...files].filter(([, f]) => !f.changed);
   // The files the agent sent the user (SendUserFile), each once.
   const received = [...new Map(rows.flatMap((r) => r.sent?.files ?? []).map((f) => [f.path, f] as [string, SentFile])).values()];
-  const showFile = (index: number) => {
+  const showFile = (index: number, call?: number) => {
     setTab('now');
-    step(index);
+    setListView(false);
+    if (call === undefined) step(index);
+    else script.onShow(tools[index], call);
   };
   // Subagents are in their own tab, background ones too.
   const own = background.filter((b) => b.kind !== 'agent');
@@ -629,7 +840,7 @@ export function ActivityPanel({
         />
       </Section>
     );
-  const fileList = (title: string, list: [string, { index: number }][]) =>
+  const fileList = (title: string, list: [string, { index: number; call?: number }][]) =>
     list.length > 0 && (
       <Section className="activity-section" title={title}>
         <RowList
@@ -642,7 +853,7 @@ export function ActivityPanel({
           rowClass="file-item"
           selected={sel.file}
           onSelect={([p]) => setSel((s) => ({ ...s, file: p }))}
-          onOpen={([, f]) => showFile(f.index)}
+          onOpen={([, f]) => showFile(f.index, f.call)}
           activateOnClick
           onMenu={([p]) => window.looper.showMessageContextMenu({ taskId, runId: sessionId, file: p })}
           empty={null}
@@ -691,7 +902,7 @@ export function ActivityPanel({
                     items: [
                       { id: 'previous', label: 'Previous Tool Call', icon: 'previous', enabled: i > 0, run: () => step(i - 1) },
                       { id: 'next', label: 'Next Tool Call', icon: 'next', enabled: i < tools.length - 1, run: () => step(i + 1) },
-                      { id: 'latest', label: 'Follow the Latest Tool Call', icon: 'latest', pressed: pos === null, run: () => onPos(null) },
+                      { id: 'latest', label: 'Follow the Latest Tool Call', icon: 'latest', pressed: pos === null, run: () => step(tools.length - 1) },
                     ],
                   },
                   {
@@ -717,9 +928,34 @@ export function ActivityPanel({
                     step(n);
                     setListView(false);
                   }}
+                  expanded={expanded}
+                  onToggle={(t) =>
+                    setExpanded((s) => {
+                      const next = new Set(s);
+                      if (!next.delete(t.toolUseId!)) next.add(t.toolUseId!);
+                      return next;
+                    })
+                  }
+                  script={{
+                    ...script,
+                    onShow: (repl, index) => {
+                      script.onShow(repl, index);
+                      setListView(false);
+                    },
+                  }}
+                  shownCall={shownCall}
                 />
               ) : (
-                <NowScreen row={row} taskId={taskId} runId={sessionId} agentId={rowsAgent ?? undefined} addons={addons} source={mdSource} nameOf={nameOf} />
+                <NowScreen
+                  row={row}
+                  taskId={taskId}
+                  runId={sessionId}
+                  agentId={rowsAgent ?? undefined}
+                  addons={addons}
+                  source={mdSource}
+                  nameOf={nameOf}
+                  script={{ ...script, shown: shownCall?.index, onShown: (index) => setInner(index === undefined ? null : { repl: row.toolUseId!, index }) }}
+                />
               )}
             </>
           ) : (

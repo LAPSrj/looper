@@ -1,3 +1,4 @@
+import { attentionKey } from '@shared/dashboard';
 import { REMOTE_STATUS_LABELS, fmtClock } from '../../format';
 import { splitAttention, waitingForYou } from '../../phone-lists';
 import type { MainWindow } from '../../useMainWindow';
@@ -46,7 +47,7 @@ export function PhoneDashboard({ m }: { m: MainWindow }) {
               chevron
               // A chat opens on its conversation, ready to answer; a run on its run window (the question) or its terminal.
               onOpen={() => (w.kind === 'chat' ? window.looper.sessions.openWindow(w.session.id) : opens.attention(w.attention))}
-              onMenu={w.kind === 'chat' ? () => window.looper.sessions.showContextMenu(w.session.id, false) : taskRowMenu(m, w.attention.task.id, 'attention', w.attention.runId)}
+              onMenu={w.kind === 'chat' ? () => window.looper.sessions.showContextMenu(w.session.id, false) : taskRowMenu(m, w.attention.task.id, 'attention', w.attention.runId, attentionKey(w.attention))}
             />
           ))}
         </Section>

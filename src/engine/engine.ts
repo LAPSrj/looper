@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { RecentRun } from '../shared/dashboard';
 import { modelWindows } from './model-windows';
-import { eventsMessage, type MessageImage, type MessagesResult } from '../shared/messages';
-import { runShown, type RunFilter } from '../shared/runs';
+import { eventsMessage, type MessageImage, type MessagesResult, type ScriptCalls } from '../shared/messages';
+import { runShown, type RunFilter, type RunSummary } from '../shared/runs';
 import type { EngineEvent, Harness, InboxCommand, PreventSleepState, PreventSleepTimer, Project, ProjectFolder, RecycleBinEntry, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
 import {
   FOLDER_TASK_PREFIX,
@@ -31,10 +31,10 @@ import { TerminalSessions, type TerminalSessionsDeps } from './terminal-sessions
 import { CODEX_CACHE_MS } from './context';
 import { CACHE_LONG_MS, lastCacheUse, RemoteControl } from './remote';
 import type { RemoteMessage, RemoteState } from '../shared/remote';
-import { ChatManager, imageMediaType, kindMismatchText, withFileList } from './chat';
+import { attachmentAt, ChatManager, imageMediaType, kindMismatchText } from './chat';
 import { folderStandInId, HistoryService, LEDGER_FILE, runSessionRefs, SessionLedger, transcriptHistory, type HistoryDeps, type HistoryTranscript } from './history';
 import { NO_HISTORY_COMMANDS, type HistoryCommands, type HistoryConversation, type HistoryItem, type HistoryList, type HistoryListOptions } from '../shared/history';
-import { fileAttachments, withCommands, type CommandOutput } from '../shared/bash-mode';
+import { fileAttachments, withCommands, withFileList, type CommandOutput } from '../shared/bash-mode';
 import { UserCommands } from './command-output';
 import { readPendingGuidance } from './guidance';
 import type { RunContext } from './steps/common';
@@ -51,7 +51,7 @@ import { Scheduler, type SchedulerSteps } from './scheduler';
 import { ensureDir, readJson, writeJsonAtomic, writeText } from './store/fsutil';
 import { RunStore, newRunId } from './store/runs';
 import { loadSettings, saveSettings } from './store/settings';
-import { StateStore, type OpenConversation } from './store/state';
+import { migrateStateFile, StateStore, type OpenConversation } from './store/state';
 import { expiredBinEntries, TaskStore } from './store/tasks';
 import { TemplateStore } from './store/templates';
 import { VersionStore, type FileContent } from './store/versions';
@@ -70,6 +70,9 @@ import {
   type VersionSource,
   type VersionSummary,
 } from '../shared/versions';
+
+/** Why a task the user completed from the menu was completed. */
+const USER_COMPLETED = 'completed by the user';
 
 /** Where a command's terminal runs: a project's environment and folder, or a folder (in the environment's own form) in an environment. */
 export type CommandPlace = { projectId: string } | { environmentId: string; cwd: string };
@@ -235,6 +238,8 @@ export interface Engine {
    * the task's newest run in flight is stopped.
    */
   stopTask(id: string, reason?: string, runId?: string): Promise<boolean>;
+  /** Needs attention's Clear: forget these notices (by attentionKey). */
+  clearNotices(keys: string[]): void;
   /**
    * Open the task's harness in a window of the system's terminal (same
    * env/cwd/model/args, no prompt). A run id resumes that run's conversation
@@ -451,13 +456,15 @@ export interface Engine {
   closeLogin(sessionId: string): void;
   // history
   listRuns(id: string, limit?: number): Promise<RunRecord[]>;
-  /** The newest `limit` runs the filter shows, across every task and Remote Control folder project and helper. */
-  recentRuns(limit: number, filter: RunFilter): Promise<RecentRun[]>;
+  /** The newest `limit` runs the filter shows, and every one that started at `since` or later, across every task and Remote Control folder project and helper. */
+  recentRuns(limit: number, filter: RunFilter, since: number): Promise<RecentRun[]>;
   readOutput(id: string, runId: string, maxBytes?: number, forceRaw?: boolean): string;
   /** The run's conversation from the harness transcript (agentId: a subagent's instead; raw: every record as JSON). */
   readMessages(id: string, runId: string, agentId?: string, raw?: boolean): Promise<MessagesResult>;
   /** The image payload behind a message row's image marker. */
   readMessageImage(id: string, runId: string, rowId: string, agentId?: string): Promise<MessageImage | null>;
+  /** `count` of the tool calls a Code Mode script made, before the `before`th (the newest without it), by its REPL call's tool_use id. */
+  readScriptCalls(id: string, runId: string, toolUseId: string, before: number | null, count: number, agentId?: string): Promise<ScriptCalls | null>;
   /** Delete a task's run history. Refused while the task is mid-cycle. */
   clearRuns(id: string): void;
   runDir(id: string, runId: string): string;
@@ -612,6 +619,7 @@ export function createEngine(opts: EngineOptions): Engine {
   const messages = new MessagesService({
     getTask: lookup,
     runDir: (taskId, runId) => runs.runDir(taskId, runId),
+    attachment: attachmentAt(path.join(dataDir, 'tasks')),
     host,
     settings,
     log,
@@ -1681,6 +1689,11 @@ export function createEngine(opts: EngineOptions): Engine {
       projects.load();
       tasks.load();
       templates.load();
+      const completed = tasks.list().flatMap((t) =>
+        t.completedAt && t.completedReason !== USER_COMPLETED ? [[t.id, { at: Date.parse(t.completedAt), reason: t.completedReason ?? '' }] as const] : [],
+      );
+      const retained = Date.now() - settings.runRetentionDays * 24 * 60 * 60 * 1000;
+      migrateStateFile(path.join(dataDir, 'state.json'), settings.view.attentionCleared, Object.fromEntries(completed), retained);
       step('load');
       const emitProjects = () => emit({ type: 'projects', projects: projects.list() });
       // A changed project's tasks take its values; Remote Control opens or ends its conversation.
@@ -1987,9 +2000,10 @@ export function createEngine(opts: EngineOptions): Engine {
     runNow: (id, skips) => scheduler.runNow(id, skips),
     pause: (id, reason) => scheduler.pause(id, reason),
     resume: (id) => scheduler.resume(id),
-    completeTask: (id, reason) => scheduler.completeTask(id, reason ?? 'completed by the user'),
+    completeTask: (id, reason) => scheduler.completeTask(id, reason ?? USER_COMPLETED, { byUser: reason === undefined }),
     reopenTask: (id) => scheduler.reopenTask(id),
     stopTask: (id, reason, runId) => scheduler.stopTask(id, reason, runId),
+    clearNotices: (keys) => scheduler.clearNotices(new Set(keys)),
     openTaskTerminal(id: string, runId?: string): Promise<void> {
       const task = taskOrProject(id);
       if (!task) throw new Error(`unknown task ${id}`);
@@ -2378,8 +2392,9 @@ export function createEngine(opts: EngineOptions): Engine {
     },
     preventSleepState: () => preventSleep?.state() ?? { timer: 'off', until: null, active: false },
     listRuns: (id, limit) => runs.listTail(id, limit),
-    async recentRuns(limit: number, filter: RunFilter): Promise<RecentRun[]> {
+    async recentRuns(limit: number, filter: RunFilter, since: number): Promise<RecentRun[]> {
       const out: RecentRun[] = [];
+      const kept = (r: RunSummary, i: number) => i < limit || Date.parse(r.startTs) >= since;
       const listed = runs.listTaskIds().flatMap((taskId) => {
         const task = lookup(taskId);
         return task ? [{ taskId, task }] : [];
@@ -2387,13 +2402,14 @@ export function createEngine(opts: EngineOptions): Engine {
       const all = await Promise.all(listed.map(({ taskId }) => runs.loadSummaries(taskId)));
       listed.forEach(({ taskId, task }, i) => {
         const shown = all[i].filter((r) => runShown(r, filter));
-        for (const r of shown.slice(0, limit)) out.push({ ...r, taskId, taskName: task.name });
+        for (let n = 0; n < shown.length && kept(shown[n], n); n++) out.push({ ...shown[n], taskId, taskName: task.name });
       });
-      return out.sort((a, b) => b.startTs.localeCompare(a.startTs)).slice(0, limit);
+      return out.sort((a, b) => b.startTs.localeCompare(a.startTs)).filter(kept);
     },
     readOutput: (id, runId, max, raw) => runs.readOutput(id, runId, max, raw),
     readMessages: (id, runId, agentId, raw) => messages.read(id, runId, agentId, raw),
     readMessageImage: (id, runId, rowId, agentId) => messages.readImage(id, runId, rowId, agentId),
+    readScriptCalls: (id, runId, toolUseId, before, count, agentId) => messages.readScriptCalls(id, runId, toolUseId, before, count, agentId),
     clearRuns(id: string): void {
       const rt = scheduler.get(id);
       if (rt && (rt.runs.length > 0 || rt.children.length > 0)) {
@@ -2403,6 +2419,7 @@ export function createEngine(opts: EngineOptions): Engine {
         throw new Error('A chat or terminal window of this task is open. Close it first.');
       }
       runs.clear(id);
+      scheduler.clearNotices({ taskId: id });
       log.info(`cleared run history of ${id}`);
     },
     runDir: (id, runId) => runs.runDir(id, runId),

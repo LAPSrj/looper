@@ -1,9 +1,9 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useThumbnail } from './hooks';
 import { onUi } from '../events';
 import { sizeText, type CommandOutput, type SavedOutput } from '@shared/bash-mode';
 import type { Attachment } from '@shared/chat';
-import { handbackText, type MessageRow, type SentFile, type SentFileInfo, type SentFiles } from '@shared/messages';
+import { handbackText, scriptCallsPage, type MessageRow, type ScriptCalls, type SentFile, type SentFileInfo, type SentFiles } from '@shared/messages';
 import { fmtSize } from '../format';
 import { toolGroupLabel } from './chat-groups';
 import { MessageBody, PromptBody } from './Markdown';
@@ -14,6 +14,8 @@ import { reportError } from '../report-error';
 export type RowCtx = {
   taskId: string;
   runId: string;
+  /** Where a Code Mode script's calls come from when the conversation isn't a run's (runs.scriptCalls otherwise). */
+  scriptCalls?: (toolUseId: string, before: number | null, count: number) => Promise<ScriptCalls | null>;
   /** Right-click on a message or tool call (the chat window's menu). */
   onContextMenu?: (e: React.MouseEvent, row: MessageRow) => void;
 };
@@ -72,7 +74,7 @@ function commandStatus(c: CommandOutput): string {
   return c.exitCode ? `Exit code ${c.exitCode}` : '';
 }
 
-const CHEVRON = (
+export const CHEVRON = (
   <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="m2 3.5 3 3 3-3" />
   </svg>
@@ -386,7 +388,7 @@ export const systemSelecting = (e: React.SyntheticEvent): boolean =>
   document.documentElement.classList.contains('phone-window') && !!(e.target as Element).closest?.('[data-selecting]');
 
 const sameCtx = (a: RowCtx, b: RowCtx): boolean =>
-  a === b || (a.taskId === b.taskId && a.runId === b.runId && a.onContextMenu === b.onContextMenu);
+  a === b || (a.taskId === b.taskId && a.runId === b.runId && a.onContextMenu === b.onContextMenu && a.scriptCalls === b.scriptCalls);
 
 function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
   // The innermost row answers: a tool call inside its group, not the group.
@@ -497,6 +499,7 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
                 <ToolResultView row={row} ctx={ctx} />
               </div>
             )}
+            {row.calls && row.toolUseId ? <ScriptCalls calls={row.calls} toolUseId={row.toolUseId} ctx={ctx} /> : null}
           </div>
         </Disclosure>
       );
@@ -529,6 +532,133 @@ function ToolGroupView({ rows, ctx }: { rows: MessageRow[]; ctx: RowCtx }) {
     </Disclosure>
   );
 }
+
+/** How many of a script's calls are read at a time: a screen of closed lines and more. */
+const SCRIPT_CALLS_PAGE = 30;
+/** How far above the view (px) the list's top comes before older calls are read. */
+const SCRIPT_CALLS_AHEAD = 300;
+
+/** The tool calls a Code Mode script made, under its REPL call: one closed line; open, the calls, newest last. */
+function ScriptCalls({ calls, toolUseId, ctx }: { calls: NonNullable<MessageRow['calls']>; toolUseId: string; ctx: RowCtx }) {
+  return (
+    <Disclosure
+      className="chat-aside chat-tools chat-script-calls"
+      summary={
+        <summary>
+          {calls.count === 1 ? '1 tool use' : `${calls.count} tool uses`}
+          {calls.failed ? <span className="error-text">, {calls.failed} failed</span> : null}
+        </summary>
+      }
+    >
+      <ScriptCallBox toolUseId={toolUseId} count={calls.count} ctx={ctx} className="chat-tools-list chat-script-list">
+        {(rows) => rows.map((r) => <ChatRow key={r.id} row={r} ctx={ctx} />)}
+      </ScriptCallBox>
+    </Disclosure>
+  );
+}
+
+/**
+ * A script's calls in a box of their own (`className` scrolls it), which opens at its end: read from the engine a page
+ * at a time, the newest first, and the ones before as the box's top comes near, keeping the reader where they are. A
+ * box too short to scroll reads more until it's full. The list is read again as the script's count grows. `children`
+ * draws the calls read so far, the first being the script's `start`th.
+ */
+export function ScriptCallBox({
+  toolUseId,
+  count,
+  ctx,
+  agentId,
+  className,
+  children,
+}: {
+  toolUseId: string;
+  count: number;
+  ctx: RowCtx;
+  agentId?: string;
+  className: string;
+  children: (rows: MessageRow[], start: number) => ReactNode;
+}) {
+  const [list, setList] = useState<{ start: number; rows: MessageRow[] } | null | 'gone'>(null);
+  const busy = useRef(false);
+  const top = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const atEndOnce = useRef(false);
+  const anchor = useRef<{ el: HTMLElement; height: number; top: number } | null>(null);
+  const read = (before: number | null, size: number) =>
+    (ctx.scriptCalls ? ctx.scriptCalls(toolUseId, before, size) : window.looper.runs.scriptCalls(ctx.taskId, ctx.runId, toolUseId, before, size, agentId)).catch(() => null);
+
+  useEffect(() => {
+    let live = true;
+    const end = list && list !== 'gone' ? list.start + list.rows.length : 0;
+    if (list === 'gone' || (list && end >= count) || busy.current) return;
+    busy.current = true;
+    void read(list ? count : null, list ? Math.min(count - end, 200) : SCRIPT_CALLS_PAGE).then((page) => {
+      busy.current = false;
+      if (!live) return;
+      if (!page) setList((l) => l ?? 'gone');
+      else setList((l) => (l && l !== 'gone' ? { start: l.start, rows: [...l.rows, ...page.rows.slice(Math.max(0, l.start + l.rows.length - page.start))] } : { start: page.start, rows: page.rows }));
+    });
+    return () => {
+      live = false;
+      busy.current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [count, list === null, list === 'gone']);
+
+  const older = () => {
+    if (busy.current || !list || list === 'gone' || list.start === 0) return;
+    busy.current = true;
+    const from = list.start;
+    void read(from, SCRIPT_CALLS_PAGE).then((page) => {
+      busy.current = false;
+      if (!page) return;
+      const el = box.current;
+      if (el) anchor.current = { el, height: el.scrollHeight, top: el.scrollTop };
+      setList((l) => (l && l !== 'gone' && l.start === from ? { start: page.start, rows: [...page.rows, ...l.rows] } : l));
+    });
+  };
+
+  /** The box's top is in view, or less than SCRIPT_CALLS_AHEAD px above it. */
+  const topNear = (): boolean => !!box.current && box.current.scrollTop < SCRIPT_CALLS_AHEAD;
+
+  // The box opens at its newest call. Older calls went in above: the reader stays on what they were reading, and while the top is still near, more come.
+  useLayoutEffect(() => {
+    const el = box.current;
+    const a = anchor.current;
+    anchor.current = null;
+    if (el && !atEndOnce.current) {
+      el.scrollTop = el.scrollHeight;
+      atEndOnce.current = true;
+    } else if (a) a.el.scrollTop = a.top + a.el.scrollHeight - a.height;
+    if (topNear()) older();
+  });
+
+  useEffect(() => {
+    const el = top.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([e]) => {
+      if (e.isIntersecting) older();
+    }, { root: box.current, rootMargin: `${SCRIPT_CALLS_AHEAD}px 0px 0px 0px` });
+    io.observe(el);
+    return () => io.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list]);
+
+  if (list === null) return <div className="muted tc-image-note">Loading the calls…</div>;
+  if (list === 'gone') return <div className="muted tc-image-note">The calls can’t be shown.</div>;
+  return (
+    <div className={className} ref={box}>
+      <div ref={top} />
+      {children(list.rows, list.start)}
+    </div>
+  );
+}
+
+/** The calls of a transcript outside Looper's runs (HistoryConversation.scriptCalls), a page at a time. */
+export const localScriptCalls =
+  (all: Record<string, MessageRow[]>): NonNullable<RowCtx['scriptCalls']> =>
+  async (id, before, count) =>
+    all[id] ? scriptCallsPage(all[id], before, count) : null;
 
 /**
  * A <details> whose body is drawn the first time it opens, then kept. Closed, a chat's tool calls built every

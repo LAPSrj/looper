@@ -304,7 +304,7 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
           {state.queued.map((m) => (
             <div key={m.id} className="chat-queued">
               <UserMessage text={m.text} attachments={m.attachments.length > 0 ? m.attachments : undefined} />
-              {!m.sent && (
+              {!m.sent && !m.delivered && (
                 <div className="chat-queued-actions">
                   <button className="link" onClick={() => editQueued(m.id)}>
                     Edit

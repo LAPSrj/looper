@@ -3,7 +3,7 @@ import type { SlashCommand } from './sessions';
 
 /** One row of the Messages view: a prompt, an agent reply, a thought, a tool call, or (raw mode) a record. */
 export interface MessageRow {
-  /** Stable per-transcript id (monotonic; survives head truncation). */
+  /** Stable per-transcript id (monotonic). */
   id: string;
   /** ISO timestamp of the transcript record, when it carries one. */
   ts?: string;
@@ -44,6 +44,13 @@ export interface MessageRow {
   file?: string;
   /** Tool rows: the structured input, for custom renders (omitted when oversized). */
   input?: unknown;
+  /** A Code Mode REPL call: the lines its script logged, apart from `result` (what it returned, or the error that ended it). */
+  logs?: string;
+  /**
+   * A Code Mode REPL call: how many tool calls its script made, how many failed, and the files they read or changed,
+   * each with the last call on it (runs.scriptCalls reads the calls).
+   */
+  calls?: { count: number; failed: number; files?: { path: string; changed: boolean; index: number }[] };
   /** Edit/Write rows: the diff hunks the harness recorded for the change. */
   patch?: PatchHunk[];
   /** Prompt rows of a task chat: the files sent with the message. */
@@ -138,11 +145,26 @@ export type MessagesStatus =
   /** The session is known but its transcript cannot be read (cleaned up, or not written yet). */
   | 'no-transcript';
 
+/** Tools that change a file (Delete and Patch are Codex's). */
+export const CHANGE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Delete', 'Patch']);
+
+/** A page of the tool calls a Code Mode script made: the calls from `start` on, of `total`. */
+export interface ScriptCalls {
+  rows: MessageRow[];
+  start: number;
+  total: number;
+}
+
+/** `count` of a script's calls before the `before`th, the newest without it. */
+export function scriptCallsPage(all: MessageRow[], before: number | null, count: number): ScriptCalls {
+  const end = before === null ? all.length : Math.min(before, all.length);
+  const start = Math.max(0, end - count);
+  return { rows: all.slice(start, end), start, total: all.length };
+}
+
 export interface MessagesResult {
   status: MessagesStatus;
   rows: MessageRow[];
-  /** Rows dropped from the start of an oversized transcript. */
-  dropped: number;
   /** Guidance sent to the run that the agent has not picked up yet. */
   pendingGuidance?: string;
   /** The skills the agent's session was offered, from its transcript: a task run's "/" list. */

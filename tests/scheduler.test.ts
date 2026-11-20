@@ -10,6 +10,7 @@ import { TaskStore } from '../src/engine/store/tasks';
 import { SettingsSchema, type ActiveRun, type EngineEvent, type Settings, type TaskInput } from '../src/shared/types';
 import type { AgentEnd, AgentHandle } from '../src/engine/steps/agent';
 import { readPendingGuidance, takeEvents, takePendingGuidance } from '../src/engine/guidance';
+import { noticeKey } from '../src/shared/dashboard';
 import type { CheckResult } from '../src/engine/steps/check';
 import type { ClassifyResult } from '../src/engine/steps/classify';
 
@@ -397,6 +398,55 @@ describe('Scheduler', () => {
     h.sched.resume('t1');
     expect(h.sched.get('t1')!.state).toBe('idle');
     expect(h.sched.get('t1')!.consecutiveErrors).toBe(0);
+  });
+
+  it('keeps each warning and error for Needs attention until Clear, whatever the next runs do', async () => {
+    h.checks.push(check('act'), check('act'), check('noop'));
+    h.agentEnds.push({ ...agentEnd('done', 'Deployed with caveats'), doneStatus: 'warning' });
+    h.agentEnds.push({ ...agentEnd('done', 'Blocked'), doneStatus: 'error' });
+    const started = h.clock.now;
+    await h.tickN(1);
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    const rt = h.sched.get('t1')!;
+    expect(rt.lastResult).toBe('noop');
+    expect(rt.notices.map((p) => [p.result, p.detail, p.at])).toEqual([
+      ['warning', 'Deployed with caveats', started],
+      ['error', 'Blocked', started + 60_000],
+    ]);
+    h.sched.clearNotices(new Set([noticeKey('t1', rt.notices[0])]));
+    expect(h.sched.get('t1')!.notices.map((p) => p.detail)).toEqual(['Blocked']);
+    h.sched.clearNotices({ taskId: 't1' });
+    expect(h.sched.get('t1')!.notices).toEqual([]);
+  });
+
+  it('an auto-pause is the problem of the run that caused it', async () => {
+    h.tasks.patch('t1', { backoff: { maxConsecutiveErrors: 2 } });
+    h.checks.push(check('error', { error: 'boom' }), check('error', { error: 'boom' }));
+    await h.tickN(1);
+    h.clock.now += 60_000;
+    await h.tickN(1);
+    expect(h.sched.get('t1')!.notices.map((p) => [p.result, p.paused ?? null])).toEqual([
+      ['error', null],
+      ['error', 'auto-paused after 2 consecutive errors'],
+    ]);
+  });
+
+  it("keeps only a task's newest machine failure", async () => {
+    h.checks.push(
+      check('error', { error: 'curl: (6) Could not resolve host a', network: true }),
+      check('error', { error: 'curl: (6) Could not resolve host b', network: true }),
+      check('error', { error: 'boom' }),
+    );
+    for (let i = 0; i < 3; i++) {
+      await h.tickN(1);
+      h.clock.now += 60_000;
+    }
+    const notices = h.sched.get('t1')!.notices;
+    expect(notices.map((p) => p.machine ?? false)).toEqual([true, false]);
+    expect(notices[0].detail).toMatch(/host b/);
   });
 
   it('records the looper-done status as the run outcome; error status counts as an error', async () => {
@@ -1672,6 +1722,7 @@ describe('startup overdue filtering', () => {
         watcher: null,
         lastEventAt: null,
         session: null,
+        notices: [],
       },
     });
     state.flush();
@@ -1722,6 +1773,7 @@ describe('startup overdue filtering', () => {
         watcher: null,
         lastEventAt: null,
         session: null,
+        notices: [],
       },
     });
     state.flush();
@@ -1801,6 +1853,7 @@ describe('interrupted runs', () => {
         watcher: null,
         lastEventAt: null,
         session: null,
+        notices: [],
       },
     });
     state.flush();
@@ -2472,6 +2525,7 @@ describe('a run open in a chat when Looper restarts', () => {
         watcher: null,
         lastEventAt: null,
         session: null,
+        notices: [],
       },
     });
     state.flush();
@@ -2775,6 +2829,24 @@ describe('task completion', () => {
     expect(h.tasks.get('t1')!.completedAt).toBeUndefined();
     expect(h.sched.get('t1')!.state).toBe('idle');
     expect(records().some((r) => r.summary?.startsWith('completion signal ignored: this task'))).toBe(true);
+  });
+
+  it("the task's completion shows in Needs attention, unless the user completed it; reopening takes it off", async () => {
+    allowComplete();
+    h.checks.push(check('act'));
+    h.completeSignals.push('the migration is finished');
+    h.agentEnds.push({ ...agentEnd('done', 'migrated, one table skipped'), doneStatus: 'warning' });
+    await h.tickN(1);
+    const runId = h.sched.get('t1')!.lastRunId;
+    expect(h.sched.get('t1')!.notices.map((n) => [n.runId, n.result, n.detail, n.completed ?? false])).toEqual([
+      [runId, null, 'the migration is finished', true],
+      [runId, 'warning', 'migrated, one table skipped', false],
+    ]);
+    h.sched.reopenTask('t1');
+    expect(h.sched.get('t1')!.notices.map((n) => n.result)).toEqual(['warning']);
+    h.sched.completeTask('t1', 'completed by the user', { byUser: true });
+    expect(h.tasks.get('t1')!.completedAt).toBeTruthy();
+    expect(h.sched.get('t1')!.notices.map((n) => n.result)).toEqual(['warning']);
   });
 
   it('a stopped run never completes the task', async () => {

@@ -1,5 +1,5 @@
 import type { ActiveRun, TaskRuntime } from '@shared/types';
-import type { AttentionRow, RecentRun, RunningRow } from '@shared/dashboard';
+import { attentionKey, byLevel, type AttentionRow, type RecentRun, type RunningRow } from '@shared/dashboard';
 import type { RemoteConversation } from '@shared/remote';
 import type { SessionSummary } from '@shared/sessions';
 import { REMOTE_STATUS_LABELS, fmtClock, formatDuration, resultLabel } from '../format';
@@ -8,7 +8,7 @@ import { DataTable, type DataCol } from './DataTable';
 import { DetailView } from './DetailView';
 import type { LoginRow } from '@shared/logins';
 import { showLoginMenu, showTaskMenu } from './row-menus';
-import { StatusGlyph } from './icons';
+import { StatusGlyph, type StatusLevel } from './icons';
 import { Elapsed } from './Live';
 import { Section } from './Section';
 import { NO_CHATS, statusText } from './SessionList';
@@ -19,8 +19,10 @@ export interface DashboardPick {
   /** remote: a Remote Control conversation, and login: a Claude Code login's row in Needs attention (its key as taskId), which the task menus leave alone. */
   list: 'attention' | 'running' | 'remote' | 'recent' | 'login';
   taskId: string;
-  /** The run the row is about (a conversation's id); null for a row about the task's last result. */
+  /** The run in progress the row is about (a conversation's id); null for a row about a finished run. */
   runId: string | null;
+  /** A Needs attention row: its attentionKey, since a task can have several. */
+  key?: string;
 }
 
 const STEP_LABELS: Record<ActiveRun['state'], string> = {
@@ -38,9 +40,11 @@ const TRIGGER_LABELS: Record<ActiveRun['trigger'], string> = {
 /** Fits a date and time in the regional formats' short style, e.g. "22/10/2026, 18:00". */
 const STARTED_WIDTH = 150;
 
-/** Windows' standard 16 px error and warning icons, named for assistive technology. */
-function StatusIcon({ level }: { level: 'error' | 'warning' }) {
-  return <StatusGlyph level={level} label={level === 'error' ? 'Error' : 'Warning'} />;
+const LEVEL_LABELS: Record<StatusLevel, string> = { error: 'Error', warning: 'Warning', info: 'Information' };
+
+/** Windows' standard 16 px error, warning and information icons, named for assistive technology. */
+function StatusIcon({ level }: { level: StatusLevel }) {
+  return <StatusGlyph level={level} label={LEVEL_LABELS[level]} />;
 }
 
 /** A Needs attention row: a task's, or a Claude Code login's. */
@@ -49,7 +53,7 @@ export type NeedRow = { kind: 'task'; r: AttentionRow } | { kind: 'login'; r: Lo
 /** Needs attention's rows, errors first; within a level the logins first, since every task on one waits for it. */
 export function needRows(attention: AttentionRow[], logins: LoginRow[]): NeedRow[] {
   const rows: NeedRow[] = [...logins.map((r) => ({ kind: 'login' as const, r })), ...attention.map((r) => ({ kind: 'task' as const, r }))];
-  return rows.sort((a, b) => (a.r.level === b.r.level ? 0 : a.r.level === 'error' ? -1 : 1));
+  return rows.sort((a, b) => byLevel(a.r, b.r));
 }
 
 /** A need's title: its task, or the login's harnesses and environment. */
@@ -110,12 +114,14 @@ export { StatusIcon, STEP_LABELS, TRIGGER_LABELS };
 export function Dashboard({ attention, logins, running, remote, chats, recent, runtimes, pick, onPick, onOpen, onClearAttention }: Props) {
   // Only names the day of a time: the running time ticks in its own component.
   const now = Date.now();
-  const pickKey = (p: DashboardPick) => `${p.taskId}-${p.runId ?? 'last'}`;
+  const pickKey = (p: DashboardPick) => p.key ?? `${p.taskId}-${p.runId ?? 'last'}`;
   const pickedIn = (list: DashboardPick['list']) => (pick?.list === list ? pickKey(pick) : null);
 
   const needs = needRows(attention, logins);
   const needPick = (n: NeedRow): DashboardPick =>
-    n.kind === 'task' ? { list: 'attention', taskId: n.r.task.id, runId: n.r.runId } : { list: 'login', taskId: n.r.login.key, runId: null };
+    n.kind === 'task'
+      ? { list: 'attention', taskId: n.r.task.id, runId: n.r.runId, key: attentionKey(n.r) }
+      : { list: 'login', taskId: n.r.login.key, runId: null };
   const runningPick = (r: RunningRow): DashboardPick => ({ list: 'running', taskId: r.task.id, runId: r.runId });
   const opens = dashboardOpeners(onOpen);
   const conversations = remote ?? [];

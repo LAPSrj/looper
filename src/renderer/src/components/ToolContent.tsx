@@ -5,6 +5,7 @@ import { stripAnsi } from '../format';
 import { isPhone } from '../web/page-nav';
 import { escapeHtml, hunkRows, lineDiffRows, markRanges, replacedRows, type DiffRow } from './editor-lines';
 import { Markdown, MessageBody, parseTagSections, TagSections } from './Markdown';
+import { parseInspected } from '@shared/inspect';
 
 type Rec = Record<string, unknown>;
 
@@ -572,6 +573,26 @@ export function ToolResultView({ row, ctx }: { row: MessageRow; ctx: FileCtx }) 
     case 'WebFetch':
     case 'WebSearch':
       return <MessageBody text={result} />;
+    case 'REPL': {
+      // What the script returned, as util.inspect printed it: an object or array as indented JSON, a string as its text.
+      const parsed = row.resultError ? null : parseInspected(result);
+      const value =
+        parsed === null ? (
+          plain(result)
+        ) : typeof parsed.value === 'string' ? (
+          plain(parsed.value)
+        ) : (
+          <CodeBlock text={JSON.stringify(parsed.value, null, 2) ?? String(parsed.value)} language="json" numbered={false} />
+        );
+      return row.logs ? (
+        <>
+          {plain(row.logs)}
+          <div className="tc-repl-value">{value}</div>
+        </>
+      ) : (
+        value
+      );
+    }
     default: {
       // TaskOutput-style results arrive fully tag-wrapped; their content is
       // plain terminal text, so section bodies stay monospace.

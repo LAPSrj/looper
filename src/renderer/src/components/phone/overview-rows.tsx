@@ -1,4 +1,4 @@
-import type { AttentionRow, RunningRow } from '@shared/dashboard';
+import { attentionKey, type AttentionRow, type RunningRow } from '@shared/dashboard';
 import { fmtClock, formatDuration, resultLabel } from '../../format';
 import type { MainWindow } from '../../useMainWindow';
 import { STEP_LABELS, StatusIcon, TRIGGER_LABELS, dashboardOpeners, needAt, needRows, needTitle, showNeedMenu } from '../Dashboard';
@@ -8,10 +8,10 @@ import { Section } from '../Section';
 import { Row } from './PhoneList';
 
 /** A long press on a row about a task: its menu, which acts on that task. */
-export const taskRowMenu = (m: MainWindow, taskId: string, list: 'attention' | 'running', runId: string | null) => () => {
+export const taskRowMenu = (m: MainWindow, taskId: string, list: 'attention' | 'running', runId: string | null, key?: string) => () => {
   const task = m.tasks.find((t) => t.id === taskId);
   if (!task) return;
-  m.setPick({ list, taskId, runId });
+  m.setPick({ list, taskId, runId, key });
   showTaskMenu(task, m.runtimes[taskId]);
 };
 
@@ -30,13 +30,13 @@ export function AttentionGroup({ m, rows }: { m: MainWindow; rows: AttentionRow[
         const at = needAt(n);
         return (
           <Row
-            key={n.kind === 'task' ? `${n.r.task.id}-${n.r.runId ?? 'last'}` : n.r.login.key}
+            key={n.kind === 'task' ? attentionKey(n.r) : n.r.login.key}
             lead={<StatusIcon level={n.r.level} />}
             title={needTitle(n)}
             sub={at !== null ? `${fmtClock(at, now)} · ${n.r.problem}` : n.r.problem}
             chevron
             onOpen={() => opens.need(n)}
-            onMenu={n.kind === 'task' ? taskRowMenu(m, n.r.task.id, 'attention', n.r.runId) : () => showNeedMenu(n, m.runtimes)}
+            onMenu={n.kind === 'task' ? taskRowMenu(m, n.r.task.id, 'attention', n.r.runId, attentionKey(n.r)) : () => showNeedMenu(n, m.runtimes)}
           />
         );
       })}

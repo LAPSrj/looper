@@ -86,7 +86,7 @@ export async function phoneScreens(app, page, chats, screens, phones, wanted) {
     await window.looper.updateSettings({ remoteAccess: { ...s.settings.remoteAccess, enabled: true, sources: ['local'] } });
     for (let i = 0; i < 50; i++) {
       const st = await window.looper.remoteAccess.state();
-      const local = st.status?.sources?.find((x) => x.id === 'local' && x.phase === 'running');
+      const local = st.sources?.find((x) => x.id === 'local' && x.phase === 'running');
       if (local?.url) return local.url;
       await new Promise((r) => setTimeout(r, 200));
     }

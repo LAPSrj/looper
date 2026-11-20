@@ -4,7 +4,7 @@ import type { MessageRow } from '@shared/messages';
 import type { RunAgent, RunPermission, SlashCommand, SubagentInfo } from '@shared/sessions';
 import { PermissionCard } from './PermissionCard';
 import { commandAttachment, parseCommands } from '@shared/bash-mode';
-import { showRowContextMenu, UserMessage, useSelectText, type RowCtx } from './ChatRows';
+import { localScriptCalls, showRowContextMenu, UserMessage, useSelectText, type RowCtx } from './ChatRows';
 import { groupRows } from './chat-groups';
 import { Composer, takeIntoBox } from './Composer';
 import { Conversation, type ConversationPart } from './Conversation';
@@ -59,6 +59,7 @@ export function TranscriptView({
   embedded = false,
   rowMenu = true,
   quote = false,
+  scriptCalls,
 }: {
   taskId: string;
   runId: string;
@@ -74,16 +75,17 @@ export function TranscriptView({
   /** A right-click on a row shows its menu (Copy, Open File, the subagent's conversation). */
   rowMenu?: boolean;
   quote?: boolean;
+  /** A transcript outside Looper's runs: its Code Mode scripts' calls (HistoryConversation.scriptCalls). */
+  scriptCalls?: Record<string, MessageRow[]>;
 }) {
   const { expandThinking } = useChatsSettings();
   const selectText = useSelectText(`${taskId}/${runId}`);
-  const ctx = useMemo<RowCtx>(
-    () =>
-      rowMenu
-        ? { taskId, runId, onContextMenu: (e, row) => showRowContextMenu({ chatId: runId, taskId, quote, selectText: selectText(e) }, row) }
-        : { taskId, runId },
-    [taskId, runId, selectText, rowMenu, quote],
-  );
+  const ctx = useMemo<RowCtx>(() => {
+    const local = scriptCalls ? { scriptCalls: localScriptCalls(scriptCalls) } : {};
+    return rowMenu
+      ? { taskId, runId, ...local, onContextMenu: (e, row) => showRowContextMenu({ chatId: runId, taskId, quote, selectText: selectText(e) }, row) }
+      : { taskId, runId, ...local };
+  }, [taskId, runId, selectText, rowMenu, quote, scriptCalls]);
   const items = useMemo(() => groupRows(rows, expandThinking), [rows, expandThinking]);
   const parts = useMemo<ConversationPart[]>(() => [{ key: '', items }], [items]);
   return (

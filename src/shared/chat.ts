@@ -198,6 +198,8 @@ export interface QueuedMessage {
   attachments: Attachment[];
   /** Claude: already written to the agent, which reads it with its next tool result; it can't be edited any more. */
   sent?: boolean;
+  /** Interactive: the mod handed it to the agent, and it shows here until the conversation has it. */
+  delivered?: boolean;
 }
 
 /** What a chat's run folder records about it (chat.json): Continue in Chat opens the chat again from it. */

@@ -4,11 +4,12 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { stripAnsi } from '../shared/ansi';
 import { agentArgs } from '../shared/projects';
-import { fileAttachments, withCommands, type CommandOutput } from '../shared/bash-mode';
+import { fileAttachments, withCommands, withFileList, type CommandOutput } from '../shared/bash-mode';
 import { UserCommands } from './command-output';
 import { spawnOffThread, type OffThreadChild } from './exec-worker';
 import {
   CONTINUE_TEXT,
+  attachmentName,
   chatTitle,
   continueDelay,
   continueSkipped,
@@ -101,12 +102,21 @@ const SUBAGENT_INBOX = 'subagent-inbox';
 /** A Claude Code agent id ("a030e1626c74e4140"), which names a folder. */
 const SUBAGENT_ID = /^[A-Za-z0-9_-]+$/;
 
-/** The message the agent gets: the user's text, then the paths of the files it reads itself. */
-export function withFileList(text: string, files: string[]): string {
-  if (files.length === 0) return text;
-  const list = files.map((f) => `- ${f}`).join('\n');
-  return `${text}\n\nAttached files (read them from these paths):\n${list}`.trim();
+/**
+ * Looper's copy of a file attached to a message, from the path an agent read
+ * it at (tasks/<task>/attachments/<file>, in the agent's path form); null for
+ * any other path.
+ */
+export function attachmentAt(tasksDir: string): (agentPath: string) => Attachment | null {
+  return (agentPath) => {
+    const parts = agentPath.split(/[\\/]/);
+    if (parts.length < 3) return null;
+    const [task, folder, name] = parts.slice(-3);
+    if (folder !== 'attachments' || [task, name].some((s) => !s || s === '.' || s === '..')) return null;
+    return { name: attachmentName(name), path: path.join(tasksDir, task, folder, name), image: !!imageMediaType(name) };
+  };
 }
+
 
 /**
  * One message for Claude's stream-json input. An image goes inside the
@@ -480,6 +490,8 @@ const LIVE_POLL_MS = 100;
 
 /** How long Stop waits for Claude to end its turn by itself before ending the process. */
 const INTERRUPT_GRACE_MS = 5000;
+/** How long a message the mod handed over still shows as queued after a turn it could have started ended without it. */
+const DELIVERED_GRACE_MS = 3000;
 
 /** The user message Claude records when a turn is interrupted. */
 const INTERRUPTED = '[Request interrupted by user]';
@@ -646,6 +658,8 @@ class ChatSession {
   private sessionStartedAt = 0;
   /** Interactive: the transcript the conversation is read from, from where it stood when the chat started reading it. */
   private transcript: { file: string; reader: TranscriptReader } | null = null;
+  /** The session (sessionSeq) whose transcript the chat follows: messages go to the mod only once it's the running one's. */
+  private transcriptSeq = -1;
   /** Interactive: the queued messages are in the mod's inbox, which it hasn't taken yet: these ones. */
   private inboxWritten = false;
   private inboxIds: string[] = [];
@@ -686,6 +700,15 @@ class ChatSession {
    * reads it with that tool's result, as Claude Code's own queue works.
    */
   private queued: QueuedMessage[] = [];
+  /** Interactive: the messages the mod handed to the agent, which the conversation doesn't show yet. */
+  private delivered: QueuedMessage[] = [];
+  /** When the handed-over messages were written to the inbox: a turn that started after it could have started with them. */
+  private deliveredSince = 0;
+  /** When the handed-over messages stop showing, once a turn they could have started ended without them. */
+  private deliveredUntil: number | null = null;
+  /** How many rows the conversation had when the inbox was written, and when: a message's row comes after them. */
+  private inboxRows = 0;
+  private inboxAt = 0;
   private queueSeq = 0;
   /** The user's messages waiting for a subagent to read them, by its agent id. */
   private readonly subagentWaiting = new Map<string, string>();
@@ -743,7 +766,8 @@ class ChatSession {
     this.harnesses = env.harnesses.filter((h) => h.kind !== 'custom').map((h) => ({ id: h.id, name: h.name }));
     this.extraArgs = harness.kind === own.kind ? agentArgs(task) : [];
     this.claude = harness.kind === 'claude-code';
-    this.acc = this.claude ? new ClaudeStreamAccumulator() : new CodexExecAccumulator();
+    const accOpts = { attachment: attachmentAt(path.join(d.dataDir, 'tasks')) };
+    this.acc = this.claude ? new ClaudeStreamAccumulator(accOpts) : new CodexExecAccumulator(accOpts);
     this.id = saved?.id ?? choice?.id ?? (opening.kind === 'reopen' ? opening.runId : newRunId());
     this.reopened = opening.kind === 'reopen';
     this.recorded = this.reopened;
@@ -1140,6 +1164,7 @@ class ChatSession {
     await this.kill();
     this.killing = false;
     if (this.closed) return;
+    await this.requeueDelivered();
     this.unsendQueued();
     if (wasWorking) this.acc.addNote('Stopped.');
     this.error = undefined;
@@ -1218,6 +1243,7 @@ class ChatSession {
     await this.kill();
     this.killing = false;
     if (this.closed || this.status === 'ended') return;
+    await this.requeueDelivered();
     this.unsendQueued();
     this.startAgent();
     this.drainQueue();
@@ -1353,6 +1379,7 @@ class ChatSession {
     this.endScreen();
     this.permissions = [];
     this.takeBackInbox();
+    this.showDelivered();
     if (end.login) this.d.onLogin?.(this.environmentId, this.harness.id, false);
     // As a headless chat's: the process was the conversation, so the chat ends with it.
     if (end.reason === 'exited') {
@@ -1417,12 +1444,16 @@ class ChatSession {
       this.scheduleEmit();
     }
     if (this.inboxWritten && !chatMessageWaiting(this.dir)) this.inboxTaken();
+    if (this.deliveredUntil !== null && Date.now() >= this.deliveredUntil) this.showDelivered();
     if (!running) return;
     // The mod records each turn's start and end.
     const [turnStart, turnEnd] = await Promise.all([mtime('turn.json'), mtime(MOD_FILES.turnEnd)]);
     if (turnStart >= this.sessionStartedAt - 1000 && turnStart > turnEnd && this.status === 'ready') this.setStatus('working');
     else if (turnEnd > this.seen.turnEnd && turnEnd >= turnStart) {
       this.seen.turnEnd = turnEnd;
+      // A turn that started after the mod could have handed the messages over ended without them: they go, after a
+      // moment for a row the transcript is still writing. The turn the mod ended to deliver them started before.
+      if (this.delivered.length && turnStart >= this.deliveredSince) this.deliveredUntil ??= Date.now() + DELIVERED_GRACE_MS;
       if (this.status === 'working') {
         // Stop ended it (the mod's abort): the conversation says so, as a headless chat's does.
         if ((await json(MOD_FILES.turnEnd))?.aborted === true) this.acc.addNote('Stopped.');
@@ -1454,7 +1485,9 @@ class ChatSession {
   private async follow(transcriptPath: string): Promise<void> {
     const env = resolveEnvironment(this.task, this.d.settings);
     const file = await transcriptHostPath(transcriptPath, this.d.host, env.kind === 'wsl' ? env.distro : undefined);
-    if (!file || this.transcript?.file === file) return;
+    if (!file) return;
+    this.transcriptSeq = this.sessionSeq;
+    if (this.transcript?.file === file) return;
     const reader = new TranscriptReader(file, {}, 'claude', (line) => this.onTranscriptLine(line));
     await reader.skipExisting();
     this.transcript = { file, reader };
@@ -1490,8 +1523,10 @@ class ChatSession {
       this.codeMode = rec.replMode;
       this.save();
     }
+    const before = this.acc.rows.length;
     if (isInterruptedRecord(rec)) this.acc.addNote('Stopped.');
     else this.acc.addParsed(rec);
+    if (this.delivered.length && this.acc.rows.slice(before).some((r) => r.kind === 'prompt' || r.kind === 'guidance')) this.showDelivered();
     if (rec.type === 'assistant' && rec.isSidechain !== true) {
       const model = obj(rec.message)?.model;
       if (typeof model === 'string' && !model.startsWith('<')) this.activeModel = model;
@@ -1505,7 +1540,8 @@ class ChatSession {
    * session's transcript, so the conversation shows them when the agent has them.
    */
   private writeInbox(): void {
-    if (!this.interactive || !this.transcript || this.closed || this.killing || this.reporting) return;
+    // Before the chat follows a new session's transcript, the message's row would come before where it starts reading.
+    if (!this.interactive || !this.transcript || this.transcriptSeq !== this.sessionSeq || this.closed || this.killing || this.reporting) return;
     this.takeBackInbox();
     if (this.queued.length === 0) return;
     const text = this.queued
@@ -1516,15 +1552,45 @@ class ChatSession {
     writeChatMessage(this.dir, compacted ? `${compacted}\n\n${text}` : text);
     this.inboxWritten = true;
     this.inboxIds = this.queued.map((m) => m.id);
+    this.inboxRows = this.acc.rows.length;
+    this.inboxAt = Date.now();
   }
 
   /** The mod handed the inbox's messages to the agent: the transcript shows them from now on. */
   private inboxTaken(): void {
     const taken = new Set(this.inboxIds);
+    // They stay where they are until their row comes, so the conversation doesn't close up and open again.
+    const arrived = this.acc.rows.slice(this.inboxRows).some((r) => r.kind === 'prompt' || r.kind === 'guidance');
+    if (!arrived) {
+      this.delivered.push(...this.queued.filter((q) => taken.has(q.id)).map((q) => ({ ...q, delivered: true })));
+      this.deliveredSince = this.inboxAt;
+    }
     this.queued = this.queued.filter((q) => !taken.has(q.id));
     this.inboxIds = [];
     this.inboxWritten = false;
     this.compacted = undefined;
+    this.scheduleEmit();
+  }
+
+  /** The messages the mod handed over are in the conversation, or won't come: they stop showing as queued. */
+  private showDelivered(): void {
+    this.deliveredUntil = null;
+    if (!this.delivered.length) return;
+    this.delivered = [];
+    this.scheduleEmit();
+  }
+
+  /**
+   * The harness starts again: a message the mod took that the conversation still doesn't have (after one more read
+   * of the transcript, for a row written as it stopped) never reached the agent, so it goes to the new one.
+   */
+  private async requeueDelivered(): Promise<void> {
+    if (!this.delivered.length) return;
+    await this.transcript?.reader.read().catch(() => false);
+    if (!this.delivered.length) return;
+    this.queued = [...this.delivered.map(({ delivered: _d, ...m }) => m), ...this.queued];
+    this.delivered = [];
+    this.deliveredUntil = null;
     this.scheduleEmit();
   }
 
@@ -2385,9 +2451,8 @@ class ChatSession {
   /** Compact into New Chat: the conversation as a compacted chat starts from. Throws with the reason it can't. */
   compactOpening(): Extract<ChatOpening, { kind: 'compact' }> {
     if (this.busy()) throw new Error('The agent is still working. Compact the chat once its turn has ended.');
-    // The live rows' accumulator keeps a compact copy of each row it drops too.
     const history = this.historyCompact ?? compactRows(this.history);
-    const rows = compactRows([...history, ...this.acc.evicted, ...this.acc.rows]);
+    const rows = compactRows([...history, ...this.acc.rows]);
     if (!rows.some((r) => r.kind === 'agent')) throw new Error('The chat has no reply to compact yet.');
     // A chat that hasn't sent a message isn't a run yet: its conversation is the run it went on with.
     const from = this.recorded ? this.id : (this.fromRunId ?? this.compactedFrom ?? this.forkedFrom ?? this.id);
@@ -2453,7 +2518,7 @@ class ChatSession {
       history: this.history,
       rows: this.acc.rows,
       permissions: this.permissions,
-      queued: this.queued,
+      queued: this.delivered.length ? [...this.delivered, ...this.queued] : this.queued,
       ...(this.subagentWaiting.size ? { subagentMessages: Object.fromEntries(this.subagentWaiting) } : {}),
       // An interactive session's skills come from its transcript.
       commands: this.interactive && this.acc.commands.length ? this.acc.commands : this.commands,

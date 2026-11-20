@@ -44,7 +44,10 @@ little memory as Electron allows. Every rule below comes from a measured cost.
   Android in Edge) on demo data with 20 tasks and 20 chats, runs a day's use
   of the main window, and fails when a screen goes over its budget in
   `scripts/perf/budgets.json` (longest frame, time to content, elements, JS
-  heap, memory), draws nothing or throws. A change meant to cost more runs
+  heap, memory), draws nothing or throws. It stops when the computer is on
+  battery power or in energy saver, because both slow every frame. `--on-battery`
+  and `--energy-saver` measure in that mode anyway, and an agent passes one
+  only when Leandro asks for a run in that mode. A change meant to cost more runs
   `node scripts/perf/check.mjs --update` and says in its commit why.
 - **A new screen gets an entry in `scripts/perf/screens.mjs`.** A window
   route in `main.tsx`, a main-window tab, a task tab, a phone tab or a kind of

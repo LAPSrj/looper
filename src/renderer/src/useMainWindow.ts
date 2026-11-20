@@ -14,8 +14,12 @@ import { TASK_TABS, type DetailTab } from './components/TaskDetail';
 import { useDialogKeys } from './components/hooks';
 import { setView as changeView, useLiveState } from './live-state';
 import { useRunRecords } from './useRunRecords';
+import { reportError } from './report-error';
 
+/** Recent runs shows at least this many, and every run that started today. */
 const RECENT_RUNS = 10;
+
+const startOfToday = (): number => new Date().setHours(0, 0, 0, 0);
 
 /** The status bar's Prevent Sleep text while its timer is on; null while it's off. */
 export function preventSleepStatus(state: PreventSleepState): string | null {
@@ -73,19 +77,18 @@ export function useMainWindow(menuTab?: string) {
     () => (remote?.running ? remote.conversations.filter((c) => c.status !== 'ended') : null),
     [remote],
   );
-  // Runs another dashboard list shows stay out of Recent runs: one in progress shows there once it ends.
+  // Runs in progress stay out of Recent runs: one shows there once it ends.
   const listedRuns = useMemo(
-    () =>
-      new Set([
-        ...attention.map((r) => `${r.task.id}/${r.runId ?? r.lastRunId}`),
-        ...running.map((r) => `${r.task.id}/${r.runId}`),
-        ...(remoteOpen ?? []).map((c) => `${c.taskId}/${c.id}`),
-      ]),
-    [attention, running, remoteOpen],
+    () => new Set([...running.map((r) => `${r.task.id}/${r.runId}`), ...(remoteOpen ?? []).map((c) => `${c.taskId}/${c.id}`)]),
+    [running, remoteOpen],
   );
+  const today = startOfToday();
   const recentShown = useMemo(
-    () => recent?.filter((r) => !listedRuns.has(`${r.taskId}/${r.runId}`)).slice(0, RECENT_RUNS) ?? null,
-    [recent, listedRuns],
+    () =>
+      recent
+        ?.filter((r) => !listedRuns.has(`${r.taskId}/${r.runId}`))
+        .filter((r, i) => i < RECENT_RUNS || Date.parse(r.startTs) >= today) ?? null,
+    [recent, listedRuns, today],
   );
   // A picked row that left its list (the run ended, the problem cleared) no longer counts.
   const pickedRows = (list: DashboardPick['list']) =>
@@ -95,11 +98,20 @@ export function useMainWindow(menuTab?: string) {
         ? loginAttention.map((r) => ({ taskId: r.login.key, runId: null }))
         : list === 'recent'
           ? (recentShown ?? []).map((r) => ({ taskId: r.taskId, runId: r.runId }))
-          : (list === 'attention' ? attention : running).map((r) => ({ taskId: r.task.id, runId: r.runId }));
+          : list === 'attention'
+            ? attention.map((r) => ({ taskId: r.task.id, runId: r.runId, key: attentionKey(r) }))
+            : running.map((r) => ({ taskId: r.task.id, runId: r.runId }));
   // A row picked on a dashboard (the Dashboard tab's, or the Tasks tab's with no task selected) counts only while it shows.
   const onDashboard = menuTab === undefined || menuTab === 'dashboard' || (menuTab === 'tasks' && !addonSel);
   const livePick =
-    !selected && onDashboard && pick && pickedRows(pick.list).some((r) => r.taskId === pick.taskId && r.runId === pick.runId) ? pick : null;
+    !selected &&
+    onDashboard &&
+    pick &&
+    pickedRows(pick.list).some(
+      (r: { taskId: string; runId: string | null; key?: string }) => r.taskId === pick.taskId && r.runId === pick.runId && r.key === pick.key,
+    )
+      ? pick
+      : null;
   // The task menus act on: the selected task, or the dashboard row's (a task's, not a conversation's or a folder project's run).
   const taskPick = livePick?.list === 'remote' || livePick?.list === 'login' || (livePick && isStandInTaskId(livePick.taskId)) ? null : livePick;
   const target = selected ?? taskPick?.taskId ?? null;
@@ -187,11 +199,11 @@ export function useMainWindow(menuTab?: string) {
     if (selected || !infoLoaded) return;
     // A run writes its records in quick bursts: read once the burst is over.
     const t = setTimeout(() => {
-      void window.looper.runs.recent(recentLimit, runFilter ?? { hideSkipped: false, hideNoAction: false }).then(setRecent);
+      void window.looper.runs.recent(recentLimit, runFilter ?? { hideSkipped: false, hideNoAction: false }, today).then(setRecent);
     }, 200);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, infoLoaded, filterKey, runsChanged, recentLimit]);
+  }, [selected, infoLoaded, filterKey, runsChanged, recentLimit, today]);
 
   const select = useCallback((id: string | null) => {
     setSelected(id);
@@ -229,9 +241,13 @@ export function useMainWindow(menuTab?: string) {
   const sessionProject = project ?? (selected ? (projects.find((p) => p.id === targetTask?.projectId) ?? null) : null);
   const view = info?.settings.view;
 
-  /** Clear: these Needs attention rows leave the dashboards, and their runs show in Recent runs. */
-  const clearAttention = (rows: AttentionRow[], logins: LoginRow[] = []) =>
-    changeView({ attentionCleared: [...(attentionCleared ?? []), ...rows.map(attentionKey), ...logins.map(loginRowKey)] });
+  /** Clear: these Needs attention rows leave the dashboards. The engine forgets the finished runs' notices; a waiting run's row and a login's stay cleared while they last. */
+  const clearAttention = (rows: AttentionRow[], logins: LoginRow[] = []) => {
+    const notices = rows.filter((r) => r.runId === null).map(attentionKey);
+    if (notices.length) void window.looper.runtime.clearNotices(notices).catch(reportError);
+    const live = [...rows.filter((r) => r.runId !== null).map(attentionKey), ...logins.map(loginRowKey)];
+    if (live.length) changeView({ attentionCleared: [...(attentionCleared ?? []), ...live] });
+  };
   // A row that's gone is forgotten, so the same problem coming back (a run that holds again) shows.
   const loginsLoaded = logins !== null;
   useEffect(() => {

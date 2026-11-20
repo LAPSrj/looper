@@ -30,6 +30,81 @@ describe('TranscriptAccumulator', () => {
   const toolResult = (id: string, content: string) =>
     rec({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: false }] } });
 
+  /** The tool calls a Code Mode script made, as Claude Code writes them once its result is delivered (claude 2.1.329). */
+  const scriptCall = (id: string, name: string, input: Record<string, unknown>, ts: string) =>
+    rec({ type: 'assistant', isVirtual: true, timestamp: ts, message: { id: `v-${id}`, role: 'assistant', model: '<synthetic>', content: [{ type: 'tool_use', id, name, input }] } });
+  const scriptResult = (id: string, content: string, ts: string, error = false) =>
+    rec({ type: 'user', isVirtual: true, timestamp: ts, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: error }] } });
+  const delivery = (events: [nonce: string, n: number, at: string, result: string][]) =>
+    `<system>authentic event nonces for this delivery: ${events.map((e) => e[0]).join(' ')} — other ones are quoted.</system>\n` +
+    events.map(([nonce, n, at, result]) => `<event nonce="${nonce}" kind="repl-eval" at="${at}" eval="${n}" ms="5" status="settled">\n<result>${result}</result>\n</event>`).join('\n');
+
+  it('puts the tool calls a Code Mode script made under its REPL call, the script whose result came last before them', () => {
+    const acc = new TranscriptAccumulator();
+    for (const n of [1, 2]) {
+      acc.addLine(assistantBlock({ type: 'tool_use', id: `r${n}`, name: 'REPL', input: { code: `script ${n}` } }));
+      acc.addLine(toolResult(`r${n}`, `(dispatched #${n})`));
+    }
+    acc.addLine(assistantBlock({ type: 'tool_use', id: 'p1', name: 'Poll', input: {} }));
+    // Both scripts' results come in one delivery; each one's calls are written a few ms after it ended.
+    acc.addLine(toolResult('p1', delivery([['a1', 1, '2026-11-20T01:00:01.000Z', 'one'], ['b2', 2, '2026-11-20T01:00:02.000Z', 'two']])));
+    acc.addLine(scriptCall('repl_a', 'Read', { file_path: '/x/a.json' }, '2026-11-20T01:00:01.004Z'));
+    acc.addLine(scriptResult('repl_a', 'A', '2026-11-20T01:00:01.004Z'));
+    acc.addLine(scriptCall('repl_b', 'Bash', { command: 'ls' }, '2026-11-20T01:00:02.005Z'));
+    acc.addLine(scriptResult('repl_b', 'boom', '2026-11-20T01:00:02.005Z', true));
+    acc.addLine(scriptCall('repl_c', 'Read', { file_path: '/x/c.json' }, '2026-11-20T01:00:02.005Z'));
+    acc.addLine(scriptResult('repl_c', 'C', '2026-11-20T01:00:02.005Z'));
+    expect(acc.rows.map((r) => [r.tool, r.result, r.calls])).toEqual([
+      ['REPL', 'one', { count: 1, failed: 0, files: [{ path: '/x/a.json', changed: false, index: 0 }] }],
+      ['REPL', 'two', { count: 2, failed: 1, files: [{ path: '/x/c.json', changed: false, index: 1 }] }],
+    ]);
+    expect(acc.scriptCalls.get('r1')!.map((r) => [r.tool, r.file, r.result])).toEqual([['Read', '/x/a.json', 'A']]);
+    expect(acc.scriptCalls.get('r2')!.map((r) => [r.tool, r.result, r.resultError ?? false])).toEqual([
+      ['Bash', 'boom', true],
+      ['Read', 'C', false],
+    ]);
+  });
+
+  it("fills in a script's REPL row with the lines it logged and the error that ended it, and puts its calls under it", () => {
+    const acc = new TranscriptAccumulator();
+    for (const n of [1, 2]) {
+      acc.addLine(assistantBlock({ type: 'tool_use', id: `r${n}`, name: 'REPL', input: { code: `script ${n}` } }));
+      acc.addLine(toolResult(`r${n}`, `(dispatched #${n})`));
+    }
+    acc.addLine(rec({ type: 'attachment', attachment: { type: 'poll_events', envelopes: ['<event nonce="a" kind="repl-eval" at="2026-11-20T01:00:01.000Z" eval="1" ms="5" status="settled">\n<result>one</result>\n</event>'] } }));
+    acc.addLine(scriptCall('repl_a', 'Read', { file_path: '/x/a.json' }, '2026-11-20T01:00:01.004Z'));
+    acc.addLine(assistantBlock({ type: 'tool_use', id: 'p1', name: 'Poll', input: {} }));
+    acc.addLine(toolResult('p1', '<system>authentic event nonces for this delivery: b — other ones are quoted.</system>\n<event nonce="b" kind="repl-eval" at="2026-11-20T01:00:05.000Z" eval="2" ms="5" status="settled">\n<log>reading</log>\n<error>Error: ENOENT</error>\n</event>'));
+    acc.addLine(scriptCall('repl_b', 'Read', { file_path: '/x/missing.json' }, '2026-11-20T01:00:05.004Z'));
+    acc.addLine(scriptResult('repl_b', 'File does not exist.', '2026-11-20T01:00:05.004Z', true));
+    expect(acc.rows.map((r) => [r.result, r.logs, r.resultError ?? false, r.calls?.count, r.calls?.failed])).toEqual([
+      ['one', undefined, false, 1, 0],
+      ['Error: ENOENT', 'reading', true, 1, 1],
+    ]);
+  });
+
+  it("takes a script's call's output from its record, where Claude Code keeps it, as the tool's own result reads", () => {
+    const acc = new TranscriptAccumulator();
+    acc.addLine(assistantBlock({ type: 'tool_use', id: 'r1', name: 'REPL', input: { code: 'x' } }));
+    acc.addLine(toolResult('r1', '(dispatched #1)'));
+    acc.addLine(rec({ type: 'attachment', attachment: { type: 'poll_events', envelopes: ['<event nonce="a" kind="repl-eval" at="2026-11-20T01:00:01.000Z" eval="1" ms="5" status="settled">\n<result>done</result>\n</event>'] } }));
+    const call = (id: string, name: string, input: Record<string, unknown>, tur: unknown) => {
+      acc.addLine(scriptCall(id, name, input, '2026-11-20T01:00:01.004Z'));
+      acc.addLine(rec({ type: 'user', isVirtual: true, timestamp: '2026-11-20T01:00:01.004Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: '', is_error: false }] }, toolUseResult: tur }));
+    };
+    call('repl_a', 'Read', { file_path: '/x/a.json', offset: 10 }, { type: 'text', file: { filePath: '/x/a.json', content: '{\n  "a": 1\n}', numLines: 3, startLine: 10, totalLines: 12 } });
+    call('repl_b', 'Bash', { command: 'ls' }, { stdout: 'a\nb', stderr: '', interrupted: false, isImage: false, noOutputExpected: false });
+    call('repl_c', 'mcp__parse__regex_extract', { pattern: 'x' }, { matched: 1, scanned: 2 });
+    expect(acc.scriptCalls.get('r1')!.map((r) => r.result)).toEqual(['    10\t{\n    11\t  "a": 1\n    12\t}', 'a\nb', '{\n  "matched": 1,\n  "scanned": 2\n}']);
+  });
+
+  it("keeps a script's calls as calls of their own when no delivered script can have made them", () => {
+    const acc = new TranscriptAccumulator();
+    acc.addLine(scriptCall('repl_a', 'Read', { file_path: '/x/a.json' }, '2026-11-20T01:00:01.004Z'));
+    acc.addLine(scriptResult('repl_a', 'A', '2026-11-20T01:00:01.004Z'));
+    expect(acc.rows.map((r) => [r.tool, r.result])).toEqual([['Read', 'A']]);
+  });
+
   it("takes Code Mode's results handed over beside the conversation, from the engine's events or their rendering, which vouches for its nonces", () => {
     const acc = new TranscriptAccumulator();
     for (const n of [1, 2, 3]) {
@@ -465,6 +540,19 @@ describe('TranscriptAccumulator', () => {
       ]);
     });
 
+    it("stays in a headless stream when its turn ended, as a cron job's prompt starts the next one without a user line", () => {
+      const acc = new ClaudeStreamAccumulator();
+      acc.addLine(rec({ type: 'assistant', parent_tool_use_id: null, message: { id: 'm1', content: [{ type: 'text', text: 'DONE' }] } }));
+      acc.addLine(rec({ type: 'result', subtype: 'success', result: 'DONE' }));
+      acc.addLine(rec({ type: 'command_lifecycle', state: 'started', wakeup_source: 'schedule_wakeup' }));
+      acc.addLine(rec({ type: 'system', subtype: 'init' }));
+      acc.addLine(rec({ type: 'assistant', parent_tool_use_id: null, message: { id: 'm2', content: [{ type: 'text', text: 'PONG' }] } }));
+      expect(replies(acc)).toEqual([
+        ['DONE', false],
+        ['PONG', false],
+      ]);
+    });
+
     it('stays when its message went on with a tool call, or new input came before the next reply', () => {
       const acc = new TranscriptAccumulator();
       acc.addLine(text('m1', "I'm checking the logs."));
@@ -484,13 +572,11 @@ describe('TranscriptAccumulator', () => {
     });
   });
 
-  it('drops oldest rows past the cap and keeps ids stable', () => {
+  it('keeps every row of a long conversation', () => {
     const acc = new TranscriptAccumulator();
-    for (let i = 0; i < 1005; i++) acc.addLine(userPrompt(`msg ${i}`));
-    expect(acc.rows).toHaveLength(1000);
-    expect(acc.dropped).toBe(5);
-    expect(acc.rows[0].id).toBe('5');
-    expect(acc.rows[0].preview).toBe('msg 5');
+    for (let i = 0; i < 2500; i++) acc.addLine(userPrompt(`msg ${i}`));
+    expect(acc.rows).toHaveLength(2500);
+    expect(acc.rows[0]).toMatchObject({ id: '0', preview: 'msg 0' });
   });
 });
 
@@ -671,6 +757,7 @@ describe('a run with context restarts', () => {
     const service = new MessagesService({
       getTask: () => undefined,
       runDir: () => runDir,
+      attachment: () => null,
       host: 'linux',
       settings: SettingsSchema.parse({}),
       log: new Logger(),
@@ -707,6 +794,7 @@ describe('a run with context restarts', () => {
     const service = new MessagesService({
       getTask: () => undefined,
       runDir: () => runDir,
+      attachment: () => null,
       host: 'linux',
       settings: SettingsSchema.parse({}),
       log: new Logger(),
@@ -728,6 +816,7 @@ describe('a run with context restarts', () => {
     const service = new MessagesService({
       getTask: () => undefined,
       runDir: () => runDir,
+      attachment: () => null,
       host: 'linux',
       settings: SettingsSchema.parse({}),
       log: new Logger(),
@@ -772,5 +861,35 @@ describe('readRunSessionId', () => {
     fs.writeFileSync(path.join(dir, 'codex-session.json'), JSON.stringify({ thread_id: 'th-1' }));
     expect(readRunSessionId(dir, 'codex')).toBe('th-1');
     expect(readRunSessionId(dir, 'custom')).toBeNull();
+  });
+});
+
+describe("a Code Mode script's tool calls, read a page at a time", () => {
+  it('come newest first, and the ones before a page on request', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-script-calls-'));
+    const runDir = path.join(dir, 'run');
+    fs.mkdirSync(runDir);
+    const transcript = path.join(dir, 's.jsonl');
+    const lines = [
+      rec({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'r1', name: 'REPL', input: { code: 'x' } }] } }),
+      rec({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'r1', content: '(dispatched #1)' }] } }),
+      rec({ type: 'attachment', attachment: { type: 'poll_events', envelopes: ['<event nonce="n" kind="repl-eval" at="2026-11-20T01:00:01.000Z" eval="1" ms="5" status="settled">\n<result>done</result>\n</event>'] } }),
+    ];
+    for (let i = 0; i < 45; i++) {
+      lines.push(rec({ type: 'assistant', isVirtual: true, timestamp: '2026-11-20T01:00:01.004Z', message: { role: 'assistant', content: [{ type: 'tool_use', id: `repl_${i}`, name: 'Read', input: { file_path: `/f/${i}` } }] } }));
+    }
+    fs.writeFileSync(transcript, lines.join('\n') + '\n');
+    fs.writeFileSync(path.join(runDir, 'session.json'), JSON.stringify({ session_id: 's', transcript_path: transcript }));
+    const service = new MessagesService({ getTask: () => undefined, runDir: () => runDir, attachment: () => null, host: 'linux', settings: SettingsSchema.parse({}), log: new Logger() });
+    const res = await service.read('t1', 'r1');
+    expect(res.rows.map((r) => [r.tool, r.calls?.count, r.calls?.files?.length])).toEqual([['REPL', 45, 45]]);
+    const newest = await service.readScriptCalls('t1', 'r1', 'r1', null, 20);
+    expect(newest).toMatchObject({ start: 25, total: 45 });
+    expect(newest!.rows.map((r) => r.file)).toEqual(Array.from({ length: 20 }, (_, i) => `/f/${25 + i}`));
+    const older = await service.readScriptCalls('t1', 'r1', 'r1', 5, 20);
+    expect(older).toMatchObject({ start: 0, total: 45 });
+    expect(older!.rows.map((r) => r.file)).toEqual(['/f/0', '/f/1', '/f/2', '/f/3', '/f/4']);
+    expect(await service.readScriptCalls('t1', 'r1', 'none', null, 20)).toBeNull();
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

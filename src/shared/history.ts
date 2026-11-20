@@ -41,6 +41,8 @@ export type HistoryView = View['history'];
 export interface HistoryConversation {
   rows: MessageRow[];
   subagents: SubagentInfo[];
+  /** A transcript outside Looper's runs: the tool calls each Code Mode script made, by its REPL call's tool_use id. */
+  scriptCalls?: Record<string, MessageRow[]>;
 }
 
 /** What the History window can do with a conversation. */

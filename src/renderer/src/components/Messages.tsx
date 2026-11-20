@@ -428,7 +428,6 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
   };
 
   const rowClass = (r: RunTableRow) => (r.kind === 'step' ? `msg-row msg-step result-${r.record.result}` : `msg-row msg-${r.kind}`);
-  const dropped = result?.dropped ?? 0;
 
   return (
     <div className="messages">
@@ -472,7 +471,6 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
               const w = e.currentTarget;
               atBottomRef.current = atEnd(w);
             }}
-            note={raw && dropped > 0 ? `${dropped} earlier messages not shown` : undefined}
             empty={rows.length > 0 ? 'No rows match the filter.' : emptyText()}
             search={{ value: filter, onChange: setFilter }}
             dayOf={(r) => (r.ts ? Date.parse(r.ts) : NaN)}

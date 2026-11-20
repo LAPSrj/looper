@@ -8,6 +8,7 @@ import type {
   EngineEvent,
   NotifyKind,
   RunPhase,
+  TaskNotice,
   RunRecord,
   RunResult,
   RunSkips,
@@ -20,6 +21,7 @@ import { cronTz, runWindowOpen } from '../shared/cron';
 import { resolveEnvironment, resolveHarness } from '../shared/environments';
 import { capFirst, formatDateTime, resultLabel } from '../shared/format';
 import { isSessionRun } from '../shared/runs';
+import { isProblemResult, noticeKey } from '../shared/dashboard';
 import { detectSystemLocale, type HostKind } from './host';
 import { errMsg, type Logger } from './log';
 import { readRunSessionId } from './messages';
@@ -393,6 +395,25 @@ export class Scheduler extends EventEmitter {
     );
     await Promise.all([...stops, this.watchers.stopAll()]);
     this.d.state.flush();
+  }
+
+  // ---------- Needs attention ----------
+
+  /** Old notices go with their runs' records (run retention), and a machine failure replaces the task's last one. */
+  private addNotice(rt: TaskRuntime, p: TaskNotice): void {
+    const since = this.now() - this.d.settings.runRetentionDays * 24 * 60 * 60 * 1000;
+    rt.notices = [...rt.notices.filter((q) => (q.at === null || q.at >= since) && !(p.machine && q.machine)), p];
+  }
+
+  /** Clear: the user saw these notices (by noticeKey); `taskId`: every problem of that task (its runs were deleted). */
+  clearNotices(keys: ReadonlySet<string> | { taskId: string }): void {
+    for (const rt of this.runtimes.values()) {
+      const left = 'taskId' in keys ? (rt.taskId === keys.taskId ? [] : rt.notices) : rt.notices.filter((p) => !keys.has(noticeKey(rt.taskId, p)));
+      if (left.length === rt.notices.length) continue;
+      rt.notices = left;
+      this.emitRuntime(rt);
+    }
+    this.persist();
   }
 
   // ---------- queries ----------
@@ -1400,7 +1421,7 @@ export class Scheduler extends EventEmitter {
    * task's "Allow this task to be marked completed" option; the task's own
    * schedule end date is self-authorizing and passes `force`.
    */
-  completeTask(taskId: string, reason: string, opts: { force?: boolean } = {}): void {
+  completeTask(taskId: string, reason: string, opts: { force?: boolean; runId?: string; byUser?: boolean } = {}): void {
     const task = this.d.tasks.get(taskId);
     if (!task || task.completedAt) return;
     if (!opts.force && !task.completion.allowed) {
@@ -1411,7 +1432,14 @@ export class Scheduler extends EventEmitter {
       this.d.tasks.patch(taskId, { completedAt: new Date(this.now()).toISOString(), completedReason: reason });
     } catch (e) {
       this.d.log.error(`[${taskId}] cannot complete the task: ${errMsg(e)}`);
+      return;
     }
+    // The user knows about a completion they made; any other shows in Needs attention.
+    const rt = this.runtimes.get(taskId);
+    if (opts.byUser || !rt) return;
+    this.addNotice(rt, { runId: opts.runId ?? null, result: null, detail: reason, at: this.now(), completed: true });
+    this.emitRuntime(rt);
+    this.persist();
   }
 
   /** Undo a completion: the task is enabled again and its schedule resumes. */
@@ -1422,7 +1450,13 @@ export class Scheduler extends EventEmitter {
       this.d.tasks.patch(taskId, { completedAt: undefined, completedReason: undefined, enabled: true });
     } catch (e) {
       this.d.log.error(`[${taskId}] cannot reopen the task: ${errMsg(e)}`);
+      return;
     }
+    const rt = this.runtimes.get(taskId);
+    if (!rt?.notices.some((n) => n.completed)) return;
+    rt.notices = rt.notices.filter((n) => !n.completed);
+    this.emitRuntime(rt);
+    this.persist();
   }
 
   pause(taskId: string, reason = 'paused by user'): void {
@@ -1652,6 +1686,7 @@ export class Scheduler extends EventEmitter {
       watcher: null,
       lastEventAt: prev?.lastEventAt ?? null,
       session: prev?.session ?? null,
+      notices: prev?.notices ?? [],
     };
     this.runtimes.set(task.id, rt);
     this.emitRuntime(rt);
@@ -2140,6 +2175,7 @@ export class Scheduler extends EventEmitter {
     this.record(taskId, '-', 'system', 'error', { summary: detail });
     const reason = `auto-paused: ${detail}`;
     this.d.log.warn(`[${taskId}] ${reason}`);
+    this.addNotice(this.runtimes.get(taskId)!, { runId: null, result: 'error', detail, at: this.now(), paused: reason });
     this.pause(taskId, reason);
     if (task?.notifications.autoPaused) this.notify(task, '-', 'auto-paused', capFirst(reason));
   }
@@ -2554,7 +2590,7 @@ export class Scheduler extends EventEmitter {
       });
       return;
     }
-    this.completeTask(task.id, reason);
+    this.completeTask(task.id, reason, { runId });
   }
 
   /**
@@ -2655,6 +2691,7 @@ export class Scheduler extends EventEmitter {
     rt.lastResult = outcome;
     rt.lastDetail = detail || null;
     const at = rt.runs.findIndex((r) => r.runId === runId);
+    const startedAt = at >= 0 ? rt.runs[at].startedAt : now;
     if (at >= 0) rt.runs.splice(at, 1);
     this.recompute(rt);
     const fresh = this.d.tasks.get(taskId);
@@ -2673,6 +2710,16 @@ export class Scheduler extends EventEmitter {
       rt.pausedReason = `auto-paused after ${rt.consecutiveErrors} consecutive errors`;
       autoPausedReason = rt.pausedReason;
       this.d.log.warn(`[${taskId}] ${rt.pausedReason}`);
+    }
+    if (autoPausedReason || isProblemResult(outcome)) {
+      this.addNotice(rt, {
+        runId,
+        result: outcome,
+        detail: detail || null,
+        at: startedAt,
+        ...(autoPausedReason ? { paused: autoPausedReason } : {}),
+        ...(errored && !counts ? { machine: true as const } : {}),
+      });
     }
     if (limitWait) {
       // Remembered past this run so no slot starts into the same limit while

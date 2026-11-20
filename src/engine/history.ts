@@ -212,7 +212,7 @@ const lastTime = (rows: MessageRow[]): number => {
 
 const said = (rows: MessageRow[]) => rows.filter((r) => r.kind === 'prompt' || r.kind === 'agent').length;
 
-/** A transcript's rows, every one its accumulator kept (the ones past its row limit compacted). */
+/** A transcript's rows. */
 async function readTranscript(file: string, format: 'claude' | 'codex'): Promise<{ acc: TranscriptAccumulator; extra: { cwd?: string } }> {
   const acc = format === 'codex' ? new CodexAccumulator() : new TranscriptAccumulator();
   const extra: { cwd?: string } = {};
@@ -235,7 +235,7 @@ async function readTranscript(file: string, format: 'claude' | 'codex'): Promise
 /** A transcript's title, last activity and message count, from one pass over it. */
 export async function transcriptMeta(file: string, format: 'claude' | 'codex', mtimeMs: number): Promise<TranscriptMeta> {
   const { acc, extra } = await readTranscript(file, format);
-  const rows = [...acc.evicted, ...acc.rows];
+  const rows = acc.rows;
   const messages = said(rows);
   // Claude's name for it: the last custom-title (an empty one takes the user's name away), else its ai-title.
   const title = acc.sessionName || (messages ? chatTitle(rows) : '');
@@ -254,7 +254,7 @@ export async function transcriptHistory(file: string, format: 'claude' | 'codex'
   const home = format === 'codex' ? codexHomeOfRollout(file) : undefined;
   const head = home ? await codexHead(file) : null;
   const name = format === 'claude' ? acc.sessionName : home && head ? await codexThreadName(home, head.sessionId) : undefined;
-  return { rows: acc.rows, compact: compactRows([...acc.evicted, ...acc.rows]), ...(name ? { name } : {}) };
+  return { rows: acc.rows, compact: compactRows(acc.rows), ...(name ? { name } : {}) };
 }
 
 async function codexHead(file: string): Promise<CodexHead | null> {
@@ -1047,7 +1047,7 @@ export class HistoryService {
     const metas = transcript.format === 'claude' ? await this.d.subagentsAt(transcript.path) : [];
     const dir = path.join(transcript.path.replace(/\.jsonl$/i, ''), 'subagents');
     const stats = await statsOf(metas, (a) => readSubagentStats(path.join(dir, `agent-${a}.jsonl`)).catch(() => null));
-    return { rows: acc.rows, subagents: subagentsOf(metas, acc.rows, stats) };
+    return { rows: acc.rows, subagents: subagentsOf(metas, acc.rows, stats), ...(acc.scriptCalls.size ? { scriptCalls: Object.fromEntries(acc.scriptCalls) } : {}) };
   }
 
   /** The whole conversation as compaction keeps it: Continue Compacted starts from it, and Search reads it. */
@@ -1057,7 +1057,7 @@ export class HistoryService {
     if (e.item.runId) return this.d.compactableRun(e.item.taskId, e.item.runId);
     if (!e.transcript) return [];
     const { acc } = await readTranscript(e.transcript.path, e.transcript.format);
-    return compactRows([...acc.evicted, ...acc.rows]);
+    return compactRows(acc.rows);
   }
 
   /** Of the conversations the window has listed, the ones whose user or agent messages (not tool calls) contain the text, without regard to case. */

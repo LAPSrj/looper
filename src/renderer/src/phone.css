@@ -1297,6 +1297,13 @@ html.phone-window .chat-user {
 html.phone-window .chat-user a {
   color: inherit;
 }
+html.phone-window .chat-queued {
+  max-width: 85%;
+}
+html.phone-window .chat-queued .chat-user {
+  max-width: none;
+  padding: 7px 13px;
+}
 html.phone-window .chat-agent,
 html.phone-window .chat-agent-group,
 html.phone-window .chat-card,

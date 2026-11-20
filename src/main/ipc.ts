@@ -16,6 +16,9 @@ import { projectTaskId } from '../shared/projects';
 import { canStop, sessionGroupKey } from '../shared/sessions';
 import { SENT_IMAGE_RE, fileImageId, fileImageKey, type MessageImage, type SentFileInfo } from '../shared/messages';
 
+/** The most of a Code Mode script's tool calls one runs:scriptCalls hands over. */
+const SCRIPT_CALLS_MAX = 200;
+
 import type { AppInfo, UiEvent } from '../shared/api';
 import type { BuilderSetup } from '../shared/builder';
 import { commandAttachment, commandFrom } from '../shared/bash-mode';
@@ -348,9 +351,10 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('runtime:complete', (_e, id: string) => engine.completeTask(id));
   ipc.handle('runtime:reopen', (_e, id: string) => engine.reopenTask(id));
   ipc.handle('runtime:stopTask', (_e, id: string, runId?: string) => engine.stopTask(id, undefined, runId));
+  ipc.handle('runtime:clearNotices', (_e, keys: string[]) => engine.clearNotices(keys));
 
   ipc.handle('runs:list', (_e, id: string, limit?: number) => engine.listRuns(id, limit));
-  ipc.handle('runs:recent', (_e, limit: number, filter: RunFilter) => engine.recentRuns(limit, filter));
+  ipc.handle('runs:recent', (_e, limit: number, filter: RunFilter, since: number) => engine.recentRuns(limit, filter, since));
   ipc.handle('runs:output', (_e, id: string, runId: string, raw?: boolean) => engine.readOutput(id, runId, undefined, raw));
   ipc.handle('runs:openDir', (_e, id: string, runId: string) => openPath(engine.runDir(id, runId)));
   ipc.handle('runs:clear', (_e, id: string) => engine.clearRuns(id));
@@ -361,6 +365,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     // An image file the agent sent (SendUserFile) is read from disk; any other row's image is in the transcript.
     const sent = fileImageId(String(rowId));
     return sent !== null ? readSentImage(String(id), sent) : engine.readMessageImage(id, runId, rowId, agentId);
+  });
+  ipc.handle('runs:scriptCalls', (_e, id: string, runId: string, toolUseId: string, before: number | null, count: number, agentId?: string) => {
+    const end = before === null || before === undefined ? null : Math.max(0, Math.floor(Number(before)) || 0);
+    const size = Math.min(SCRIPT_CALLS_MAX, Math.max(1, Math.floor(Number(count)) || 1));
+    return engine.readScriptCalls(String(id), String(runId), String(toolUseId), end, size, agentId == null ? undefined : String(agentId));
   });
   ipc.handle('messages:open', (_e, taskId: string, runId: string, agentId?: string, label?: string) =>
     host.openMessages(taskId, runId, agentId, label),

@@ -1,6 +1,7 @@
 import type { ChatDraft, ChatSettings, QueuedMessage } from '../../shared/chat';
 import type { SlashCommand } from '../../shared/sessions';
-import type { TaskRuntime } from '../../shared/types';
+import { isProblemResult, noticeKey } from '../../shared/dashboard';
+import type { TaskNotice, TaskRuntime } from '../../shared/types';
 import { readJson, writeJsonAtomic } from './fsutil';
 
 /**
@@ -42,7 +43,7 @@ export type OpenConversation =
     };
 
 interface StateFile {
-  version: 1;
+  version: 2;
   updatedAt: string;
   tasks: Record<string, TaskRuntime>;
   conversations: OpenConversation[];
@@ -62,7 +63,7 @@ export class StateStore {
   private read(): StateFile {
     if (!this.data) {
       const raw = readJson<Partial<StateFile>>(this.file, {});
-      this.data = { version: 1, updatedAt: raw.updatedAt ?? '', tasks: raw.tasks ?? {}, conversations: raw.conversations ?? [] };
+      this.data = { version: 2, updatedAt: raw.updatedAt ?? '', tasks: raw.tasks ?? {}, conversations: raw.conversations ?? [] };
     }
     return this.data;
   }
@@ -105,4 +106,43 @@ export class StateStore {
       /* state file is advisory */
     }
   }
+}
+
+type RuntimeV1 = Omit<TaskRuntime, 'notices'>;
+
+/** A task completed before version 2: when, and why. */
+export interface CompletedTask {
+  at: number;
+  reason: string;
+}
+
+/** What Needs attention showed for a task before version 2: its auto-pause, or its last run's error or warning. */
+function v1Notice(rt: RuntimeV1): TaskNotice | null {
+  if (rt.pausedReason?.startsWith('auto-paused')) {
+    return { runId: rt.lastRunId, result: rt.lastResult ?? 'error', detail: rt.lastDetail, at: rt.lastRunAt, paused: rt.pausedReason };
+  }
+  if (rt.lastResult && isProblemResult(rt.lastResult)) return { runId: rt.lastRunId, result: rt.lastResult, detail: rt.lastDetail, at: rt.lastRunAt };
+  return null;
+}
+
+/**
+ * Version 1 kept no notices: Needs attention showed each active task's last
+ * result, until another run replaced it. Each task keeps the row it showed,
+ * unless Clear had taken it off (`cleared`: the settings' attentionCleared),
+ * and a task the agent or its end date completed (`completed`, by task id)
+ * gets its completion's row, which Needs attention never showed. A notice from
+ * before `since` is left out, as run retention deleted its run.
+ */
+export function migrateStateFile(file: string, cleared: readonly string[], completed: Readonly<Record<string, CompletedTask>>, since: number): void {
+  const raw = readJson<{ version?: number; tasks?: Record<string, RuntimeV1> }>(file, {});
+  if (raw.version !== 1) return;
+  const tasks: Record<string, TaskRuntime> = {};
+  for (const [id, rt] of Object.entries(raw.tasks ?? {})) {
+    const shown = v1Notice(rt);
+    const done = completed[id];
+    const notices: TaskNotice[] = shown && !cleared.includes(noticeKey(id, shown)) ? [shown] : [];
+    if (done) notices.push({ runId: null, result: null, detail: done.reason, at: done.at, completed: true });
+    tasks[id] = { ...rt, notices: notices.filter((n) => n.at === null || n.at >= since) };
+  }
+  writeJsonAtomic(file, { ...raw, version: 2, tasks });
 }

@@ -18,7 +18,7 @@ import type { ClaudeLogin } from './logins';
 import type { SessionActivity, SessionsState, SlashCommand } from './sessions';
 import type { GitChange, GitCommit, GitCommitDetail, GitFileDiff, GitStatusResult } from './git';
 import type { HistoryCommand, HistoryCommands, HistoryConversation, HistoryList, HistoryListOptions } from './history';
-import type { MessageImage, MessagesResult, SentFileInfo } from './messages';
+import type { MessageImage, ScriptCalls, MessagesResult, SentFileInfo } from './messages';
 import type { PerfEntry } from './perf';
 import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
@@ -168,13 +168,15 @@ export interface LooperApi {
     reopen(id: string): Promise<void>;
     /** No run id = the task's newest run in flight. */
     stopTask(id: string, runId?: string): Promise<boolean>;
+    /** Needs attention's Clear: forget these runs' notices (by attentionKey). */
+    clearNotices(keys: string[]): Promise<void>;
   };
   runs: {
     list(id: string, limit?: number): Promise<RunRecord[]>;
     /** What a finished run can continue in. */
     canContinue(id: string, runId: string): Promise<{ chat: boolean; terminal: boolean; guidance: boolean; compact: boolean }>;
-    /** The newest `limit` runs the filter shows, across every task and Remote Control folder project and helper. */
-    recent(limit: number, filter: RunFilter): Promise<RecentRun[]>;
+    /** The newest `limit` runs the filter shows, and every one that started at `since` (epoch ms) or later, across every task and Remote Control folder project and helper. */
+    recent(limit: number, filter: RunFilter, since: number): Promise<RecentRun[]>;
     output(id: string, runId: string, raw?: boolean): Promise<string>;
     openDir(id: string, runId: string): Promise<void>;
     /** Delete a task's run history. Rejects while the task is mid-cycle. */
@@ -183,6 +185,8 @@ export interface LooperApi {
     messages(id: string, runId: string, agentId?: string, raw?: boolean): Promise<MessagesResult>;
     /** The image payload behind a message row's image marker. */
     messageImage(id: string, runId: string, rowId: string, agentId?: string): Promise<MessageImage | null>;
+    /** `count` of the tool calls a Code Mode script made, before the `before`th (the newest without it), by its REPL call's tool_use id; null when the run's conversations don't have them. */
+    scriptCalls(id: string, runId: string, toolUseId: string, before: number | null, count: number, agentId?: string): Promise<ScriptCalls | null>;
     /** A run's message box's Attach Files: the open dialog, then the picked files copied into the task's attachments. */
     pickFiles(id: string): Promise<Attachment[]>;
     /** Copy pasted or dropped files into the task's attachments, ready to go with guidance. */
