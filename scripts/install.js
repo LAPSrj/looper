@@ -30,8 +30,13 @@ function isWsl() {
   }
 }
 
+/** The id commands take for the session LOOPER_RUN names: a chat's is "chat-" and its id (engine/chat.ts). */
+function reportTarget(run) {
+  return run && run.startsWith('chat-') ? run.slice('chat-'.length) : run || undefined;
+}
+
 function parseArgs(argv) {
-  const opts = { report: process.env.LOOPER_RUN || undefined, installer: undefined, dataDir: undefined, dryRun: false, run: false };
+  const opts = { report: reportTarget(process.env.LOOPER_RUN), installer: undefined, dataDir: undefined, dryRun: false, run: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = () => {
@@ -189,7 +194,7 @@ function front(opts) {
   if (opts.report) args.push('--report', opts.report);
   if (opts.dryRun) return console.log('would install ' + installer + ' for ' + dataDir + (opts.report ? ' and report to ' + opts.report : ''));
   if (process.platform === 'win32') {
-    startOnWindows(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), process.execPath, __filename, args);
+    startOnWindows(POWERSHELL, process.execPath, __filename, args);
   } else {
     // A session of its own: closing the chat's terminal doesn't reach it.
     fs.mkdirSync(dataDir, { recursive: true });
@@ -209,19 +214,31 @@ function listDir(dir) {
 
 // ---------- the half that installs ----------
 
+const POWERSHELL = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+
+/**
+ * Where Windows has Looper installed, and that Looper.exe's version. The
+ * Uninstall entry electron-builder writes leaves InstallLocation empty, so the
+ * exe comes from its DisplayIcon; its version is the file's own.
+ */
+function windowsInstalled() {
+  const ps =
+    "$k = Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'Looper*' } | Select-Object -First 1; " +
+    "$exe = if ($k -and $k.DisplayIcon) { ($k.DisplayIcon -replace ',\\d+$', '').Trim('\"') } else { Join-Path $env:LOCALAPPDATA 'Programs\\looper\\Looper.exe' }; " +
+    "$exe; if (Test-Path -LiteralPath $exe) { (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion }";
+  const [exe, version] = spawnSync(POWERSHELL, ['-NoProfile', '-Command', ps], { encoding: 'utf8', windowsHide: true }).stdout.trim().split(/\r?\n/);
+  // Windows gives four parts (1.3.41.0), package.json three.
+  return { exe, version: version ? version.replace(/\.0$/, '') : undefined };
+}
+
 function windowsInstall(installer, log) {
   const r = spawnSync(installer, ['/S'], { stdio: 'ignore', windowsHide: true });
   if (r.error) throw new Error('cannot run the installer: ' + r.error.message);
   if (r.status !== 0) throw new Error('the installer exited with ' + r.status + ' (it quits without installing when it cannot close Looper)');
-  // electron-builder registers the app under the user's Uninstall keys.
-  const ps =
-    "$k = Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'Looper*' } | Select-Object -First 1; " +
-    "if ($k) { $k.DisplayVersion; $k.InstallLocation }";
-  const out = spawnSync('powershell.exe', ['-NoProfile', '-Command', ps], { encoding: 'utf8', windowsHide: true }).stdout.trim().split(/\r?\n/);
-  const [installed, location] = out;
-  log('the installer finished; Windows lists Looper ' + (installed || '(none)') + ' in ' + (location || '(unknown)'));
-  if (installed !== VERSION) throw new Error('Windows lists Looper ' + (installed || 'as not installed') + ' after the install, not ' + VERSION);
-  return path.join(location, 'Looper.exe');
+  const { exe, version } = windowsInstalled();
+  log('the installer finished; ' + exe + ' is ' + (version || 'missing'));
+  if (version !== VERSION) throw new Error(exe + ' is ' + (version || 'missing') + ' after the install, not ' + VERSION);
+  return exe;
 }
 
 function macInstall(installer, dataDir, log) {
@@ -307,10 +324,7 @@ async function back(opts) {
   }
   // Even after a failed install, Looper starts again, whichever version is there.
   step = 'starting Looper';
-  if (!app && process.platform === 'win32') {
-    const recorded = readJson(path.join(dataDir, 'cli', 'app.json'));
-    app = recorded?.command;
-  }
+  if (!app && process.platform === 'win32') app = windowsInstalled().exe;
   let started = null;
   try {
     if (!app) throw new Error("it isn't known where Looper is installed");
@@ -359,4 +373,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { parseArgs, pickInstaller, releaseDir };
+module.exports = { parseArgs, pickInstaller, releaseDir, reportTarget, windowsInstalled };

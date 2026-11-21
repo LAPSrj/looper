@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { parseArgs, pickInstaller, releaseDir } = require('../scripts/install.js') as {
+const { parseArgs, pickInstaller, releaseDir, reportTarget } = require('../scripts/install.js') as {
+  reportTarget: (run?: string) => string | undefined;
   parseArgs: (argv: string[]) => { report?: string; installer?: string; dataDir?: string; dryRun: boolean; run: boolean };
   pickInstaller: (names: string[], version: string, platform?: string) => string | undefined;
   releaseDir: (platform?: string, arch?: string) => string;
@@ -23,11 +24,14 @@ describe('the release install script', () => {
     expect(path.basename(releaseDir('linux', 'x64'))).toBe('linux-x64');
   });
 
-  it('reports to the chat it runs in unless told otherwise, and refuses an unknown option', () => {
+  it("reports to the chat it runs in, by the chat's id, unless told otherwise, and refuses an unknown option", () => {
+    expect(reportTarget('chat-20261120-210505-v67s')).toBe('20261120-210505-v67s');
+    expect(reportTarget('20261120-101500-abcd')).toBe('20261120-101500-abcd');
+    expect(reportTarget(undefined)).toBeUndefined();
     const before = process.env.LOOPER_RUN;
     process.env.LOOPER_RUN = 'chat-1';
     try {
-      expect(parseArgs([])).toMatchObject({ report: 'chat-1', dryRun: false, run: false });
+      expect(parseArgs([])).toMatchObject({ report: '1', dryRun: false, run: false });
       expect(parseArgs(['--report', 'chat-2', '--dry-run'])).toMatchObject({ report: 'chat-2', dryRun: true });
       expect(() => parseArgs(['--nope'])).toThrow('unknown option --nope');
       expect(() => parseArgs(['--installer'])).toThrow('--installer needs a value');
