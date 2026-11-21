@@ -27,6 +27,7 @@
     "package": "node scripts/package.js",
     "package:windows": "npm run build:all && electron-builder --win",
     "package:mac": "npm run build:all && electron-builder --mac",
+    "install-app": "node scripts/install.js",
     "package:linux": "npm run build:all && electron-builder --linux",
     "register:notifications": "electron scripts/register-notifications.js",
     "screenshots": "node scripts/screenshots/driver.mjs",

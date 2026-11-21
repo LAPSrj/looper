@@ -2,6 +2,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { cliRequests } from '../src/engine/cli-requests';
 import { createEngine, type Engine } from '../src/engine/engine';
 import { TaskSchema } from '../src/shared/types';
 
@@ -43,8 +44,8 @@ function fakeClaude(dir: string, file: string): string {
   return script;
 }
 
-/** An engine with a task saved twice (check.sh "v1\n" and prompt "one", then "v2\n" and "two") and a builder on it. */
-async function setUp(): Promise<{ engine: Engine; id: string; check: string; prompt: () => string }> {
+/** An engine with a task saved twice (check.sh "v1\n" and prompt "one", then "v2\n" and "two"). */
+async function setUpTask(): Promise<{ engine: Engine; check: string; cwd: string }> {
   const dataDir = mkdtempSync(join(tmpdir(), 'looper-engine-'));
   const cwd = mkdtempSync(join(tmpdir(), 'looper-cwd-'));
   const check = join(cwd, 'check.sh');
@@ -72,6 +73,13 @@ async function setUp(): Promise<{ engine: Engine; id: string; check: string; pro
   writeFileSync(check, 'v2\n');
   engine.saveTask({ ...base, agent: { ...base.agent, prompt: 'two' } });
   await until(() => engine.listVersions('t1').length === 2, 'version 2');
+  return { engine, check, cwd };
+}
+
+/** setUpTask's engine and task, and a builder on it. */
+async function setUp(): Promise<{ engine: Engine; id: string; check: string; prompt: () => string }> {
+  const { engine, check } = await setUpTask();
+  const dataDir = engine.dataDir;
   const id = engine.startBuilder(engine.builderSetupFor('t1')).id;
   const draftFile = join(dataDir, 'builder', id, 'draft.json');
   const prompt = () => (JSON.parse(readFileSync(draftFile, 'utf8')) as { agent: { prompt: string } }).agent.prompt;
@@ -181,5 +189,62 @@ describe("task builder Undo/Redo, Save and Don't Save", { timeout: 60_000 }, () 
     expect(await engine.builderUnsaved(id)).toBe(true);
     await engine.discardBuilder(id);
     expect(readFileSync(check, 'utf8')).toBe('v3\n');
+  });
+});
+
+describe('looper build and the task builder', { timeout: 60_000 }, () => {
+  let engine: Engine | null = null;
+  afterEach(async () => {
+    await engine?.stop();
+    engine = null;
+  }, 30_000);
+
+  it('starts a builder in the chat view, answers send and transcript, refuses to close unsaved work, saves and closes it', async () => {
+    const t = await setUpTask();
+    engine = t.engine;
+    const { check } = t;
+    // Settings' terminal view would leave nothing to send the description to.
+    engine.updateSettings({ builder: { view: 'terminal' } });
+    const h = cliRequests(engine);
+    const started = String(await h['build-start']({ taskId: 't1', description: 'change it' }));
+    const id = started.split('\n')[0];
+    expect(started).toBe(`${id}\nStarted the task builder and sent it the description.`);
+    expect(engine.getBuilder(id)?.view).toBe('chat');
+    await until(() => readFileSync(check, 'utf8') === 'v3\n' && engine!.getBuilder(id)?.status === 'ready', 'the first turn');
+
+    // The task already has a builder: the next description goes to it.
+    expect(await h['build-start']({ taskId: 't1', description: 'and again' })).toBe(`${id}\nSent the description to the task builder already open on the task.`);
+    await until(() => readFileSync(check, 'utf8') === 'v4\n' && engine!.getBuilder(id)?.status === 'ready', 'the second turn');
+    expect(await h.send({ ids: [id], text: 'once more' })).toBe('Sent to the task builder of "T1".');
+    await until(() => readFileSync(check, 'utf8') === 'v5\n' && engine!.getBuilder(id)?.status === 'ready', 'the third turn');
+
+    expect(await h['build-draft']({ id })).toMatchObject({ status: 'ready', unsaved: true, problems: [], draft: { id: 't1', name: 'T1' } });
+    const transcript = (await h.transcript({ id })) as { title: string; rows: { kind: string; text?: string }[] };
+    expect(transcript.title).toBe('T1');
+    expect(transcript.rows.filter((r) => r.kind === 'prompt').map((r) => r.text)).toEqual(['change it', 'and again', 'once more']);
+
+    await expect(h['build-close']({ id })).rejects.toThrow(`changes that aren't saved. Save them with looper build save ${id}`);
+    expect(await h['build-save']({ id })).toBe('t1\nSaved "T1".');
+    expect(await h['build-close']({ id })).toBe('Closed the task builder of "T1".');
+    expect(engine.getBuilder(id)).toBeUndefined();
+    await expect(h['build-draft']({ id })).rejects.toThrow(`No open task builder has the id ${id}.`);
+    expect(readFileSync(check, 'utf8')).toBe('v5\n');
+  });
+
+  it("closes with --discard, putting back the files, and starts a new task's builder in a project", async () => {
+    const t = await setUpTask();
+    engine = t.engine;
+    const { check, cwd } = t;
+    const h = cliRequests(engine);
+    const id = String(await h['build-start']({ taskId: 't1', description: 'change it' })).split('\n')[0];
+    await until(() => readFileSync(check, 'utf8') === 'v3\n' && engine!.getBuilder(id)?.status === 'ready', 'the turn');
+    expect(await h['build-close']({ id, discard: true })).toBe('Closed the task builder of "T1".');
+    expect(readFileSync(check, 'utf8')).toBe('v2\n');
+
+    const projectId = engine.getTask('t1')!.projectId!;
+    expect(() => h['build-start']({ description: 'x' })).toThrow('give the task to edit or the project to build a new task in');
+    const fresh = String(await h['build-start']({ projectId, description: 'a new task' })).split('\n')[0];
+    expect(engine.getBuilder(fresh)).toMatchObject({ mode: 'new', view: 'chat', setup: { cwd, harnessId: 'fake' } });
+    await h['build-close']({ id: fresh, discard: true });
   });
 });

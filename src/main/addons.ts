@@ -293,6 +293,13 @@ export async function installAddonFile(deps: AddonUiDeps, file: string, parent: 
   }
 }
 
+/** Turn an addon on or off; off closes its windows. */
+export function setAddonEnabled(host: AddonHost, id: string, enabled: boolean): void {
+  host.setEnabled(id, enabled);
+  if (enabled) return;
+  for (const w of addonWindows.get(id) ?? []) if (!w.isDestroyed()) w.close();
+}
+
 export function registerAddonIpc(deps: AddonUiDeps): void {
   const { host } = deps;
   ipc.handle('addons:list', () => host.list());
@@ -335,11 +342,7 @@ export function registerAddonIpc(deps: AddonUiDeps): void {
     const picked = r.canceled ? undefined : r.filePaths[0];
     return picked ? addonPath(deps, id, picked) : null;
   });
-  ipc.handle('addons:setEnabled', (_e, id: string, enabled: boolean) => {
-    host.setEnabled(id, enabled);
-    if (enabled) return;
-    for (const w of addonWindows.get(id) ?? []) if (!w.isDestroyed()) w.close();
-  });
+  ipc.handle('addons:setEnabled', (_e, id: string, enabled: boolean) => setAddonEnabled(host, id, enabled));
   ipc.handle('addons:open', (_e, id: string, commandId: string) => {
     const addon = host.list().find((a) => a.id === id);
     const command = addon && findAddonAction(addon.commands, commandId);

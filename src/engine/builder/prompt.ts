@@ -81,7 +81,7 @@ ${draftRules}
 - Ask one or two focused questions at a time.
 - Talk about the task the way Looper's task editor shows it: the schedule in words ("weekdays at 10:00", not a cron expression) and settings by their labels ("Accept edits" permission mode, "Headless" session type), not raw field values.
 - When the draft is valid and tested, give a short summary: what runs when, what the check looks at, what the agent does, and what the tests showed. Then tell the user it's ready to review and save.
-- Don't run \`looper add\` and don't write into Looper's inbox.
+- Don't run \`looper add\`.
 
 ## Field reference
 Every field of a task definition with its type, default and allowed values:

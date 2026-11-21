@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { windowTitle } from '@shared/window-title';
 import { EmptyWindow } from './components/ui';
-import { GuidanceForm, guidanceNote } from './components/form-blocks';
+import { guidanceNote } from '@shared/guidance';
+import { GuidanceForm } from './components/form-blocks';
 import { TASKS, useLiveItem, useSave } from './components/hooks';
 
 const TITLE = 'Guidance for Next Run';

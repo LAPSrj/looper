@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { chatInteractive, type ChatState } from '@shared/chat';
+import { chatInteractive, chatRows, type ChatState } from '@shared/chat';
 import type { ChatsContext } from '@shared/commands/context';
 import type { MessageRow } from '@shared/messages';
 import { canStop, dashboardOrder, placeCard, waitingOf, type SessionActivity, type SessionsState, type SessionSummary } from '@shared/sessions';
@@ -251,7 +251,7 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchedAgent, summary?.id]);
 
-  const rows = summary?.kind === 'chat' ? (chat ? [...chat.history, ...chat.rows] : []) : (activity?.rows ?? []);
+  const rows = summary?.kind === 'chat' ? (chat ? chatRows(chat) : []) : (activity?.rows ?? []);
   const attachments = rows.flatMap((r) => r.attachments ?? []);
   const followed = activity?.subagents.find((a) => a.agentId === follow);
   const watchedRows = watchedAgent ? subRows : rows;

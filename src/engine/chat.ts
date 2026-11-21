@@ -56,7 +56,7 @@ import { mergeClaudeSettings, mergeSystemPrompt, readUserSettings, readUserSetti
 import { takeFlagValues } from '../shared/claude-args';
 import { endingError, usageLimitOf } from './sessions';
 import { LOGIN_FAILED_RE } from '../shared/logins';
-import { recordCodexHome, startSession, USAGE_LIMIT_RETRY_MARGIN_MS, usageLimitReset, type SessionEnd, type SessionHandle } from './steps/session';
+import { recordCodexHome, startSession, usageLimitReset, type SessionEnd, type SessionHandle } from './steps/session';
 import { REMOTE_LINK_RE } from './remote';
 import { readJson, writeJsonAtomic, writeText } from './store/fsutil';
 import { newRunId } from './store/runs';
@@ -1347,6 +1347,7 @@ class ChatSession {
         settings: this.chatHooks,
         stopGate: false,
         permissions: { waitMs: PERMISSION_TIMEOUT_SEC * 1000, noAnswer: NO_PERMISSION_ANSWER },
+        keepOnApiError: true,
         maxRuntimeMs: Infinity,
         maxRuntimeText: '',
         idleGraceMs: Infinity,
@@ -1386,7 +1387,7 @@ class ChatSession {
     this.sessionStart = started;
   }
 
-  /** The interactive session ended by itself: Claude Code exited, or an API error or the usage limit ended it. */
+  /** The interactive session ended by itself: Claude Code exited, or it couldn't start or run. */
   private sessionEnded(handle: SessionHandle, end: SessionEnd): void {
     if (this.retiredSessions.has(handle) || this.closed) return;
     this.session = null;
@@ -1395,19 +1396,14 @@ class ChatSession {
     this.permissions = [];
     this.takeBackInbox();
     this.showDelivered();
-    if (end.login) this.d.onLogin?.(this.environmentId, this.harness.id, false);
     // As a headless chat's: the process was the conversation, so the chat ends with it.
     if (end.reason === 'exited') {
       this.end(end.headline ? `The session ended: ${end.headline}.` : 'The session ended.');
       return;
     }
-    // An API error, the usage limit, or a start that failed: the next message starts Claude Code again on the conversation.
+    // A start that failed, or a session without Looper's mod: the next message starts Claude Code again on the conversation.
     const text = end.headline ?? 'The session ended.';
     this.acc.addNote(end.body && end.body !== text ? `${text}\n${end.body}` : text);
-    if (end.retryAtMs !== undefined) {
-      this.limit = { at: Date.now(), resetsAt: end.retryAtMs - USAGE_LIMIT_RETRY_MARGIN_MS };
-      this.syncContinue();
-    }
     this.turnEnded();
     this.save();
   }
@@ -1506,7 +1502,9 @@ class ChatSession {
     const reader = new TranscriptReader(file, {}, 'claude', (line) => this.onTranscriptLine(line));
     await reader.skipExisting();
     this.transcript = { file, reader };
-    this.live = new LiveRows(path.join(this.dir, MOD_FILES.live));
+    this.live = new LiveRows(path.join(this.dir, MOD_FILES.live), (liveId, apiId) => {
+      if (this.acc instanceof ClaudeStreamAccumulator) this.acc.sameMessage(liveId, apiId);
+    });
   }
 
   /** The rows the mod handed over since the last read: the conversation shows them before the transcript has them. */
@@ -1529,7 +1527,7 @@ class ChatSession {
     } catch {
       return;
     }
-    if (rec && (!this.live || this.live.transcriptRow(rec.uuid))) this.onRecord(rec);
+    if (rec && (!this.live || this.live.transcriptRow(rec))) this.onRecord(rec);
   }
 
   /** A record of the session's conversation, from its transcript or from its mod (LiveRows). */

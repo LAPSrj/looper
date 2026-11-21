@@ -2,11 +2,12 @@ import { app, BrowserWindow, Menu, nativeImage, nativeTheme, Notification, power
 import path from 'node:path';
 import fs from 'node:fs';
 import { createEngine, type CommandPlace, type Engine } from '../engine/engine';
+import { writeAppLaunch } from '../engine/cli-tool';
 import { describeHolder, EngineLock, liveHolder, TAKEOVER_WAIT_MS, type LockHolder } from '../engine/lock';
 import { readWakeTimerPolicy, SystemAwake } from '../engine/power-win';
 import type { PowerAdapter } from '../engine/rest';
 import type { EngineEvent, PreventSleepTimer } from '../shared/types';
-import type { BuilderSetup } from '../shared/builder';
+import { draftName, type BuilderSetup } from '../shared/builder';
 import { projectTaskId } from '../shared/projects';
 import { sessionGroupKey, watchedSessions } from '../shared/sessions';
 import type { UiEvent } from '../shared/api';
@@ -53,6 +54,7 @@ import {
   type RemoteWindow,
 } from './platform';
 import { RemoteAccess, wanted } from './remote-access';
+import { mainCliRequests } from './cli-requests';
 import { pwaIcons } from './pwa-icons';
 import { pwaStartup } from './pwa-startup';
 import { SOURCE_NAMES, type RemoteAccessPhase, type RemoteAccessProviderId, type RemoteAccessState, type WindowRole } from '../shared/remote-access';
@@ -106,6 +108,8 @@ process.on('unhandledRejection', (reason) => {
 
 /** --hidden: start in the tray, without the main window (used by the login item). */
 const startHidden = process.argv.includes('--hidden');
+/** --data-dir=<dir>: the data folder `looper` started this app on; without it LOOPER_HOME or ~/looper. */
+const dataDirArg = process.argv.find((a) => a.startsWith('--data-dir='))?.slice('--data-dir='.length);
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -138,7 +142,7 @@ if (!app.requestSingleInstanceLock()) {
       app.setAppUserModelId(app.isPackaged ? 'com.lemorim.looper' : 'com.lemorim.looper.dev');
       if (!app.isPackaged) removeDevAumidHijackers();
     }
-    const dataDir = defaultDataDir();
+    const dataDir = dataDirArg || defaultDataDir();
     if (!(await claimDataDir(dataDir))) {
       quitting = true;
       app.quit();
@@ -149,8 +153,35 @@ if (!app.requestSingleInstanceLock()) {
       ...(systemAwake ? { power: createPowerAdapter(systemAwake) } : {}),
       keepAwake: createKeepAwake(),
       showChat,
+      cliSource: path.join(__dirname, '..', 'cli'),
+      onCommandServer: (info) => engineLock?.setServer(info),
+      requests: mainCliRequests({
+        engine: () => engine,
+        addons: () => addons,
+        remoteAccess: () => remoteAccess,
+        showChat,
+        showTask: (taskId) => openTaskView(taskId, '', 'status'),
+        showRun: (taskId, runId) => openMessagesWindow(taskId, runId),
+        showBuilder: (id, edit) => {
+          if (!(builderWindows.get(id) ?? []).some((w) => !w.isDestroyed())) openBuilderWindow(id, edit);
+        },
+        closeBuilderWindows: (id) => {
+          const open = (builderWindows.get(id) ?? []).filter((w) => !w.isDestroyed());
+          if (open.length) settledBuilders.add(id);
+          for (const w of open) w.close();
+        },
+        logIn: openLogIn,
+        installAddon: async (file) => {
+          if (addons) await installAddonFile(addonDeps(), file, mainWin());
+        },
+        quit: (force) => {
+          if (force) quitConfirmed = true;
+          app.quit();
+        },
+      }),
     });
     engine.start();
+    void recordLaunch(dataDir).catch((e: unknown) => engine?.log.warn(`cannot record how to start Looper for looper: ${String(e)}`));
     if (systemAwake) {
       powerMonitor.on('resume', () => systemAwake.reapply());
       powerMonitor.on('on-ac', () => systemAwake.reapply());
@@ -445,10 +476,21 @@ async function claimDataDir(dataDir: string): Promise<boolean> {
     });
     if (r.response !== 0) return false;
   }
-  engineLock = new EngineLock(dataDir, 'desktop', (by) => void onLockLost(by));
+  engineLock = new EngineLock(dataDir, 'desktop', (by) => void onLockLost(by), { version: app.getVersion() });
   engineLock.acquire();
   if (holder) await new Promise((r) => setTimeout(r, TAKEOVER_WAIT_MS));
   return true;
+}
+
+/** How `looper` starts this app when it isn't running (engine/cli-tool.ts). */
+function recordLaunch(dataDir: string): Promise<void> {
+  if (process.platform === 'darwin' && app.isPackaged) {
+    // A copy macOS runs from a temporary folder (app translocation) has no path that lasts.
+    return writeAppLaunch(dataDir, app.isInApplicationsFolder() ? { bundle: path.resolve(process.execPath, '..', '..', '..') } : null);
+  }
+  // An AppImage runs from a temporary mount; APPIMAGE is the file itself.
+  const command = process.env.APPIMAGE ?? process.execPath;
+  return writeAppLaunch(dataDir, { command, args: app.isPackaged ? [] : [app.getAppPath()] });
 }
 
 /** Another engine took the data dir over: stop running tasks here and quit. */
@@ -2315,21 +2357,6 @@ async function saveRowsAsMarkdown(w: AppWindow, rows: MessageRow[] | null, title
   fs.writeFileSync(picked.filePath, messagesToMarkdown(rows, { title, ...chosen }), 'utf8');
 }
 
-/** A chat's history and live rows; a task run's agent conversation, as its run window reads it. */
-async function sessionRows(id: string): Promise<MessageRow[] | null> {
-  if (!engine) return null;
-  const kind = engine.sessionKind(id);
-  if (kind === 'chat') {
-    const c = engine.getChat(id);
-    return c ? [...c.history, ...c.rows] : null;
-  }
-  if (kind !== 'run') return null;
-  const taskId = engine.sessionsState().sessions.find((s) => s.id === id)?.taskId;
-  if (!taskId) return null;
-  const result = await engine.readMessages(taskId, id, undefined, false);
-  return result.status === 'ok' ? result.rows : [];
-}
-
 const sendToSessionsWindows = new WindowSlots();
 
 /**
@@ -2554,8 +2581,7 @@ async function settleBuilder(id: string, child: AppWindow, parent: AppWindow | n
       return true;
     }
     const state = engine.getBuilder(id);
-    const raw = state?.draft.raw?.name;
-    const name = typeof raw === 'string' && raw.trim() ? raw.trim() : '';
+    const name = state ? draftName(state) : '';
     const existing = !!state?.taskId && !!engine.getTask(state.taskId);
     // Not saving also undoes the agent's file changes, which isn't obvious: say which files.
     const files = (state?.changedFiles ?? []).map((f) => f.split(/[\\/]/).pop() ?? f);
@@ -2724,6 +2750,18 @@ function startBuilderInWindow(setupWindow: AppWindow | null, setup: BuilderSetup
   loadRenderer(setupWindow, `builder/${state.id}`);
 }
 
+/** A window of its own on a builder that's already running; `edit`: it edits a task. */
+function openBuilderWindow(id: string, edit: boolean): void {
+  const child = openChildWindow(`builder/${id}`, builderTitle(edit), BUILDER_SIZE.width, BUILDER_SIZE.height, undefined, {
+    role: 'workspace',
+    minWidth: 760,
+    minHeight: 480,
+    contentSize: true,
+  });
+  child.setMaximizable(true);
+  attachBuilder(child, id);
+}
+
 async function editWithAgent(taskId: string): Promise<void> {
   if (!engine) return;
   const openId = engine.builderForTask(taskId);
@@ -2735,26 +2773,11 @@ async function editWithAgent(taskId: string): Promise<void> {
   }
   // Open on another client only: this one gets a window on the same builder.
   if (openId && shown.length > 0) {
-    const child = openChildWindow(`builder/${openId}`, builderTitle(true), BUILDER_SIZE.width, BUILDER_SIZE.height, undefined, {
-      role: 'workspace',
-      minWidth: 760,
-      minHeight: 480,
-      contentSize: true,
-    });
-    child.setMaximizable(true);
-    attachBuilder(child, openId);
+    openBuilderWindow(openId, true);
     return;
   }
   try {
-    const state = engine.startBuilder(engine.builderSetupFor(taskId));
-    const child = openChildWindow(`builder/${state.id}`, builderTitle(true), BUILDER_SIZE.width, BUILDER_SIZE.height, undefined, {
-      role: 'workspace',
-      minWidth: 760,
-      minHeight: 480,
-      contentSize: true,
-    });
-    child.setMaximizable(true);
-    attachBuilder(child, state.id);
+    openBuilderWindow(engine.startBuilder(engine.builderSetupFor(taskId)).id, true);
   } catch (err) {
     await fileErrorBox('Could not open Edit with Agent.', (err as Error).message);
   }
@@ -3081,7 +3104,7 @@ const HOST: Record<HostCommand, (w: AppWindow | null, ...args: string[]) => void
   'other-folder': (w, kind) => openInFolder(kind === 'terminal' ? 'terminal' : 'chat', w),
   'save-markdown': async (w, id, taskId, agentId, title) => {
     if (!w) return;
-    if (taskId === undefined) return saveRowsAsMarkdown(w, await sessionRows(id), sessionTitle(id));
+    if (taskId === undefined) return saveRowsAsMarkdown(w, (await engine?.conversation(id))?.rows ?? null, sessionTitle(id));
     const result = await engine?.readMessages(taskId, id, agentId || undefined, false);
     return saveRowsAsMarkdown(w, result?.status === 'ok' ? result.rows : null, title);
   },

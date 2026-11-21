@@ -203,7 +203,8 @@ describe("a Codex chat's agent", () => {
     const dir = mkdtempSync(join(tmpdir(), 'looper-codex-'));
     const argsFile = join(dir, 'args');
     const codex = join(dir, 'fake-codex');
-    writeFileSync(codex, `#!/bin/sh\nprintf '%s\\0' "$@" > '${argsFile}'\necho '{"type":"thread.started","thread_id":"th1"}'\necho '{"type":"turn.completed"}'\n`);
+    // Only the turns (the chat also asks `codex app-server` for its skills); the rename makes the file appear whole.
+    writeFileSync(codex, `#!/bin/sh\n[ "$1" = exec ] || exit 0\nprintf '%s\\0' "$@" > '${argsFile}.tmp' && mv '${argsFile}.tmp' '${argsFile}'\necho '{"type":"thread.started","thread_id":"th1"}'\necho '{"type":"turn.completed"}'\n`);
     chmodSync(codex, 0o755);
     const host = detectHost();
     const settings = loadSettings(dataDir, host);

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Engine } from '../engine/engine';
 import { convertWslPath, detectedDefaultWslDistro, detectWslMountPrefix, listWslDistros, loadSystemLocale } from '../engine/host';
+import { withoutEnvironment, withoutHarness } from '../shared/environments';
 import { REMOTE_CHANNELS, type HostFileView } from '../shared/remote-access';
 import { copyIntoFolder, listDir, makeDir, type Flavor, type HostFilesDeps } from './platform/host-files';
 import { discoverHarnessModels } from '../engine/discover-models';
@@ -229,7 +230,6 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('info', async (): Promise<AppInfo> => ({
     version: app.getVersion(),
     dataDir: engine.dataDir,
-    inboxDir: engine.inboxDir(),
     host: engine.host,
     locale: await loadSystemLocale(),
     settings: engine.settings,
@@ -1212,13 +1212,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   ipc.on('envEditor:discard', (_e, envId: string) => {
     try {
-      const s = engine.settings;
-      if (s.environments.length <= 1 || !s.environments.some((x) => x.id === envId)) return;
-      const environments = s.environments.filter((x) => x.id !== envId);
-      engine.updateSettings({
-        environments,
-        ...(s.defaultEnvironmentId === envId ? { defaultEnvironmentId: environments[0].id } : {}),
-      });
+      const patch = withoutEnvironment(engine.settings, envId);
+      if (patch) engine.updateSettings(patch);
     } catch (err) {
       engine.log.error(`discard environment ${envId} failed: ${String(err)}`);
     }
@@ -1227,12 +1222,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     try {
       const s = engine.settings;
       const env = s.environments.find((x) => x.id === envId);
-      if (!env || env.harnesses.length <= 1 || !env.harnesses.some((h) => h.id === harnessId)) return;
-      engine.updateSettings({
-        environments: s.environments.map((x) =>
-          x.id === envId ? { ...x, harnesses: x.harnesses.filter((h) => h.id !== harnessId) } : x,
-        ),
-      });
+      const harnesses = env && withoutHarness(env, harnessId);
+      if (harnesses) engine.updateSettings({ environments: s.environments.map((x) => (x.id === envId ? { ...x, harnesses } : x)) });
     } catch (err) {
       engine.log.error(`discard harness ${harnessId} failed: ${String(err)}`);
     }

@@ -252,6 +252,12 @@ export interface SessionOpts {
   /** Headline when the idle grace ends the session. */
   idleText: string;
   onIdleTimeout: 'finish' | 'hold';
+  /**
+   * Interactive Claude Code that someone works in (a chat): a turn that ends on
+   * an API error leaves Claude Code at its prompt, where they can go on.
+   * Unset: the error ends the session, as an unattended run has nobody to go on.
+   */
+  keepOnApiError?: boolean;
 }
 
 /**
@@ -327,7 +333,7 @@ const STARTUP_PROMPT_MS = 120_000;
  * limits cannot end a run.
  */
 export const USAGE_LIMIT_RE =
-  /(?:hit|reached) (?:your|the) [\w-]*\s?limit\b[^\n]{0,80}?resets(?:\s+at)?\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?/i;
+  /(?:hit|reached) (?:your|the) [\w-]*\s?limit\b[^\n]{0,80}?resets(?:\s+at)?\s+(?:[a-z]{3}[a-z]*\.?\s+\d{1,2},?\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?/i;
 /** Fallback wait when the banner shows no parseable reset time. */
 const USAGE_LIMIT_FALLBACK_MS = 3_600_000;
 
@@ -347,17 +353,28 @@ export function recordCodexHome(kind: 'wsl' | 'windows', quotedFile: string): st
     : `printf '%s' "\${CODEX_HOME:-$HOME/.codex}" > ${quotedFile}`;
 }
 
-/** Epoch ms of the "resets 5:50am" wall-clock time in `text` (next occurrence, local), or null. */
+/**
+ * Epoch ms of the wall-clock time in `text`, local: "resets 5:50am" (the next
+ * one), or a weekly limit's "resets Nov 24, 4am" (the next Nov 24). Null without one.
+ */
 export function parseUsageLimitReset(text: string, now: number): number | null {
-  const m = /resets(?:\s+at)?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(text);
+  const m = /resets(?:\s+at)?\s+(?:([a-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(text);
   if (!m) return null;
-  let hour = Number(m[1]);
-  const minute = m[2] ? Number(m[2]) : 0;
-  const ampm = m[3]?.toLowerCase();
+  let hour = Number(m[3]);
+  const minute = m[4] ? Number(m[4]) : 0;
+  const ampm = m[5]?.toLowerCase();
   if (hour > 23 || minute > 59 || (ampm && hour > 12)) return null;
   if (ampm === 'pm' && hour < 12) hour += 12;
   if (ampm === 'am' && hour === 12) hour = 0;
   const at = new Date(now);
+  if (m[1]) {
+    const month = MONTHS.indexOf(m[1].toLowerCase());
+    if (month === -1) return null;
+    at.setMonth(month, Number(m[2]));
+    at.setHours(hour, minute, 0, 0);
+    if (at.getTime() <= now) at.setFullYear(at.getFullYear() + 1);
+    return at.getTime();
+  }
   at.setHours(hour, minute, 0, 0);
   if (at.getTime() <= now) at.setDate(at.getDate() + 1);
   return at.getTime();
@@ -701,7 +718,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
         { hooks: [{ type: 'command', command: target.renderSessionStartHook(targetFile(ctx, f('session.json')), targetFile(ctx, f(SOCKET_FILE))) }] },
       ],
       // A turn that ended on an API error (a usage limit, no login, no network): no Stop hook runs for it.
-      StopFailure: [{ hooks: [{ type: 'command', command: target.renderPipeHook(targetFile(ctx, f(STOP_FAILURE_FILE))) }] }],
+      ...(opts.keepOnApiError ? {} : { StopFailure: [{ hooks: [{ type: 'command', command: target.renderPipeHook(targetFile(ctx, f(STOP_FAILURE_FILE))) }] }] }),
     };
     if (relayPermissions && opts.permissions) {
       // Each permission request waits for Looper's answer too (the poll below), while the terminal asks.
@@ -1108,7 +1125,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
             }
           }
         }
-        if (!headless) await checkStopFailure();
+        if (!headless && !opts.keepOnApiError) await checkStopFailure();
       })()
         .catch((e: Error) => ctx.log.warn(`[${task.id}] cannot read the session's state: ${e.message}`))
         .finally(() => (checking = false));

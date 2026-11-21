@@ -409,6 +409,13 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
       // Guidance is the user's own message too: its text, without the header Looper sends the agent with it.
       return <UserMessage text={row.text} attachments={row.attachments} files={ctx} onContextMenu={onContextMenu} />;
     case 'agent':
+      if (row.note) {
+        return (
+          <div className="chat-msg chat-system" onContextMenu={onContextMenu}>
+            <MessageBody text={row.text} />
+          </div>
+        );
+      }
       return (
         <div className={row.superseded ? 'chat-msg chat-agent chat-superseded' : 'chat-msg chat-agent'} onContextMenu={onContextMenu}>
           <MessageBody text={row.text} />
@@ -493,7 +500,7 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
       );
     case 'error':
       return (
-        <div className="chat-msg chat-agent error-text" onContextMenu={onContextMenu}>
+        <div className="chat-msg chat-system error-text" onContextMenu={onContextMenu}>
           {row.text}
         </div>
       );

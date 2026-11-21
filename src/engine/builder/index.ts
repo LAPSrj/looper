@@ -151,7 +151,7 @@ class BuilderSession {
     if (!setup.cwd.trim()) throw new Error('Choose the working directory.');
     this.mode = setup.taskId ? 'edit' : 'new';
     this.taskId = setup.taskId;
-    this.view = d.settings.builder.view;
+    this.view = setup.view ?? d.settings.builder.view;
     this.acc = harness.kind === 'codex' ? new CodexExecAccumulator() : new ClaudeStreamAccumulator();
     // The builder's own launcher context: a stand-in task carrying the
     // environment, folder and variables, so the launcher, PATH helpers and
@@ -628,7 +628,9 @@ class BuilderSession {
 
   send(text: string): void {
     const t = text.trim();
-    if (!t || this.closed || this.status === 'ended' || this.view !== 'chat') return;
+    if (!t || this.closed || this.status === 'ended') return;
+    // Typed into the harness's own session, pasted so a line break doesn't send it early, as a terminal session's message is.
+    if (this.view === 'terminal') return this.writeTerminal(`\x1b[200~${t}\x1b[201~\r`);
     this.acc.addPrompt(t);
     // The chat shows the message as typed; the agent also learns that Undo/Redo or a loaded version changed its work.
     const forAgent = this.movedByUser

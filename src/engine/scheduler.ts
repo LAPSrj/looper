@@ -1457,7 +1457,7 @@ export class Scheduler extends EventEmitter {
    * retention runs out. Everything else follows from the store write (see
    * `onTaskChange`).
    *
-   * Someone asking for this — a menu click, the inbox, the agent — needs the
+   * Someone asking for this — a menu click, the CLI, the agent — needs the
    * task's "Allow this task to be marked completed" option; the task's own
    * schedule end date is self-authorizing and passes `force`.
    */
@@ -1814,7 +1814,7 @@ export class Scheduler extends EventEmitter {
       retry.check = undefined;
       retry.classified = false;
     }
-    // Whoever set it — the agent, a deadline, the inbox, the editor — this is
+    // Whoever set it — the agent, a deadline, the CLI, the editor — this is
     // where completing a task takes effect.
     if (previous && !previous.completedAt && task.completedAt) this.onCompleted(task, rt);
     // The trigger follows the edit right away, even with runs in flight: a task

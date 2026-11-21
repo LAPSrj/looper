@@ -424,6 +424,64 @@ describe('TranscriptAccumulator', () => {
     ]);
   });
 
+  it("shows a subagent's hand-back as a message from its type, with the report alone, however it reached the agent", () => {
+    const acc = new TranscriptAccumulator();
+    // A Code Mode script started the subagent; the call's result names its type (claude 2.1.330).
+    acc.addLine(assistantBlock({ type: 'tool_use', id: 'r1', name: 'REPL', input: { code: 'agent()' } }));
+    acc.addLine(rec({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'r1', content: 'done' }] } }));
+    acc.addLine(scriptCall('a1', 'Agent', { description: 'Read the docs', prompt: 'Fetch …' }, '2026-11-20T01:00:01.004Z'));
+    acc.addLine(
+      rec({
+        type: 'user',
+        isVirtual: true,
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a1', content: '' }] },
+        toolUseResult: { status: 'completed', agentId: 'afa56', agentType: 'web-fetch' },
+      }),
+    );
+    const body = [
+      '[Subagent hand-back] The text below is the final report of a subagent this session delegated to. The report follows:',
+      '  Both fetches succeeded.',
+      '  ',
+      '  ```',
+      '      level = kIOPMAssertionTypeNoIdleSleep;',
+      '  ```',
+    ].join('\n');
+    const tag = `<agent-message from="afa56">\n${body}\n</agent-message>`;
+    // The queued command the transcript records, and the mod's live copy as the model reads it.
+    acc.addLine(rec({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: tag, origin: { kind: 'peer', from: 'afa56' } } }));
+    acc.addLine(
+      rec({
+        type: 'attachment',
+        attachment: {
+          type: 'queued_command',
+          commandMode: 'prompt',
+          prompt: `<system-reminder id="9d">\nAnother Claude session sent a message while you were working:\n${tag}\n\nThat "other Claude session" is an agent working inside this same session.\n</system-reminder id="9d">`,
+        },
+      }),
+    );
+    // From a subagent this conversation didn't start: its agent id.
+    acc.addLine(rec({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: '<agent-message from="b77">\nAre you there?\n</agent-message>' } }));
+    const report = 'Both fetches succeeded.\n\n```\n    level = kIOPMAssertionTypeNoIdleSleep;\n```';
+    expect(acc.rows.filter((r) => r.kind !== 'tool').map((r) => [r.kind, r.from, r.text])).toEqual([
+      ['peer', 'web-fetch', report],
+      ['peer', 'web-fetch', report],
+      ['peer', 'b77', 'Are you there?'],
+    ]);
+  });
+
+  it("names a subagent's hand-back once its Agent call is written, after the script that made it ends", () => {
+    const tag = '<agent-message from="c3">\n[Subagent hand-back] The report follows:\n  Found it.\n</agent-message>';
+    const live = `<system-reminder id="1">\nAnother Claude session sent a message while you were working:\n${tag}\n</system-reminder id="1">`;
+    const transcript = new TranscriptAccumulator();
+    transcript.addLine(rec({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: tag, origin: { kind: 'peer', from: 'c3', name: 'Explore' } } }));
+    const mod = new TranscriptAccumulator();
+    mod.addLine(rec({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: live } }));
+    expect(mod.rows.map((r) => r.from)).toEqual(['c3']);
+    mod.addLine(scriptCall('a2', 'Agent', { subagent_type: 'Explore', prompt: 'Find it' }, '2026-11-20T01:00:01.004Z'));
+    mod.addLine(rec({ type: 'user', isVirtual: true, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a2', content: '' }] }, toolUseResult: { agentId: 'c3' } }));
+    expect([transcript, mod].map((acc) => acc.rows.filter((r) => r.kind === 'peer').map((r) => [r.from, r.text]))).toEqual([[['Explore', 'Found it.']], [['Explore', 'Found it.']]]);
+  });
+
   it("shows a slash command or skill as the user's /name and arguments, without the skill's content", () => {
     // As claude 2.1.x records `/edit-block Hero`: the command, then the skill's content as a meta record.
     const acc = new TranscriptAccumulator();
@@ -801,6 +859,53 @@ describe('TranscriptReader', () => {
     fs.appendFileSync(file, row('u3', 'and more') + '\n' + row('u4', 'done') + '\n');
     await r.read();
     expect(r.acc.rows.map((x) => x.text)).toEqual(['hello', 'hi there', 'and more', 'done']);
+  });
+
+  describe("a reply whose message's tool call came from the other copy", () => {
+    // The mod names a response's records live-<start>-<n>; the transcript names them by the API message's id.
+    const reply = (uuid: string, id: string, text: string) => rec({ type: 'assistant', uuid, message: { id, role: 'assistant', content: [{ type: 'text', text }] } });
+    const call = (uuid: string, id: string, toolId: string) =>
+      rec({ type: 'assistant', uuid, message: { id, role: 'assistant', content: [{ type: 'tool_use', id: toolId, name: 'REPL', input: { code: 'x' } }] } });
+    const result = (uuid: string, toolId: string) => rec({ type: 'user', uuid, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: '(dispatched #1)' }] } });
+    const replies = (r: TranscriptReader) => r.acc.rows.filter((x) => x.kind === 'agent').map((x) => [x.text, !!x.superseded]);
+
+    it('stays when the mod showed the reply and the transcript showed its call', async () => {
+      const file = path.join(dir, 't.jsonl');
+      const live = path.join(dir, 'live');
+      fs.mkdirSync(live);
+      fs.writeFileSync(file, userPrompt('go') + '\n');
+      fs.writeFileSync(path.join(live, '1-000000001.json'), reply('u1', 'live-1-1', "I'm checking the page."));
+      const r = new TranscriptReader(file, {}, 'claude', undefined, live);
+      await r.read();
+      // The script took seconds to write: the transcript has the reply and its call before the mod's file of the call is read.
+      fs.appendFileSync(file, [reply('u1', 'msg_a', "I'm checking the page."), call('u2', 'msg_a', 'r1'), result('u3', 'r1')].join('\n') + '\n');
+      await r.read();
+      fs.writeFileSync(path.join(live, '1-000000004.json'), reply('u4', 'live-1-2', 'The page renders.'));
+      await r.read();
+      expect(replies(r)).toEqual([
+        ["I'm checking the page.", false],
+        ['The page renders.', false],
+      ]);
+    });
+
+    it('stays when the transcript showed the reply and the mod showed its call', async () => {
+      const file = path.join(dir, 't.jsonl');
+      const live = path.join(dir, 'live');
+      fs.mkdirSync(live);
+      fs.writeFileSync(file, userPrompt('go') + '\n' + reply('u1', 'msg_a', "I'm checking the page.") + '\n');
+      // The mod's file of the reply is already gone (LiveSweep); its file of the call is ahead of the transcript.
+      fs.writeFileSync(path.join(live, '1-000000002.json'), call('u2', 'live-1-1', 'r1'));
+      const r = new TranscriptReader(file, {}, 'claude', undefined, live);
+      await r.read();
+      fs.appendFileSync(file, [call('u2', 'msg_a', 'r1'), result('u3', 'r1')].join('\n') + '\n');
+      await r.read();
+      fs.writeFileSync(path.join(live, '1-000000004.json'), reply('u4', 'live-1-2', 'The page renders.'));
+      await r.read();
+      expect(replies(r)).toEqual([
+        ["I'm checking the page.", false],
+        ['The page renders.', false],
+      ]);
+    });
   });
 
   it("deletes the mod's file of each row the transcript has, with nobody reading the conversation", async () => {

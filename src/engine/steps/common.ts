@@ -11,6 +11,7 @@ import { joinTarget } from '../target/paths';
 import { DELEGATE_BUSY_VAR, SOCKET_FILE_VAR } from '../target/stop-hook';
 import { killHostTree } from '../target/kill';
 import { writeText } from '../store/fsutil';
+import { cliScript } from '../cli-tool';
 
 export interface RunContext {
   task: Task;
@@ -170,6 +171,13 @@ const RUN_ONLY_VARS = [
   DELEGATE_BUSY_VAR,
 ];
 
+/** The `looper` command (Looper's command-line tool) in a session's bin folder; whether there is one. */
+export function writeCliHelper(target: Target, dataDir: string, binDir: string): boolean {
+  const files = Object.entries(target.renderCliHelper({ script: cliScript(dataDir), home: dataDir, exe: process.execPath }));
+  for (const [file, text] of files) writeText(path.join(binDir, file), text, 0o755);
+  return files.length > 0;
+}
+
 /**
  * Write the done helper + a launcher script into the run dir and return how to
  * spawn it. The task's env vars override `extraEnv` (e.g. a harness's env
@@ -221,6 +229,7 @@ export function writeLauncher(
     );
     for (const [file, text] of Object.entries(helpers)) writeText(path.join(ctx.runDir, 'bin', file), text, 0o755);
   }
+  if (ctx.dataDir) writeCliHelper(ctx.target, ctx.dataDir, path.join(ctx.runDir, 'bin'));
   // A file rather than the text itself, so free-form text needs no quoting on any target.
   if (ctx.note) {
     writeText(path.join(ctx.runDir, 'note.txt'), ctx.note + '\n');

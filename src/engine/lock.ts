@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { detectHost, wslDistroName, type HostKind } from './host';
-import { readJson, writeJsonAtomic } from './store/fsutil';
+import { readJson } from './store/fsutil';
 
 /**
  * One engine per data dir. Two engines on the same data dir (the Windows app
@@ -23,7 +23,17 @@ export interface LockHolder {
   pid: number;
   startedAt: number;
   heartbeatAt: number;
+  /** The running Looper's version, so a release can tell the new one has started. */
+  version?: string;
+  /** The command server `looper` calls: its port on 127.0.0.1, and the token each request carries. */
+  port?: number;
+  token?: string;
+  /** Windows only, while WSL runs in NAT mode: the port on the WSL adapter's address, WSL's default gateway. */
+  wslPort?: number;
 }
+
+/** Where `looper` reaches the engine's command server. */
+export type CommandServerInfo = Pick<LockHolder, 'port' | 'token' | 'wslPort'>;
 
 export const HEARTBEAT_MS = 5_000;
 /** A lock not refreshed for this long belongs to an engine that is gone (crashed, killed, hung). */
@@ -65,7 +75,7 @@ const WHERE: Record<HostKind, string> = { windows: 'Windows', wsl: 'WSL', linux:
 
 /** "the Looper app in Windows (process 1234), started Oct 13, 2026, 11:20 AM". */
 export function describeHolder(h: LockHolder): string {
-  const what = h.app === 'desktop' ? 'the Looper app' : 'looper serve';
+  const what = `${h.app === 'desktop' ? 'the Looper app' : 'looper serve'}${h.version ? ` ${h.version}` : ''}`;
   const where = h.where === 'wsl' && h.distro ? `WSL (${h.distro})` : WHERE[h.where];
   const machine = h.hostname === os.hostname() ? '' : ` on ${h.hostname}`;
   const started = new Date(h.startedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
@@ -74,14 +84,14 @@ export function describeHolder(h: LockHolder): string {
 
 export class EngineLock {
   private timer: NodeJS.Timeout | null = null;
-  private readonly me: LockHolder;
+  private me: LockHolder;
 
   constructor(
     private readonly dataDir: string,
     app: LockHolder['app'],
     /** Another engine took the lock over: stop this one. Called once. */
     private readonly onLost: (by: LockHolder | null) => void,
-    private readonly opts: { heartbeatMs?: number; now?: () => number } = {},
+    private readonly opts: { heartbeatMs?: number; now?: () => number; version?: string } = {},
   ) {
     const now = this.now();
     this.me = {
@@ -91,6 +101,7 @@ export class EngineLock {
       ...(wslDistroName() ? { distro: wslDistroName() } : {}),
       hostname: os.hostname(),
       pid: process.pid,
+      ...(opts.version ? { version: opts.version } : {}),
       startedAt: now,
       heartbeatAt: now,
     };
@@ -102,7 +113,18 @@ export class EngineLock {
 
   private write(): void {
     fs.mkdirSync(this.dataDir, { recursive: true });
-    writeJsonAtomic(lockFile(this.dataDir), { ...this.me, heartbeatAt: this.now() });
+    const file = lockFile(this.dataDir);
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    // The token lets whoever reads it command Looper, so only this user may.
+    fs.writeFileSync(tmp, JSON.stringify({ ...this.me, heartbeatAt: this.now() }, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(tmp, file);
+  }
+
+  /** Publish the command server's address; written at once, so a `looper` waiting for it goes on. */
+  setServer(info: CommandServerInfo): void {
+    const { port: _p, token: _t, wslPort: _w, ...rest } = this.me;
+    this.me = { ...rest, ...info };
+    if (this.timer) this.write();
   }
 
   /** Take the lock (replacing any holder) and keep it fresh. */

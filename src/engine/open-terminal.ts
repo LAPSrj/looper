@@ -10,6 +10,7 @@ import { recordCodexHome } from './steps/session';
 import { harnessCommand } from './logins';
 import { createEnvTarget, createTarget, type Target } from './target';
 import { writeJsonAtomic, writeText } from './store/fsutil';
+import { writeCliHelper } from './steps/common';
 import { mergeClaudeSettings, mergeSystemPrompt, readUserSettingsSync } from './claude-settings';
 
 /** The hooks that record a terminal session's conversation, as target paths. */
@@ -196,6 +197,8 @@ export interface OpenTerminalDeps {
   host: HostKind;
   settings: Settings;
   log: Logger;
+  /** The data dir: the session gets the `looper` command (its copy of the command-line tool is there). */
+  dataDir?: string;
 }
 
 /**
@@ -232,7 +235,7 @@ export function writeLoginLauncher(env: Environment, harness: Harness, host: Hos
  */
 export function writeTerminalLauncher(
   task: Task,
-  deps: Pick<OpenTerminalDeps, 'host' | 'settings'>,
+  deps: Pick<OpenTerminalDeps, 'host' | 'settings' | 'dataDir'>,
   dir: string,
   resumeSessionId?: string,
   record = false,
@@ -294,9 +297,10 @@ export function writeTerminalLauncher(
   if (remote?.prelude) prelude = prelude ? `${prelude}\n${remote.prelude}` : remote.prelude;
   const helpers = Object.entries(remote?.helpers ?? {});
   for (const [name, content] of helpers) writeText(path.join(dir, 'bin', name), content, 0o755);
+  const cli = !!deps.dataDir && writeCliHelper(target, deps.dataDir, path.join(dir, 'bin'));
   const launcherHost = path.join(dir, 'terminal' + target.launcherExt);
   const vars = { ...harness.env, ...taskEnv(task), ...remote?.env };
-  writeText(launcherHost, renderTerminalScript(target, task, vars, command, prelude, helpers.length ? t('bin') : undefined), 0o755);
+  writeText(launcherHost, renderTerminalScript(target, task, vars, command, prelude, helpers.length || cli ? t('bin') : undefined), 0o755);
   return { target, launcherHost };
 }
 

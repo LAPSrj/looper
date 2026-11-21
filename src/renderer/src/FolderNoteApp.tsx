@@ -3,7 +3,8 @@ import { folderSubtree } from '@shared/folders';
 import { plural } from '@shared/format';
 import { windowTitle } from '@shared/window-title';
 import { EmptyWindow } from './components/ui';
-import { GuidanceForm, guidanceNote } from './components/form-blocks';
+import { guidanceNote } from '@shared/guidance';
+import { GuidanceForm } from './components/form-blocks';
 import { FOLDERS, TASKS, useLiveItem, useSave } from './components/hooks';
 
 const TITLE = 'Guidance for Next Runs';

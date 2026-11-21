@@ -257,7 +257,7 @@ When the agent asks:
 - The run window shows the question above the guidance box at the bottom of
   the window (an info bar, "The agent has a question"), and the box, whose
   placeholder reads "Your answer", takes the answer. The other ways to send guidance (Send Guidance… on the
-  run's context menu, the inbox `guide` command, `looper guide`) answer it
+  run's context menu, `looper guide`) answer it
   too.
 
 The command waits up to **Wait for an answer** (default 5 min) and prints your
@@ -285,7 +285,7 @@ it to finish.
   or context menu) follows the same cap: below it, Run Now starts another
   run even while one is active; at the cap it's refused outright and recorded
   as skipped, the same as a scheduled slot — it isn't retried automatically.
-  The CLI/inbox `run` command behaves the same way. Run Now on a paused task
+  The CLI's `run` command behaves the same way. Run Now on a paused task
   also lifts the pause and clears its error count, the same as Resume. When
   more than one run of a task is in flight, the task's status
   and last-result always reflect whichever run finished most recently.
@@ -296,7 +296,7 @@ it to finish.
   logged as skipped for this.
 - A **manual task** (Trigger tab set to "Manually only") never fires on
   its own; it only runs via Run Now, the toolbar, the context menu, or the
-  CLI/inbox `run` command. `{{trigger}}` in your prompt is `"manual"` for
+  CLI's `run` command. `{{trigger}}` in your prompt is `"manual"` for
   these runs, `"timer"` for scheduled ones, and `"watcher"` for runs a
   watcher started.
 - **A sleeping computer stops runs.** When Windows suspends while the desktop
@@ -325,7 +325,7 @@ it's greyed out while no step is checked. Cancel starts nothing.
 A step you unchecked doesn't run at all, and the run's log records
 "skipped by run options: …". Unchecking Agent ends the cycle after the
 check and classifier, with "agent step skipped" as its detail. Folder
-actions (Run All Now) and the CLI/inbox `run` command never open the
+actions (Run All Now) and the CLI's `run` command never open the
 window.
 
 ## One-off guidance notes
@@ -373,8 +373,8 @@ While a Claude Code or Codex agent is running, you can send it guidance
 without stopping it: the send box under the run window's conversation
 (Enter sends, Shift+Enter breaks the line; on a phone Enter breaks the line), **Send Guidance…** on a run's context menu in the Runs
 tab, the box under the run's conversation on the Chats tab or in the Chats
-window and on its dashboard card (with [View → Show Task Runs](monitoring.md#the-chat-list)), the inbox `guide`
-command, or `looper guide <taskId> <text>`. Text sent before the agent picked
+window and on its dashboard card (with [View → Show Task Runs](monitoring.md#the-chat-list)), or
+`looper guide <taskId> <text>`. Text sent before the agent picked
 up the previous one is appended to it. While the agent waits on an answer to
 [its question](#questions-from-the-agent), what you send is the answer instead.
 

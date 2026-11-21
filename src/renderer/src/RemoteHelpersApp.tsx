@@ -7,7 +7,7 @@ import { EmptyWindow } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { useLiveSettings } from './components/hooks';
 import { keptSelection } from './components/selection';
-import { rid } from './rid';
+import { rid } from '@shared/rid';
 import { subscribe } from './events';
 import { reportError } from './report-error';
 

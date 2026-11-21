@@ -35,8 +35,8 @@ polling inside the agent, no context buildup, at most one agent per task.
   tablet or another computer: turning it on with Tailscale, pairing a device,
   using it in a desktop browser and on a phone, notifications, paired
   devices, and security.
-- **[CLI and automation](cli-and-automation.md)**: the `looper` CLI, the
-  inbox drop-folder protocol for scripts and agents, `looper serve`, and a
+- **[CLI and automation](cli-and-automation.md)**: the `looper` CLI for you,
+  scripts and agents, how it reaches and starts Looper, `looper serve`, and a
   tour of the `~/looper` data directory.
 - **[Addons](addons.md)**: installing addons, their panes and tabs, their menus
   and toolbars, the Addons window, and the manifest and protocol for writing

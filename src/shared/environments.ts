@@ -1,4 +1,28 @@
+import { rid } from './rid';
 import type { Environment, Harness, HarnessModel, Settings, Task } from './types';
+
+/** A new environment's harness, and the one Add Harness starts from. */
+export function newHarness(): Harness {
+  return { id: `h-${rid()}`, name: 'Claude Code', kind: 'claude-code', command: 'claude', args: [], env: {} };
+}
+
+/** What Add Environment starts from. */
+export function newEnvironment(): Environment {
+  return { id: `env-${rid()}`, name: 'New environment', kind: 'local', harnesses: [newHarness()] };
+}
+
+/** The settings without an environment, the default moving to the first one left; null for the last one or one that isn't there. */
+export function withoutEnvironment(settings: Pick<Settings, 'environments' | 'defaultEnvironmentId'>, envId: string): Pick<Settings, 'environments'> & Partial<Pick<Settings, 'defaultEnvironmentId'>> | null {
+  if (settings.environments.length <= 1 || !settings.environments.some((e) => e.id === envId)) return null;
+  const environments = settings.environments.filter((e) => e.id !== envId);
+  return { environments, ...(settings.defaultEnvironmentId === envId ? { defaultEnvironmentId: environments[0].id } : {}) };
+}
+
+/** An environment's harnesses without one; null for its last one or one that isn't there. */
+export function withoutHarness(env: Environment, harnessId: string): Harness[] | null {
+  if (env.harnesses.length <= 1 || !env.harnesses.some((h) => h.id === harnessId)) return null;
+  return env.harnesses.filter((h) => h.id !== harnessId);
+}
 
 /** The environment a task runs in. Throws when the task names none that exists. */
 export function resolveEnvironment(task: Task, settings: Settings): Environment {

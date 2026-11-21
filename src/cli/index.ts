@@ -8,20 +8,35 @@ import { EXAMPLE_CHECK_SCRIPT, EXAMPLE_TASK } from '../shared/example-task';
 import { FILE_KINDS, readLooperFile, wrapLooperFile } from '../shared/files';
 import { DEFINITION_VERSION, migrateDefinition } from '../shared/migrate';
 import { taskSchemaDoc } from '../shared/schema-doc';
-import { SettingsSchema, type Environment, type InboxChat, type InboxCommand, type RunRecord, type TaskRuntime } from '../shared/types';
+import { groupRuns, type RunGroup } from '../shared/runs';
+import { SettingsSchema, type Environment } from '../shared/types';
 import { importTaskDraft, slugify, validateTask } from '../shared/validate';
-import { waitForInbox } from './inbox-wait';
+import { version } from '../../package.json';
+import { findRunTask } from '../engine/run-lookup';
+import { RunStore } from '../engine/store/runs';
+import { storeFile } from '../engine/store/settings';
+import { StateStore } from '../engine/store/state';
+import { CLI_LEVELS, type CliLevel } from '../shared/cli-levels';
+import { ask, columns, gated, registerAppCommands, seconds, show, type CliContext } from './app';
 
 const program = new Command();
 program
   .name('looper')
   .description('Cron-style manager for AI agent loops')
+  .version(version)
   .option('--data-dir <dir>', 'looper data directory (default: LOOPER_HOME or ~/looper)')
   .addHelpText('before', 'Agents automating Looper: run `looper agents` for the task-authoring guide.\n');
 
+/** --data-dir as typed, before commander has parsed it: which commands the help lists depends on its settings. */
+const typedDataDir = (() => {
+  const i = process.argv.indexOf('--data-dir');
+  if (i > 0 && process.argv[i + 1]) return process.argv[i + 1];
+  return process.argv.find((a) => a.startsWith('--data-dir='))?.slice('--data-dir='.length);
+})();
+
 function dataDir(): string {
   const opt = program.opts<{ dataDir?: string }>().dataDir;
-  return opt ?? defaultDataDir();
+  return opt ?? typedDataDir ?? defaultDataDir();
 }
 
 function readJsonFile<T>(file: string, fallback: T): T {
@@ -32,22 +47,21 @@ function readJsonFile<T>(file: string, fallback: T): T {
   }
 }
 
-function dropInbox(obj: unknown, prefix: string): string {
-  const dir = path.join(dataDir(), 'inbox');
-  fs.mkdirSync(dir, { recursive: true });
-  const name = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
-  const tmp = path.join(dir, name + '.tmp');
-  const final = path.join(dir, name);
-  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), 'utf8');
-  fs.renameSync(tmp, final); // rename so the engine never sees a half-written file
-  return final;
+/** Settings → Advanced → Command-line tool, as settings.json has it. */
+let level: CliLevel | undefined;
+function cliLevel(): CliLevel {
+  const v = readJsonFile<{ cliCommands?: unknown } | null>(path.join(dataDir(), 'settings.json'), null)?.cliCommands;
+  level ??= (CLI_LEVELS as readonly unknown[]).includes(v) ? (v as CliLevel) : 'standard';
+  return level;
 }
+
+const ctx: CliContext = { dataDir, appPath, level: cliLevel };
 
 /** The tasks the app has stored. Settings → Advanced → Tasks file can keep them outside the data dir, as the engine reads them. */
 function readTasks(): { id: string; name: string; enabled: boolean; completedAt?: string; [field: string]: unknown }[] {
   const dir = dataDir();
   const custom = readJsonFile<{ tasksFile?: unknown } | null>(path.join(dir, 'settings.json'), null)?.tasksFile;
-  const tasksFile = typeof custom === 'string' && custom ? custom : path.join(dir, 'tasks.json');
+  const tasksFile = storeFile(dir, 'tasks', { tasksFile: typeof custom === 'string' && custom ? custom : undefined });
   if (tasksFile !== path.join(dir, 'tasks.json') && !fs.existsSync(tasksFile)) {
     console.error(`cannot read the tasks file set in Settings: ${tasksFile}`);
     process.exit(2);
@@ -57,11 +71,10 @@ function readTasks(): { id: string; name: string; enabled: boolean; completedAt?
   }).tasks;
 }
 
-function command(op: InboxCommand['op']) {
-  return (taskId: string, opts: { reason?: string }) => {
-    const file = dropInbox({ op, taskId, reason: opts.reason } satisfies InboxCommand, op);
-    console.log(`queued ${op} ${taskId} -> ${file}`);
-  };
+/** A command that changes a task: Looper's answer says what it did. */
+function command(method: 'pause' | 'resume' | 'stop' | 'remove' | 'enable' | 'disable' | 'complete' | 'reopen') {
+  return async (taskId: string, opts: { reason?: string; timeout: string }) =>
+    show(await ask(ctx, method, { taskId, ...(opts.reason ? { reason: opts.reason } : {}) }, opts.timeout));
 }
 
 program
@@ -136,14 +149,7 @@ function readDefinition(file: string): Record<string, unknown> {
 
 /** Version stamped as $app into written .loopertask files. */
 function cliVersion(): string {
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8')) as {
-      version?: string;
-    };
-    return pkg.version ?? '0.0.0';
-  } catch {
-    return '0.0.0';
-  }
+  return version;
 }
 
 /**
@@ -180,8 +186,8 @@ Then:
   2. looper validate <file>  check it; errors block (exit 1), while references to
                              environments/harnesses this setup lacks are only warnings here;
                              writes <id>.loopertask next to the file (or into --out <dir>)
-  3. looper add <file>       validate strictly (references included), queue the task in the
-                             running app's inbox, and wait until the app has stored it
+  3. looper add <file>       validate strictly (references included), send the task to
+                             Looper (starting it if needed), and wait until it has stored it
                              (--timeout <s>, default 30); refuses an id that already exists
      looper add --update     update the existing task with that id instead (refuses a new id)
      looper add --fix        first replace invalid values with defaults (the .loopertask
@@ -196,18 +202,24 @@ A chat instead of a task:
                              chat's id. --message-file <file> (or -) for a long message,
                              --title, --model, --effort, and --open to show it on the desktop.
 
+Everything else:
+  looper --help              every command: the open chats, terminal sessions and runs
+                             (sessions), messages to them (send), runs and reports (runs,
+                             report, recent), transcripts, folders, templates and more
+
 Notes:
   - add and validate accept plain JSON or a .loopertask document; "-" as the file reads
     it from stdin, e.g. looper add - <<'EOF' … EOF
   - Exit codes: 0 ok; 1 invalid task, id conflict, or rejected by the app; 2 unreadable
-    input or missing settings; 3 (add and chat) queued, but no running app picked it up.
+    input or missing settings; 3 Looper isn't running and couldn't be started, or didn't
+    answer in time. A command starts Looper when it isn't running.
   - Results go to stdout; errors, warnings and fixes go to stderr.
   - Point LOOPER_HOME (or --data-dir) at the data dir of the Looper app that should run
     the task.
   - Older task files/stores are migrated to the current format automatically on read;
     "looper migrate <file>" rewrites them in place.
 
-Full documentation: docs/tasks.md (field guide), docs/cli-and-automation.md (CLI and inbox).`;
+Full documentation: docs/tasks.md (field guide), docs/cli-and-automation.md (CLI and automation).`;
 
 program
   .command('agents')
@@ -255,14 +267,15 @@ program
   .description('register a new task from a JSON or .loopertask file ("-" reads stdin) and wait for the running app to store it')
   .option('--update', 'update the existing task with this id instead of creating a new one')
   .option('--fix', 'replace invalid values with defaults (the .loopertask import heuristics) instead of rejecting them')
-  .option('--timeout <s>', 'seconds to wait for the running app to pick the task up', '30')
-  .action(async (file: string, opts: { update?: boolean; fix?: boolean; timeout: string }) => {
-    const timeoutSec = Number(opts.timeout);
-    if (!(timeoutSec >= 0)) {
-      console.error(`--timeout must be a number of seconds, got "${opts.timeout}"`);
-      process.exit(2);
-    }
+  .option('--template <id>', "start from a template: the file's fields replace the template's")
+  .option('--timeout <s>', 'seconds to wait for Looper to answer', '30')
+  .action(async (file: string, opts: { update?: boolean; fix?: boolean; template?: string; timeout: string }) => {
     let def = readDefinition(file);
+    if (opts.template) {
+      const { id: _id, ...template } = await ask<Record<string, unknown>>(ctx, 'template', { id: opts.template }, opts.timeout);
+      def = { ...template, ...def };
+      if (!def.id && typeof def.name === 'string') def.id = slugify(def.name);
+    }
     const settings = targetSettings();
     const fixes: string[] = [];
     if (opts.fix) {
@@ -291,21 +304,9 @@ program
       console.error(`no task ${id} to update: leave out --update to create it`);
       process.exit(1);
     }
-    const dest = dropInbox(v.task, `task-${id}`);
-    const outcome = await waitForInbox(dest, timeoutSec * 1000);
-    if (outcome.status === 'rejected') {
-      console.error(`rejected task ${id}: ${outcome.reason}`);
-      process.exit(1);
-    }
-    if (outcome.status === 'pending') {
-      console.error(
-        `queued task ${id} -> ${dest}, but no running Looper app picked it up within ${timeoutSec}s; ` +
-          'it is applied when the app starts, or delete the file to cancel',
-      );
-      process.exit(3);
-    }
-    if (outcome.status === 'vanished' || !readTasks().some((t) => t.id === id)) {
-      console.error(`task ${id} left the inbox but isn't in the tasks file; check ${path.join(dataDir(), 'engine.log')}`);
+    await ask(ctx, 'task-add', { task: v.task, ...(opts.update ? { update: true } : {}) }, opts.timeout, { refused: `rejected task ${id}: ` });
+    if (!readTasks().some((t) => t.id === id)) {
+      console.error(`Looper stored task ${id}, but it isn't in the tasks file; check ${path.join(dataDir(), 'engine.log')}`);
       process.exit(1);
     }
     console.log(`${opts.update ? 'updated' : 'added'} task ${id}`);
@@ -437,24 +438,33 @@ program
 program
   .command('list')
   .description('list tasks and their current state')
-  .action(() => {
-    const dir = dataDir();
+  .option('--json', 'print JSON')
+  .action((opts: { json?: boolean }) => {
     const tasks = readTasks();
-    const state = readJsonFile<{ tasks: Record<string, TaskRuntime> }>(path.join(dir, 'state.json'), {
-      tasks: {},
-    }).tasks;
-    if (!tasks.length) {
-      console.log('no tasks');
-      return;
-    }
+    const state = readState();
     const now = Date.now();
-    for (const t of tasks) {
+    const rows = tasks.map((t) => {
       const rt = state[t.id];
-      const st = rt?.state ?? (t.completedAt ? 'completed' : t.enabled ? 'idle' : 'disabled');
-      const next = rt?.nextRunAt ? `next in ${formatDuration(Math.max(0, rt.nextRunAt - now))}` : '';
-      const last = rt?.lastResult ? `last: ${rt.lastResult}${rt.lastDetail ? ` (${rt.lastDetail})` : ''}` : '';
-      console.log(`${t.id.padEnd(24)} ${st.padEnd(11)} ${next.padEnd(16)} ${last}`);
-    }
+      return {
+        id: t.id,
+        name: t.name,
+        state: rt?.state ?? (t.completedAt ? 'completed' : t.enabled ? 'idle' : 'disabled'),
+        nextRunAt: rt?.nextRunAt ? new Date(rt.nextRunAt).toISOString() : null,
+        lastResult: rt?.lastResult ?? null,
+        lastDetail: rt?.lastDetail ?? null,
+      };
+    });
+    show(rows, opts.json, (list) =>
+      columns(
+        list.map((r) => [
+          r.id,
+          r.state,
+          r.nextRunAt ? `next in ${formatDuration(Math.max(0, Date.parse(r.nextRunAt) - now))}` : '',
+          r.lastResult ? `last: ${r.lastResult}${r.lastDetail ? ` (${r.lastDetail})` : ''}` : '',
+        ]),
+        'no tasks',
+      ),
+    );
   });
 
 program
@@ -462,36 +472,244 @@ program
   .description('run a task now')
   .option('--reason <r>')
   .option('--event <line>', 'hand the task one trigger event, a line like a watcher prints')
-  .action((taskId: string, opts: { reason?: string; event?: string }) => {
-    const file = dropInbox({ op: 'run', taskId, reason: opts.reason, event: opts.event } satisfies InboxCommand, 'run');
-    console.log(`queued run ${taskId} -> ${file}`);
+  .option('--wait', 'wait for the run to end, print its result and report, and exit with 1 when it failed')
+  .option('--skip-check', "skip the task's check")
+  .option('--skip-classifier', "skip the task's classifier")
+  .option('--timeout <s>', 'seconds to wait for Looper to answer', '30')
+  .action(async (taskId: string, opts: { reason?: string; event?: string; wait?: boolean; skipCheck?: boolean; skipClassifier?: boolean; timeout: string }) => {
+    if (!opts.wait && !opts.skipCheck && !opts.skipClassifier) {
+      show(await ask(ctx, opts.event !== undefined ? 'event' : 'run-now', { taskId, ...(opts.event !== undefined ? { event: opts.event } : {}) }, opts.timeout));
+      return;
+    }
+    if (opts.event !== undefined) {
+      console.error("an event goes to the run it relates to, so --event can't go with --wait or a --skip option");
+      process.exit(2);
+    }
+    const params = { taskId, ...(opts.skipCheck ? { skipCheck: true } : {}), ...(opts.skipClassifier ? { skipClassifier: true } : {}) };
+    const { runId } = await ask<{ runId: string }>(ctx, 'run', params, opts.timeout);
+    if (!opts.wait) {
+      console.log(runId);
+      return;
+    }
+    console.error(`run ${runId} started; waiting for it to end`);
+    await runEnded(taskId, runId);
+    const g = runGroups(taskId).find((x) => x.runId === runId);
+    if (!g) {
+      console.error(`run ${runId} ended without a record; check ${path.join(dataDir(), 'engine.log')}`);
+      process.exit(1);
+    }
+    console.log(`${g.result}${g.details ? `: ${g.details}` : ''}`);
+    if (g.resultText) console.log(`\n${g.resultText}`);
+    process.exit(FAILED.has(g.result) ? 1 : 0);
   });
-program.command('pause <taskId>').description('pause a task').option('--reason <r>').action(command('pause'));
-program.command('resume <taskId>').description('resume a paused task').option('--reason <r>').action(command('resume'));
-program.command('stop <taskId>').description("stop the task's current run").option('--reason <r>').action(command('stop'));
-program.command('remove <taskId>').description('move a task to the Recycle Bin').option('--reason <r>').action(command('remove'));
-program.command('enable <taskId>').description('enable a task').option('--reason <r>').action(command('enable'));
-program.command('disable <taskId>').description('disable a task').option('--reason <r>').action(command('disable'));
+
+/** How a run ended that `run --wait` exits with 1 for. */
+const FAILED = new Set(['error', 'warning', 'max-runtime', 'interrupted', 'idle-timeout', 'stopped', 'held']);
+
+/** Wait until the run is no longer in flight in state.json, which the app writes within 200 ms of a change. */
+async function runEnded(taskId: string, runId: string): Promise<void> {
+  const start = Date.now();
+  let seen = false;
+  for (;;) {
+    const rt = readState()[taskId];
+    const inFlight = !!rt && [...rt.runs, ...(rt.children ?? [])].some((r) => r.runId === runId);
+    seen ||= inFlight;
+    // A run that ends within the first write never shows as in flight.
+    if (!inFlight && (seen || Date.now() - start > 2000)) return;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+
+/** The tasks' state as the running app last wrote it. */
+const readState = () => new StateStore(path.join(dataDir(), 'state.json')).load();
+
+/** A task's runs from its run log, newest first. */
+const runGroups = (taskId: string): RunGroup[] => groupRuns(new RunStore(dataDir()).list(taskId, Infinity));
+
+gated(ctx, program, 'runs <taskId>', 'standard')
+  .description("list a task's runs, newest first")
+  .option('-n, --limit <n>', 'how many', '30')
+  .option('--json', 'print JSON')
+  .action((taskId: string, opts: { limit: string; json?: boolean }) => {
+    const groups = runGroups(taskId).slice(0, Number(opts.limit));
+    show(
+      groups.map(({ records: _records, resultText: _text, ...g }) => g),
+      opts.json,
+      (list) => columns(list.map((g) => [new Date(g.startTs).toLocaleString(), g.runId, g.result, g.totalDurationMs ? formatDuration(g.totalDurationMs) : '', g.details]), 'no runs yet'),
+    );
+  });
+
+gated(ctx, program, 'report <runId>', 'standard')
+  .description("print how a run went and its agent's final report")
+  .option('--json', 'print JSON')
+  .action(async (runId: string, opts: { json?: boolean }) => {
+    let taskId: string | undefined;
+    try {
+      taskId = await findRunTask(dataDir(), runId);
+    } catch (e) {
+      console.error(e instanceof Error ? e.message : String(e));
+      process.exit(2);
+    }
+    if (!taskId) {
+      console.error(`no run has the id ${runId}`);
+      process.exit(1);
+    }
+    const g = runGroups(taskId).find((x) => x.runId === runId);
+    if (!g) {
+      console.error(`run ${runId} has no records`);
+      process.exit(1);
+    }
+    const { records: _records, ...summary } = g;
+    show({ taskId, ...summary }, opts.json, (s) => `${s.result}${s.details ? `: ${s.details}` : ''}\n\n${s.resultText || 'no report'}`);
+  });
+
+gated(ctx, program, 'show <taskId>', 'standard')
+  .description("print a task's main settings and its state")
+  .option('--json', 'print the whole task and its state')
+  .action((taskId: string, opts: { json?: boolean }) => {
+    const task = readTasks().find((t) => t.id === taskId);
+    if (!task) {
+      console.error(`no task ${taskId}`);
+      process.exit(1);
+    }
+    const rt = readState()[taskId];
+    show({ task, runtime: rt ?? null }, opts.json, ({ task: t, runtime }) => {
+      const agent = (t.agent ?? {}) as { harnessId?: string; model?: string; mode?: string };
+      const trigger = (t.trigger ?? {}) as { mode?: string };
+      const note = (t.note ?? {}) as { text?: string; runsLeft?: number };
+      return [
+        `${t.name} (${t.id})`,
+        `state: ${runtime?.state ?? (t.completedAt ? 'completed' : t.enabled ? 'idle' : 'disabled')}${runtime?.pausedReason ? ` (${runtime.pausedReason})` : ''}`,
+        ...(runtime?.nextRunAt ? [`next run: ${new Date(runtime.nextRunAt).toLocaleString()}`] : []),
+        ...(runtime?.lastResult ? [`last run: ${runtime.lastResult}${runtime.lastDetail ? ` (${runtime.lastDetail})` : ''}`] : []),
+        ...(runtime?.runs.length ? [`in flight: ${runtime.runs.map((r) => r.runId).join(', ')}`] : []),
+        `trigger: ${trigger.mode ?? ''}`,
+        `environment: ${String(t.environmentId ?? '')}${agent.harnessId ? `, harness ${agent.harnessId}` : ''}${agent.model ? `, model ${agent.model}` : ''}`,
+        `folder: ${String(t.cwd ?? '')}`,
+        ...(t.note ? [`guidance for the next ${note.runsLeft === 1 ? 'run' : `${note.runsLeft} runs`}: ${note.text}`] : []),
+      ].join('\n');
+    });
+  });
+
+gated(ctx, program, 'status', 'standard')
+  .description('say whether a Looper app is running on the data dir')
+  .option('--json', 'print JSON')
+  .action(async (opts: { json?: boolean }) => {
+    const { describeHolder, liveHolder } = await import('../engine/lock');
+    const holder = liveHolder(dataDir());
+    const status = { dataDir: dataDir(), version: cliVersion(), running: holder ? describeHolder(holder) : null };
+    show(status, opts.json, (s) =>
+      [
+        `data dir: ${s.dataDir}`,
+        s.running ? `running: ${s.running}` : 'no Looper app is running on it',
+        `command-line tool: ${s.version}`,
+      ].join('\n'),
+    );
+  });
+
+gated(ctx, program, 'quit', 'standard')
+  .description('quit the Looper running on the data dir, as File → Exit does, and wait until it has')
+  .option('--force', "don't ask about runs in progress: they stop, as if you had confirmed it")
+  .option('--timeout <s>', 'seconds to wait for Looper to quit', '60')
+  .action(async (opts: { force?: boolean; timeout: string }) => {
+    const { liveHolder } = await import('../engine/lock');
+    if (!liveHolder(dataDir())) {
+      console.log(`Looper isn't running on ${dataDir()}.`);
+      return;
+    }
+    show(await ask(ctx, 'quit', opts.force ? { force: true } : {}, opts.timeout));
+    const deadline = Date.now() + seconds(opts.timeout) * 1000;
+    while (liveHolder(dataDir())) {
+      if (Date.now() >= deadline) {
+        console.error(`Looper hasn't quit within ${opts.timeout}s; it may be asking a question in its window.`);
+        process.exit(3);
+      }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    console.log('Looper has quit.');
+  });
+
+gated(ctx, program, 'engine-log', 'standard')
+  .description("print the end of the app's engine log")
+  .option('-n, --lines <n>', 'how many lines', '50')
+  .option('--follow', 'keep printing what the app adds to it')
+  .action(async (opts: { lines: string; follow?: boolean }) => {
+    const file = path.join(dataDir(), 'engine.log');
+    let size = 0;
+    try {
+      const text = fs.readFileSync(file, 'utf8');
+      size = Buffer.byteLength(text);
+      const lines = text.split('\n');
+      if (lines[lines.length - 1] === '') lines.pop();
+      if (lines.length) console.log(lines.slice(-Number(opts.lines)).join('\n'));
+    } catch {
+      if (!opts.follow) {
+        console.error(`no engine log in ${dataDir()}`);
+        process.exit(1);
+      }
+    }
+    if (!opts.follow) return;
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1000));
+      let now = 0;
+      try {
+        now = fs.statSync(file).size;
+      } catch {
+        continue;
+      }
+      // A smaller file is a new one: the app pruned or rotated it.
+      if (now < size) size = 0;
+      if (now === size) continue;
+      const fd = fs.openSync(file, 'r');
+      try {
+        const buf = Buffer.alloc(now - size);
+        fs.readSync(fd, buf, 0, buf.length, size);
+        process.stdout.write(buf);
+      } finally {
+        fs.closeSync(fd);
+      }
+      size = now;
+    }
+  });
+program.command('pause <taskId>').description('pause a task').option('--reason <r>').option('--timeout <s>', 'seconds to wait for Looper to answer', '30').action(command('pause'));
+program.command('resume <taskId>').description('resume a paused task').option('--reason <r>').option('--timeout <s>', 'seconds to wait for Looper to answer', '30').action(command('resume'));
+program.command('stop <taskId>').description("stop the task's current run").option('--reason <r>').option('--timeout <s>', 'seconds to wait for Looper to answer', '30').action(command('stop'));
+program.command('remove <taskId>').description('move a task to the Recycle Bin').option('--reason <r>').option('--timeout <s>', 'seconds to wait for Looper to answer', '30').action(command('remove'));
+program.command('enable <taskId>').description('enable a task').option('--reason <r>').option('--timeout <s>', 'seconds to wait for Looper to answer', '30').action(command('enable'));
+program.command('disable <taskId>').description('disable a task').option('--reason <r>').option('--timeout <s>', 'seconds to wait for Looper to answer', '30').action(command('disable'));
 program
   .command('complete <taskId>')
   .description('finish a task for good: it stops being scheduled')
   .option('--reason <r>')
+  .option('--timeout <s>', 'seconds to wait for Looper to answer', '30')
   .action(command('complete'));
-program.command('reopen <taskId>').description('undo a completion').option('--reason <r>').action(command('reopen'));
+program.command('reopen <taskId>').description('undo a completion').option('--reason <r>').option('--timeout <s>', 'seconds to wait for Looper to answer', '30').action(command('reopen'));
 program
   .command('guide <taskId> <text...>')
   .description("send guidance to the task's running agent; it gets the text mid-run")
   .option('--run <runId>', 'the run to send it to (default: the newest run in flight)')
-  .action((taskId: string, words: string[], opts: { run?: string }) => {
-    const file = dropInbox({ op: 'guide', taskId, runId: opts.run, text: words.join(' ') } satisfies InboxCommand, 'guide');
-    console.log(`queued guide ${taskId} -> ${file}`);
-  });
+  .option('--timeout <s>', 'seconds to wait for Looper to answer', '30')
+  .action(async (taskId: string, words: string[], opts: { run?: string; timeout: string }) =>
+    show(await ask(ctx, 'guide', { taskId, text: words.join(' '), ...(opts.run ? { runId: opts.run } : {}) }, opts.timeout)),
+  );
 
 /**
  * The folder as the app's host sees it. From WSL, an app whose data dir is on
  * a Windows drive is the Windows one, which opens WSL folders as
  * \\wsl.localhost\<distro>\… and drive folders as C:\….
  */
+function appPath(abs: string): string {
+  if (!process.env.WSL_DISTRO_NAME) return abs;
+  const windowsPath = (p: string) => execFileSync('wslpath', ['-w', p], { encoding: 'utf8' }).trim();
+  try {
+    return /^[A-Za-z]:\\/.test(windowsPath(dataDir())) ? windowsPath(abs) : abs;
+  } catch (e) {
+    console.error(`wslpath can't convert ${abs}: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(2);
+  }
+}
+
+/** A folder, as the app's host sees it (appPath); exits when it isn't a folder. */
 function appFolder(folder: string): string {
   const abs = path.resolve(folder);
   let isDir = false;
@@ -504,14 +722,7 @@ function appFolder(folder: string): string {
     console.error(`${abs} isn't a folder`);
     process.exit(2);
   }
-  if (!process.env.WSL_DISTRO_NAME) return abs;
-  const windowsPath = (p: string) => execFileSync('wslpath', ['-w', p], { encoding: 'utf8' }).trim();
-  try {
-    return /^[A-Za-z]:\\/.test(windowsPath(dataDir())) ? windowsPath(abs) : abs;
-  } catch (e) {
-    console.error(`wslpath can't convert ${abs}: ${e instanceof Error ? e.message : String(e)}`);
-    process.exit(2);
-  }
+  return appPath(abs);
 }
 
 program
@@ -522,18 +733,13 @@ program
   .option('--model <model>', 'the model (default: the project\'s, or the harness\'s)')
   .option('--effort <effort>', 'the effort (default: the project\'s, or the model\'s)')
   .option('--open', 'also show the chat on the desktop')
-  .option('--timeout <s>', 'seconds to wait for the running app to start it', '30')
+  .option('--timeout <s>', 'seconds to wait for Looper to answer', '30')
   .action(
     async (
       folder: string,
       words: string[],
       opts: { messageFile?: string; title?: string; model?: string; effort?: string; open?: boolean; timeout: string },
     ) => {
-      const timeoutSec = Number(opts.timeout);
-      if (!(timeoutSec >= 0)) {
-        console.error(`--timeout must be a number of seconds, got "${opts.timeout}"`);
-        process.exit(2);
-      }
       if (opts.messageFile !== undefined && words.length) {
         console.error('give the first message as arguments or with --message-file, not both');
         process.exit(2);
@@ -551,8 +757,7 @@ program
         console.error('the chat needs a first message: give it as arguments or with --message-file');
         process.exit(2);
       }
-      const cmd: InboxChat = {
-        op: 'chat',
+      const params = {
         folder: appFolder(folder),
         text,
         ...(opts.title ? { title: opts.title } : {}),
@@ -560,24 +765,7 @@ program
         ...(opts.effort ? { effort: opts.effort } : {}),
         ...(opts.open ? { open: true } : {}),
       };
-      const dest = dropInbox(cmd, 'chat');
-      const outcome = await waitForInbox(dest, timeoutSec * 1000);
-      if (outcome.status === 'rejected') {
-        console.error(`no chat started: ${outcome.reason}`);
-        process.exit(1);
-      }
-      if (outcome.status === 'pending') {
-        console.error(
-          `queued the chat -> ${dest}, but no running Looper app picked it up within ${timeoutSec}s; ` +
-            'it starts when the app starts, or delete the file to cancel',
-        );
-        process.exit(3);
-      }
-      if (outcome.status === 'vanished' || !outcome.result) {
-        console.error(`the chat left the inbox without a result; check ${path.join(dataDir(), 'engine.log')}`);
-        process.exit(1);
-      }
-      console.log(outcome.result);
+      show(await ask<string>(ctx, 'chat', params, opts.timeout, { refused: 'no chat started: ' }));
     },
   );
 
@@ -585,25 +773,18 @@ program
   .command('logs <taskId>')
   .description('show recent run records')
   .option('-n, --lines <n>', 'number of records', '30')
-  .action((taskId: string, opts: { lines: string }) => {
-    const file = path.join(dataDir(), 'tasks', taskId, 'runs.jsonl');
-    let lines: string[];
-    try {
-      lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
-    } catch {
-      console.log('no runs yet');
-      return;
-    }
-    for (const line of lines.slice(-Number(opts.lines))) {
-      try {
-        const r = JSON.parse(line) as RunRecord;
-        const extra = r.error ?? r.summary ?? '';
-        const dur = r.durationMs !== undefined ? ` (${formatDuration(r.durationMs)})` : '';
-        console.log(`${r.ts}  ${r.runId}  ${r.phase.padEnd(8)} ${r.result.padEnd(12)}${dur} ${extra}`);
-      } catch {
-        /* torn line */
-      }
-    }
+  .option('--json', 'print JSON')
+  .action((taskId: string, opts: { lines: string; json?: boolean }) => {
+    const records = new RunStore(dataDir()).list(taskId, Number(opts.lines));
+    show(records, opts.json, (list) =>
+      list
+        .map((r) => {
+          const extra = r.error ?? r.summary ?? '';
+          const dur = r.durationMs !== undefined ? ` (${formatDuration(r.durationMs)})` : '';
+          return `${r.ts}  ${r.runId}  ${r.phase.padEnd(8)} ${r.result.padEnd(12)}${dur} ${extra}`;
+        })
+        .join('\n') || 'no runs yet',
+    );
   });
 
 program
@@ -649,14 +830,26 @@ program
       stopping = true;
       console.error(`\nanother Looper took over ${dataDir()}${by ? `: ${describeHolder(by)}` : ''}; stopping`);
       void (started?.stop() ?? Promise.resolve()).finally(() => process.exit(1));
-    });
+    }, { version });
     lock.acquire();
     if (holder) {
       console.log('waiting for the other Looper to stop…');
       await new Promise((r) => setTimeout(r, TAKEOVER_WAIT_MS));
       if (stopping) return;
     }
-    const engine = createEngine({ dataDir: dataDir(), echoLog: true });
+    const engine = createEngine({
+      dataDir: dataDir(),
+      echoLog: true,
+      cliSource: __dirname,
+      onCommandServer: (info) => lock.setServer(info),
+      requests: {
+        quit: () => {
+          // After the answer has gone out, since stopping closes the server that sends it.
+          setTimeout(() => void shutdown(), 100);
+          return 'looper serve is stopping, and stops any runs in progress.';
+        },
+      },
+    });
     started = engine;
     engine.on((e) => {
       if (e.type === 'record') {
@@ -681,8 +874,10 @@ program
     process.on('uncaughtException', (err) => engine.log.error(`uncaught: ${err.stack ?? err.message}`));
     process.on('unhandledRejection', (err) => engine.log.error(`unhandled: ${String(err)}`));
     engine.start();
-    console.log(`looper serving from ${engine.dataDir} (inbox: ${engine.inboxDir()})`);
+    console.log(`looper serving from ${engine.dataDir}`);
   });
+
+registerAppCommands(program, ctx);
 
 program.parseAsync(process.argv).catch((e) => {
   console.error(e instanceof Error ? e.message : String(e));

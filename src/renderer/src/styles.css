@@ -2171,6 +2171,16 @@ html.menu-level-window :is(body, #root, .window-frame, .window-body) {
 .chat-superseded {
   color: var(--fg-muted);
 }
+/* Looper's own lines and Claude Code's API errors: what happened in the conversation, not anyone's message, so no bubble. */
+.chat-system {
+  align-self: flex-start;
+  max-width: 88%;
+  font-size: var(--font-caption);
+  color: var(--fg-muted);
+}
+.chat-system.error-text {
+  color: var(--red);
+}
 .chat-agent-group {
   align-self: flex-start;
   max-width: 88%;
@@ -2682,7 +2692,7 @@ button:focus-visible,
 /* A fully tag-wrapped message as label/content rows, dl-style. */
 .msg-sections {
   display: grid;
-  grid-template-columns: fit-content(160px) 1fr;
+  grid-template-columns: fit-content(160px) minmax(0, 1fr);
   gap: 10px 16px;
   align-items: start;
   padding: 12px 14px;

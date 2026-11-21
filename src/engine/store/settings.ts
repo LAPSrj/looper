@@ -2,6 +2,11 @@ import path from 'node:path';
 import { SettingsSchema, defaultEnvironments, type Settings } from '../../shared/types';
 import { fileExists, readJson, writeJsonAtomic } from './fsutil';
 
+/** The tasks or templates file: the one Settings → Advanced names, or the data dir's own. */
+export function storeFile(dataDir: string, store: 'tasks' | 'templates', settings: { tasksFile?: string; templatesFile?: string }): string {
+  return (store === 'tasks' ? settings.tasksFile : settings.templatesFile) ?? path.join(dataDir, `${store}.json`);
+}
+
 /** The host decides the out-of-the-box environments (local shell + the reachable bridge). */
 export function loadSettings(dataDir: string, host?: string): Settings {
   const file = path.join(dataDir, 'settings.json');

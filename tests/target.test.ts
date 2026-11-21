@@ -195,3 +195,42 @@ describe('WindowsTarget', () => {
     expect(t.renderDoneHelper(['success', 'warning', 'error'])).toContain('echo usage: %~n0 [success^|warning^|error] "<headline>"');
   });
 });
+
+describe('the looper command', () => {
+  it('runs the command-line tool with Looper\'s executable as Node, on the data dir', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-cli-helper-'));
+    const script = path.join(dir, 'cli', 'cli.js');
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    const files = new BashTarget({ host: 'linux' }, undefined).renderCliHelper({ script, home: dir, exe: process.execPath });
+    expect(Object.keys(files)).toEqual(['looper']);
+    fs.writeFileSync(path.join(bin, 'looper'), files.looper, { mode: 0o755 });
+    const run = () => execFileSync('bash', ['-c', 'looper list "two words"'], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: 'utf8' });
+    // Until the engine has copied the tool, it says why instead of failing in Node.
+    expect(() => execFileSync(path.join(bin, 'looper'), [], { stdio: 'pipe' })).toThrow(/hasn't set up its command-line tool yet/);
+    fs.mkdirSync(path.dirname(script));
+    fs.writeFileSync(script, 'console.log(JSON.stringify({ args: process.argv.slice(2), home: process.env.LOOPER_HOME, asNode: process.env.ELECTRON_RUN_AS_NODE }))');
+    expect(JSON.parse(run())).toEqual({ args: ['list', 'two words'], home: dir, asNode: '1' });
+  });
+
+  it('uses Node in WSL when it has it, and else Looper.exe through interop', () => {
+    const files = new BashTarget({ host: 'windows' }, 'Ubuntu').renderCliHelper({
+      script: 'C:\\Users\\me\\looper\\cli\\cli.js',
+      home: 'C:\\Users\\me\\looper',
+      exe: 'C:\\Program Files\\Looper\\Looper.exe',
+    });
+    expect(files.looper).toContain(`if command -v node >/dev/null 2>&1; then LOOPER_HOME='/mnt/c/Users/me/looper' exec node '/mnt/c/Users/me/looper/cli/cli.js' "$@"; fi`);
+    expect(files.looper).toContain(
+      `ELECTRON_RUN_AS_NODE=1 LOOPER_HOME='C:\\Users\\me\\looper' WSLENV="\${WSLENV:+\$WSLENV:}ELECTRON_RUN_AS_NODE:LOOPER_HOME" exec '/mnt/c/Program Files/Looper/Looper.exe' 'C:\\Users\\me\\looper\\cli\\cli.js' "$@"`,
+    );
+  });
+
+  it('is a .cmd on Windows, and nothing when Looper runs in WSL', () => {
+    const paths = { script: 'C:\\100%\\cli\\cli.js', home: 'C:\\100%', exe: 'C:\\Looper\\Looper.exe' };
+    const cmd = new WindowsTarget({ host: 'windows' }).renderCliHelper(paths)['looper.cmd'];
+    expect(cmd).toContain('set "ELECTRON_RUN_AS_NODE=1"');
+    expect(cmd).toContain('set "LOOPER_HOME=C:\\100%%"');
+    expect(cmd).toContain('"C:\\Looper\\Looper.exe" "C:\\100%%\\cli\\cli.js" %*');
+    expect(new WindowsTarget({ host: 'wsl' }).renderCliHelper(paths)).toEqual({});
+  });
+});

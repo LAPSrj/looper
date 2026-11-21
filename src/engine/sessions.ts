@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { chatTitle, type ChatContext, type ChatState, type TitleBy, type UsageLimitHit } from '../shared/chat';
+import { chatRows, chatTitle, type ChatContext, type ChatState, type TitleBy, type UsageLimitHit } from '../shared/chat';
 import type { MessageRow, MessagesResult } from '../shared/messages';
 import { stripMarkdown } from '../shared/messages-md';
 import { bareId } from '../shared/model-update';
@@ -626,7 +626,7 @@ export class SessionHub {
   private chatSummary(c: ChatState, projects: Project[]): SessionSummary {
     const t = this.track(c.id, c.startedAt);
     const { projectId, groupName } = this.place(c.taskId, projects);
-    const rows = [...c.history, ...c.rows];
+    const rows = chatRows(c);
     const recent = recentMessages(rows);
     const latest = latestLine(rows);
     t.permissionAt = c.permissions.length > 0 ? (t.permissionAt ?? this.now()) : undefined;

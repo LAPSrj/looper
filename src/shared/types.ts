@@ -4,6 +4,7 @@ import { z } from 'zod';
 // take microseconds either way. The windows' CSP rules the generated ones out already.
 z.config({ jitless: true });
 import { AddonLocalRunSchema } from './addons';
+import { CLI_LEVELS } from './cli-levels';
 import type { BuilderState } from './builder';
 import type { ChatState } from './chat';
 import type { ClaudeLogin } from './logins';
@@ -719,7 +720,6 @@ export const SettingsSchema = z.object({
   /** Sidebar folder every task is moved into as it completes. Unset = completed tasks stay put. */
   completedFolderId: z.string().min(1).optional(),
   tickMs: z.number().int().positive().default(1000),
-  inboxPollMs: z.number().int().positive().default(2000),
   signalPollMs: z.number().int().positive().default(1000),
   /** Stagger overdue tasks on startup so they don't all fire at once. */
   staggerFirstRun: z.object({
@@ -743,6 +743,8 @@ export const SettingsSchema = z.object({
   recycleBinDays: z.number().int().positive().default(30),
   /** Custom file path for the tasks store. Undefined = <dataDir>/tasks.json. */
   tasksFile: z.string().min(1).optional(),
+  /** What the `looper` command-line tool may do (CliLevel). */
+  cliCommands: z.enum(CLI_LEVELS).default('standard'),
   /** Custom file path for the templates store. Undefined = <dataDir>/templates.json. */
   templatesFile: z.string().min(1).optional(),
   /** Hide to the system tray instead of quitting when the window is closed. */
@@ -1098,31 +1100,6 @@ export interface CheckOutput {
   summary?: string;
   context?: unknown;
   relatedId?: string;
-}
-
-export interface InboxCommand {
-  op: 'run' | 'pause' | 'resume' | 'stop' | 'remove' | 'enable' | 'disable' | 'complete' | 'reopen' | 'guide';
-  taskId: string;
-  reason?: string;
-  /** run: one trigger event, a line like a watcher's. */
-  event?: string;
-  /** guide: the run to send the guidance to; unset = the task's newest run in flight. */
-  runId?: string;
-  /** guide: the guidance text. */
-  text?: string;
-}
-
-/** `looper chat`: a new chat in a folder (its project's, when one has it), with its first message. */
-export interface InboxChat {
-  op: 'chat';
-  /** The folder as the app's host sees it. */
-  folder: string;
-  text: string;
-  title?: string;
-  model?: string;
-  effort?: string;
-  /** Show the chat on the desktop too. */
-  open?: boolean;
 }
 
 // ---------- Engine events (also the IPC contract) ----------

@@ -65,7 +65,7 @@ modes keeps the other modes' configuration, like a disabled step keeps its
 fields.
 
 - **Manually only** — the task never fires by itself. Run Now, the toolbar, the
-  context menu, or the CLI/inbox `run` command are the only ways to start it.
+  context menu, or the CLI's `run` command are the only ways to start it.
 - **On a schedule** (`trigger.schedule`) — a cron expression (`cron`) and an
   optional IANA `timezone`. **Frequency** selects how the cron expression is
   built:
@@ -459,7 +459,7 @@ refused with the version to update to.
 ![Version History with a restored version](img/version-history.png)
 
 Every change to a task's definition saves a new version, whoever made it:
-you in the editor, an [agent](task-builder.md), the CLI or inbox, or
+you in the editor, an [agent](task-builder.md), the CLI, or
 a restore. Changes to the status fields alone (Enabled/Disabled, completed,
 the folder, the guidance note) don't add a version. A save that changes
 nothing doesn't either.

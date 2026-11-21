@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Task } from '@shared/types';
 import { SelectList, ListActions, ListButton } from './components/SelectList';
 import { WindowActions } from './components/WindowActions';
-import { rid } from './rid';
+import { rid } from '@shared/rid';
 import { blankDraft } from './components/blank-draft';
 import { subscribe } from './events';
 import { keptSelection } from './components/selection';

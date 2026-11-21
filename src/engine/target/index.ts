@@ -138,6 +138,13 @@ export interface Target {
    */
   renderRequestHelpers(ops: Record<string, string>, opts: RequestHelperOpts): Record<string, string>;
   /**
+   * The `looper` command, as file name -> content for a bin/ dir: Looper's
+   * command-line tool (host paths: its `script`, the data dir `home` it
+   * works on, and `exe`, Looper's executable, which runs it as Node). Empty
+   * when the target can't run Looper's executable.
+   */
+  renderCliHelper(paths: { script: string; home: string; exe: string }): Record<string, string>;
+  /**
    * Run `command` (a codex command line) with CODEX_HOME set to `codexHome`,
    * a home of the builder's own that holds only a copy of the user's login,
    * so none of the user's instructions or config reach it. A login codex

@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject }
 import { FindBar, useFindFocus, useFindHighlights, type FindState } from './FindBar';
 import { atEnd } from './newest-first';
 import { ChatStatus, Conversation, type ConversationHandle, type ConversationPart } from './Conversation';
-import { continueAt, continueSkipped, forkPoint, type ChatState } from '@shared/chat';
+import { chatRows, continueAt, continueSkipped, forkPoint, type ChatState } from '@shared/chat';
 import { LOGIN_FAILED_RE } from '@shared/logins';
 import type { MessageRow } from '@shared/messages';
 import { fmtClock } from '../format';
@@ -80,7 +80,7 @@ function LoginNotice({ state }: { state: ChatState }) {
 
 /** Right-click on a message or tool call: the chat's menu for that row. */
 function showRowMenu(state: ChatState, row: MessageRow, selectText: string | undefined): void {
-  const all = [...state.history, ...state.rows];
+  const all = chatRows(state);
   const index = all.indexOf(row);
   const fork = index >= 0 && forkPoint(all, index, state.harnessKind, state.status === 'working') ? index : undefined;
   showRowContextMenu({ chatId: state.id, taskId: state.taskId, quote: state.status !== 'ended', fork, selectText }, row);

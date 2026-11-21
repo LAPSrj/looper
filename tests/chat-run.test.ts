@@ -94,11 +94,8 @@ describe('a run opened in a chat', { timeout: 30_000 }, () => {
       ),
     });
     e.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual', sendRelatedEvents: true }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } }));
-    const event = (id: string) => {
-      fs.mkdirSync(path.join(data, 'inbox'), { recursive: true });
-      fs.writeFileSync(path.join(data, 'inbox', `${Date.now()}-${id}.json`), JSON.stringify({ op: 'run', taskId: 't1', event: JSON.stringify({ looper_related_id: id }) }));
-    };
-    event('a');
+    const event = (id: string) => e.request('event', { taskId: 't1', event: JSON.stringify({ looper_related_id: id }) });
+    await event('a');
     const rt = () => e.listRuntimes().find((r) => r.taskId === 't1')!;
     await until(() => starts.length === 1 && rt().runs.length === 0, 'the first run');
     return { e, data, starts, rt, event, runId: rt().lastRunId! };
@@ -113,7 +110,7 @@ describe('a run opened in a chat', { timeout: 30_000 }, () => {
     // Continue in Chat on the run again brings the same chat.
     expect(e.startChat('t1', runId).id).toBe(chatId);
 
-    event('a');
+    await event('a');
     await until(() => (e.getChat(chatId)?.rows ?? []).some((r) => r.kind === 'agent'), "the chat's turn on the event");
     expect(e.getChat(chatId)!.rows.find((r) => r.kind === 'events')!.text).toBe('{"looper_related_id":"a"}');
     expect(starts).toHaveLength(1);
@@ -156,7 +153,7 @@ describe('a run opened in a chat', { timeout: 30_000 }, () => {
   });
 
   it("tells a chat its agent's watched task's run ends, and the trigger events with the event id it watches", async () => {
-    const { e, data } = await setUp([ended('first', 'success'), ended('Deployed v2', 'success', 'All checks passed.')]);
+    const { e } = await setUp([ended('first', 'success'), ended('Deployed v2', 'success', 'All checks passed.')]);
     const t1 = e.listTasks().find((t) => t.id === 't1')!;
     e.saveTask(TaskSchema.parse({ ...t1, id: 't2', name: 'Deploy' }));
     const ops = e.addFolder('Ops');
@@ -178,7 +175,7 @@ describe('a run opened in a chat', { timeout: 30_000 }, () => {
     e.setChatWatch(chatId, 't2', '42', true);
     expect(e.getChat(chatId)!.watchTasks![1].events).toEqual(['42']);
     const event = ['{"looper_related_id":"42","text":"reply"}', '{"looper_related_id":"7","text":"other"}'].join('\n');
-    fs.writeFileSync(path.join(data, 'inbox', `${Date.now()}-t2.json`), JSON.stringify({ op: 'run', taskId: 't2', event }));
+    await e.request('event', { taskId: 't2', event });
     const t2 = () => e.listRuntimes().find((r) => r.taskId === 't2');
     await until(() => !!t2()?.lastRunId && t2()!.runs.length === 0, "the watched task's run");
     await until(() => (e.getChat(chatId)?.rows ?? []).filter((r) => r.kind === 'taskEvents').length === 2, 'both messages');

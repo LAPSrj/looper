@@ -11,6 +11,8 @@ export interface BuilderSetup {
   cwd: string;
   /** Edit with Agent: the task being changed. */
   taskId?: string;
+  /** The view it starts in instead of Settings' (the command-line tool's builders start in the chat view, which takes messages from it). */
+  view?: 'chat' | 'terminal';
 }
 
 /** One operation of an access test, as the probe session reported it. */
@@ -75,4 +77,10 @@ export interface BuilderState {
     canUndo: boolean;
     canRedo: boolean;
   };
+}
+
+/** The task's name in the builder's draft; empty while it has none. */
+export function draftName(state: Pick<BuilderState, 'draft'>): string {
+  const raw = state.draft.raw?.name;
+  return typeof raw === 'string' ? raw.trim() : '';
 }

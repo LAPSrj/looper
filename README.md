@@ -39,8 +39,8 @@ started. No idle burn, no context rot, at most one agent per task, ever.
 - **Any harness, any environment** — Claude Code, Codex, or a custom agent
   CLI; Looper on Windows driving agents inside WSL, or Linux/WSL directly.
 - **Easy task setup** — an editor with Trigger / Check / Classifier / Agent
-  tabs, templates, import/export; agents and scripts can register tasks by
-  dropping a JSON file in the inbox.
+  tabs, templates, import/export; agents and scripts can register tasks with
+  `looper add`.
 
 ## How a task runs
 
@@ -73,6 +73,7 @@ for Windows, Linux and macOS.
 npm install
 npm run dev            # run from source (Electron, hot reload)
 npm run package        # or build the installer for your platform (release/)
+npm run install-app    # then install it and start the new version
 ```
 
 On first launch Looper creates a Local Shell environment pointed at the
@@ -91,18 +92,18 @@ more detail, including the packaged Windows installer and notification setup.
 
 ## CLI & automation
 
-The `looper` CLI and an inbox drop-folder let scripts — and other agents —
-register and control tasks:
+The `looper` CLI lets scripts — and other agents — register and control
+tasks, and starts Looper when it isn't running:
 
 ```bash
 looper example > task.json      # template task definition
-looper add task.json            # register it with the running app
+looper add task.json            # register it with Looper
 looper run <taskId>
 looper serve                    # run the engine headless, without the UI
 ```
 
 See [CLI and automation](docs/cli-and-automation.md) for the full command set,
-the inbox protocol, and a tour of the `~/looper` data directory.
+how the CLI reaches Looper, and a tour of the `~/looper` data directory.
 
 ## Documentation
 
@@ -123,8 +124,8 @@ The full user guide lives in [docs/](docs/README.md):
 - [Remote Access](docs/remote-access.md) — Looper in a browser on a phone,
   tablet or another computer, over Tailscale: pairing, notifications,
   security.
-- [CLI and automation](docs/cli-and-automation.md) — the CLI, the inbox
-  protocol, the data directory.
+- [CLI and automation](docs/cli-and-automation.md) — the CLI, how it reaches
+  Looper, the data directory.
 - [Troubleshooting](docs/troubleshooting.md) — common problems, current
   limitations.
 
@@ -140,6 +141,16 @@ npm run typecheck
 The engine has no Electron imports, so it also runs standalone
 (`looper serve`). Packaging targets: `npm run package:windows`,
 `package:mac`, `package:linux`.
+
+`npm run install-app` installs the release `npm run package` built for this
+OS (from WSL, the Windows one, as `package` builds it) and starts the new
+version. It runs in the background, apart from Looper, so it can be started
+from a Looper chat: it asks Looper to quit (`looper quit --force`), installs,
+starts Looper again, checks the version that started, and sends the result to
+the chat it was started from (`--report <id>` sends it elsewhere). Each step
+goes to `release.log` in the data directory. Windows runs the NSIS installer
+silently, macOS replaces the `.app` with the one in the `.zip`, and Linux
+replaces the AppImage; the `.deb` needs `sudo`, so it isn't installed this way.
 
 ## License
 

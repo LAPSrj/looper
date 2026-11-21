@@ -239,6 +239,24 @@ export class WindowsTarget implements Target {
     return out;
   }
 
+  renderCliHelper(paths: { script: string; home: string; exe: string }): Record<string, string> {
+    // Looper running in WSL has no Windows executable to give it.
+    if (this.ctx.host !== 'windows') return {};
+    const cmd = (p: string) => p.replace(/%/g, '%%');
+    return {
+      'looper.cmd': [
+        '@echo off',
+        'setlocal',
+        `if not exist "${cmd(paths.script)}" (echo looper: Looper hasn't set up its command-line tool yet; try again in a minute 1>&2 & exit /b 1)`,
+        'set "ELECTRON_RUN_AS_NODE=1"',
+        `set "LOOPER_HOME=${cmd(paths.home)}"`,
+        `"${cmd(paths.exe)}" "${cmd(paths.script)}" %*`,
+        'exit /b %ERRORLEVEL%',
+        '',
+      ].join('\r\n'),
+    };
+  }
+
   renderTextHelper(envVar: string, fallback: string): string {
     return [
       '@echo off',

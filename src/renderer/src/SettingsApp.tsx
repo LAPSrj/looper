@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Environment, Settings, Task, TaskFolder } from '@shared/types';
-import { describeEnvironment } from '@shared/environments';
+import { CLI_LEVEL_CHOICES, CLI_LEVELS, type CliLevel } from '@shared/cli-levels';
+import { describeEnvironment, newEnvironment, withoutEnvironment } from '@shared/environments';
 import { plural } from '@shared/format';
 import { COMPACTION_RESULT_TOKENS, type CompactionResultTokens } from '@shared/compact';
 import { CheckboxField, EmptyWindow, Field, FormGroup, InlineField, NumberField, NumberInput, RadioField, SelectInput, StepFields, TabBar } from './components/ui';
 import { WindowActions } from './components/WindowActions';
-import { FolderOptions, PathField, newHarness } from './components/form-blocks';
-import { rid } from './rid';
+import { FolderOptions, PathField } from './components/form-blocks';
+import { rid } from '@shared/rid';
 import { useDialogKeys, useSave } from './components/hooks';
 import { keptSelection } from './components/selection';
 import { SelectList, ListActions } from './components/SelectList';
@@ -56,6 +57,7 @@ export function SettingsApp() {
   const [builderView, setBuilderView] = useState<'chat' | 'terminal' | null>(null);
   const [terminal, setTerminal] = useState<Settings['terminal'] | null>(null);
   const [chats, setChats] = useState<Settings['chats'] | null>(null);
+  const [cliCommands, setCliCommands] = useState<CliLevel | null>(null);
   const [tasksFile, setTasksFile] = useState<string | undefined>(undefined);
   const [templatesFile, setTemplatesFile] = useState<string | undefined>(undefined);
   const [moveTasksOnSave, setMoveTasksOnSave] = useState(false);
@@ -95,6 +97,7 @@ export function SettingsApp() {
       setBuilderView((v) => v ?? info.settings.builder.view);
       setTerminal((v) => v ?? info.settings.terminal);
       setChats((v) => v ?? info.settings.chats);
+      setCliCommands((v) => v ?? info.settings.cliCommands);
       setTasksFile((v) => v ?? info.settings.tasksFile);
       setTemplatesFile((v) => v ?? info.settings.templatesFile);
       initTasksFile.current ??= info.settings.tasksFile;
@@ -125,19 +128,14 @@ export function SettingsApp() {
 
   useDialogKeys({ tabs: visibleTabs.map(([id]) => id), tab, onTab: setTab });
 
-  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || confirmQuitRuns === null || confirmQuitWatchers === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || binDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null || promptRunOptions === null || builderView === null || terminal === null || chats === null) return <EmptyWindow />;
+  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || confirmQuitRuns === null || confirmQuitWatchers === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || binDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null || promptRunOptions === null || builderView === null || terminal === null || chats === null || cliCommands === null) return <EmptyWindow />;
 
   const envs = live.environments;
   const env = envs.find((e) => e.id === selected);
   const usedBy = (id: string) => tasks.filter((t) => t.environmentId === id).length;
 
   const addEnv = async () => {
-    const created: Environment = {
-      id: `env-${rid()}`,
-      name: 'New environment',
-      kind: 'local',
-      harnesses: [newHarness()],
-    };
+    const created = newEnvironment();
     try {
       await window.looper.updateSettings({ environments: [...envs, created] });
       setSelected(created.id);
@@ -165,13 +163,11 @@ export function SettingsApp() {
   };
 
   const removeEnv = async (target: Environment | undefined = env) => {
-    if (!target || envs.length <= 1) return;
+    const patch = target && withoutEnvironment(live, target.id);
+    if (!patch) return;
     const n = usedBy(target.id);
     const warning = n > 0 ? ` ${plural(n, 'task')} still ${n === 1 ? 'uses' : 'use'} it and will fail until reassigned.` : '';
     if (!(await window.looper.confirm(`Remove environment "${target.name}"?${warning}`))) return;
-    const rest = envs.filter((e) => e.id !== target.id);
-    const patch: Partial<Settings> = { environments: rest };
-    if (live.defaultEnvironmentId === target.id) patch.defaultEnvironmentId = rest[0].id;
     try {
       await window.looper.updateSettings(patch);
     } catch (e) {
@@ -234,6 +230,7 @@ export function SettingsApp() {
       },
       tasksFile,
       templatesFile,
+      cliCommands,
       runRetentionDays: retentionDays,
       engineLogRetentionDays: engineLogDays,
       completedTaskRetention: { enabled: deleteCompleted, days: completedDays },
@@ -502,6 +499,17 @@ export function SettingsApp() {
               ]}
               onChange={setBuilderView}
             />
+            <FormGroup>
+              <Field label="Command-line tool">
+                <SelectInput value={cliCommands} onChange={(e) => setCliCommands(e.target.value as CliLevel)}>
+                  {CLI_LEVELS.map((l) => (
+                    <option key={l} value={l}>
+                      {CLI_LEVEL_CHOICES[l]}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+            </FormGroup>
           </div>
         )}
 

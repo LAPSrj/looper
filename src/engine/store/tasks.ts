@@ -220,7 +220,7 @@ export class TaskStore extends EventEmitter {
 
   /**
    * The completion invariant, applied wherever a task comes from (editor, JSON
-   * tab, inbox, the engine itself): a completed task is never enabled, keeps
+   * tab, CLI, the engine itself): a completed task is never enabled, keeps
    * the stamp of when it first completed, and moves to the global completed
    * tasks folder as it completes. Reopening drops the stamp, the reason, and a
    * schedule end that has already passed — otherwise the next tick would just

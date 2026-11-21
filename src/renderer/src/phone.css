@@ -1294,8 +1294,17 @@ html.phone-window .chat-user {
   background: var(--pg-tint, var(--accent));
   color: var(--pg-on-tint, var(--accent-fg));
 }
-html.phone-window .chat-user a {
+html.phone-window .chat-user a,
+html.phone-window .chat-user .msg-section-label {
   color: inherit;
+}
+/* Code in a sent bubble: a darker shade of the bubble, in its text color (white on iOS's light tint 5.2:1, its text 3.5:1). */
+html.phone-window .chat-user :is(code, pre) {
+  background: color-mix(in srgb, #000 20%, var(--pg-tint, var(--accent)));
+  color: inherit;
+}
+html.phone-window .chat-user pre code {
+  background: none;
 }
 html.phone-window .chat-queued {
   max-width: 85%;
@@ -1312,6 +1321,9 @@ html.phone-window .chat-card.chat-permission {
 }
 html.phone-window .chat-msg {
   font-size: calc(16 * var(--u));
+}
+html.phone-window .chat-msg.chat-system {
+  font-size: calc(15 * var(--u));
 }
 html.phone-window .chat-agent {
   border-radius: 18px;
@@ -2394,7 +2406,7 @@ html.phone-window .infobar {
   padding: 0 12px;
 }
 html.phone-window .msg-sections {
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 4px;
 }
 html.phone-window .msg-section-label {

@@ -3,10 +3,11 @@ import type { Environment, Harness } from '@shared/types';
 import { DEFAULT_SHELL, ENVIRONMENT_KINDS, SHELL_PRESETS, availableEnvironmentKinds, harnessKindLabel } from '@shared/environments';
 import { EmptyWindow, Field, FormGroup, SelectInput, TabBar, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
-import { ConcurrencyLimit, newHarness } from './components/form-blocks';
+import { newHarness, withoutHarness } from '@shared/environments';
+import { ConcurrencyLimit } from './components/form-blocks';
 import { saveSettings, useDialogKeys, useDiscardUnsaved, useLiveSettings, useSave } from './components/hooks';
 import { SelectList, ListActions } from './components/SelectList';
-import { rid } from './rid';
+import { rid } from '@shared/rid';
 import { reportError } from './report-error';
 
 type EnvTab = 'general' | 'harnesses' | 'advanced';
@@ -108,9 +109,10 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
     setSelected(copy.id);
   };
   const removeHarness = async (target: Harness | undefined = harness) => {
-    if (!target || harnesses.length <= 1) return;
+    const rest = target && env && withoutHarness(env, target.id);
+    if (!rest) return;
     if (!(await window.looper.confirm(`Remove harness "${target.name}"?`))) return;
-    await saveHarnesses(harnesses.filter((h) => h.id !== target.id));
+    await saveHarnesses(rest);
     setSelected(harnesses.find((h) => h.id !== target.id)?.id ?? null);
   };
 

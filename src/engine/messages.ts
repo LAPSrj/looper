@@ -34,6 +34,13 @@ import { SessionWorkflows, workflowAgentTranscript, type WorkflowLaunch } from '
 
 /** The most transcript row ids kept to tell a row whose copy from the mod comes after it (LiveRows). */
 const TRANSCRIPT_IDS_KEPT = 2000;
+/** The responses whose mod and API message ids a TranscriptAccumulator keeps: only the newest ones' rows still arrive. */
+const MESSAGE_IDS_KEPT = 64;
+
+function messageIdOf(rec: Rec): string | undefined {
+  const id = (rec.message as Rec | null | undefined)?.id;
+  return typeof id === 'string' && id ? id : undefined;
+}
 
 /**
  * The rows an interactive Claude Code session's mod hands over as they are
@@ -44,26 +51,36 @@ const TRANSCRIPT_IDS_KEPT = 2000;
  * from the transcript.
  */
 export class LiveRows {
-  /** The rows shown from the mod's copy, by id, with their files, until the transcript has them. */
-  private readonly shown = new Map<string, string>();
-  /** The transcript's newest row ids, for a copy from the mod that comes after the row showed. */
-  private readonly fromTranscript = new Set<string>();
+  /** The rows shown from the mod's copy, by id, with their files and message ids, until the transcript has them. */
+  private readonly shown = new Map<string, { file: string; messageId?: string }>();
+  /** The transcript's newest row ids, with their message ids, for a copy from the mod that comes after the row showed. */
+  private readonly fromTranscript = new Map<string, string | undefined>();
   /** The last file read: the names sort in the order the rows were made. */
   private last = '';
 
-  constructor(private readonly dir: string) {}
+  /**
+   * `sameMessage`: a row's two copies showed that the mod's message id (`live-…`, as the mod can't see the API's)
+   * and the transcript's name one response.
+   */
+  constructor(
+    private readonly dir: string,
+    private readonly sameMessage: (liveId: string, apiId: string) => void,
+  ) {}
 
-  /** Whether the transcript's record with `uuid` shows: not when the mod's copy did. */
-  transcriptRow(uuid: unknown): boolean {
+  /** Whether the transcript's record shows: not when the mod's copy did. */
+  transcriptRow(rec: Rec): boolean {
+    const uuid = rec.uuid;
     if (typeof uuid !== 'string') return true;
-    const file = this.shown.get(uuid);
-    if (file !== undefined) {
+    const messageId = messageIdOf(rec);
+    const shown = this.shown.get(uuid);
+    if (shown !== undefined) {
       this.shown.delete(uuid);
-      void fs.promises.rm(file, { force: true }).catch(() => undefined);
+      void fs.promises.rm(shown.file, { force: true }).catch(() => undefined);
+      if (shown.messageId && messageId) this.sameMessage(shown.messageId, messageId);
       return false;
     }
-    this.fromTranscript.add(uuid);
-    if (this.fromTranscript.size > TRANSCRIPT_IDS_KEPT) this.fromTranscript.delete(this.fromTranscript.values().next().value as string);
+    this.fromTranscript.set(uuid, messageId);
+    if (this.fromTranscript.size > TRANSCRIPT_IDS_KEPT) this.fromTranscript.delete(this.fromTranscript.keys().next().value as string);
     return true;
   }
 
@@ -84,11 +101,15 @@ export class LiveRows {
       if (line === null || rec === null || typeof rec !== 'object' || Array.isArray(rec)) break;
       this.last = name;
       const uuid = (rec as Rec).uuid;
-      if (typeof uuid === 'string' && this.fromTranscript.delete(uuid)) {
+      if (typeof uuid === 'string' && this.fromTranscript.has(uuid)) {
+        const apiId = this.fromTranscript.get(uuid);
+        this.fromTranscript.delete(uuid);
+        const liveId = messageIdOf(rec as Rec);
+        if (liveId && apiId) this.sameMessage(liveId, apiId);
         await fs.promises.rm(file, { force: true }).catch(() => undefined);
         continue;
       }
-      if (typeof uuid === 'string') this.shown.set(uuid, file);
+      if (typeof uuid === 'string') this.shown.set(uuid, { file, messageId: messageIdOf(rec as Rec) });
       add(rec as Rec, line);
       added = true;
     }
@@ -549,6 +570,8 @@ export class TranscriptAccumulator {
   private byToolId = new Map<string, MessageRow>();
   /** Rows that started background work, by Claude's background task id (a subagent's is its agent id). */
   private byBackgroundId = new Map<string, MessageRow>();
+  /** The subagents this session started, by agent id: their type (web-fetch), which names their messages. */
+  private agentTypes = new Map<string, string>();
   /** The agent rows StructuredOutput calls became, by the call's tool_use id, until their results arrive. */
   private structuredAnswers = new Map<string, MessageRow>();
   /** Code Mode: the REPL calls Claude Code dispatched, by their eval number, until a Poll delivers their result. */
@@ -560,9 +583,12 @@ export class TranscriptAccumulator {
   /**
    * The newest agent message's reply rows, by the API message's id, while no tool call of that message and no
    * input came after them. A message without a tool call ended its turn, so a Stop hook that makes the agent go
-   * on, or a reply that comes before any new input, supersedes these rows.
+   * on, or a reply that comes before any new input, supersedes these rows. `calls`: the message ids of the tool
+   * calls since, one of which sameMessage may yet show is this message under the mod's id.
    */
-  private turnEnd: { messageId: string; rows: MessageRow[] } | undefined;
+  private turnEnd: { messageId: string; rows: MessageRow[]; calls: Set<string> } | undefined;
+  /** The API message id of each of the mod's message ids (LiveRows), for the newest responses. */
+  private readonly messageIds = new Map<string, string>();
   /** Claude's own name for the session (its ai-title records), the latest. */
   aiTitle = '';
   /** The name the user gave it in Claude Code (/rename, or a host's rename_session), the latest; '' takes it away. */
@@ -604,6 +630,19 @@ export class TranscriptAccumulator {
     this.byBackgroundId.clear();
     this.images.clear();
     this.turnEnd = undefined;
+    this.messageIds.clear();
+  }
+
+  /** The mod's `liveId` and the transcript's `apiId` name one response (LiveRows). */
+  sameMessage(liveId: string, apiId: string): void {
+    if (liveId === apiId) return;
+    this.messageIds.set(liveId, apiId);
+    if (this.messageIds.size > MESSAGE_IDS_KEPT) this.messageIds.delete(this.messageIds.keys().next().value as string);
+    const end = this.turnEnd;
+    if (!end) return;
+    if (end.messageId === liveId) end.messageId = apiId;
+    if (end.calls.delete(liveId)) end.calls.add(apiId);
+    if (end.calls.has(end.messageId)) this.turnEnd = undefined;
   }
 
   /**
@@ -718,6 +757,9 @@ export class TranscriptAccumulator {
       }
       // A prompt typed while the agent worked reaches it inside the running turn: it shows where the agent read it.
       if (att?.type === 'queued_command' && att.commandMode === 'prompt' && typeof att.prompt === 'string' && att.prompt.trim()) {
+        // A subagent's message names it (claude 2.1.330); the Agent call a script made is written only once the script ends.
+        const origin = att.origin as Rec | undefined;
+        if (origin?.kind === 'peer') this.nameAgent(origin.from, origin.name);
         if (!this.pushGuidance(att.prompt, ts)) this.pushPrompt(att.prompt, ts);
       }
       return;
@@ -802,6 +844,7 @@ export class TranscriptAccumulator {
           const tur = rec.toolUseResult as Rec | undefined;
           const agentId = tur?.agentId;
           if (typeof agentId === 'string' && agentId) row.agentId = agentId;
+          this.nameAgent(agentId, tur?.agentType ?? (row.input as Rec | undefined)?.subagent_type);
           this.takeBackground(row, tur, row.result);
           // SendUserFile: the result confirms delivery, so the call becomes the agent's message with its files.
           if (row.tool === 'SendUserFile' && block.is_error !== true && !row.sent) {
@@ -836,9 +879,13 @@ export class TranscriptAccumulator {
       return;
     }
     if (rec.isVirtual === true && this.takeScriptCalls(content as Rec[], ts, rec.liveScriptCall === true)) return;
-    const messageId = typeof (msg as Rec).id === 'string' ? ((msg as Rec).id as string) : undefined;
+    const ownId = messageIdOf(rec);
+    const messageId = ownId && (this.messageIds.get(ownId) ?? ownId);
     for (const block of content as Rec[]) {
-      if (block?.type === 'tool_use' && this.turnEnd?.messageId === messageId) this.turnEnd = undefined;
+      if (block?.type === 'tool_use' && this.turnEnd) {
+        if (this.turnEnd.messageId === messageId) this.turnEnd = undefined;
+        else if (messageId) this.turnEnd.calls.add(messageId);
+      }
       if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
         this.takeReply(this.push({ kind: 'agent', ts, text: block.text }), messageId);
       } else if (block?.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.trim()) {
@@ -969,7 +1016,7 @@ export class TranscriptAccumulator {
       return;
     }
     this.supersedeTurnEnd();
-    this.turnEnd = { messageId, rows: [row] };
+    this.turnEnd = { messageId, rows: [row], calls: new Set() };
   }
 
   /** The agent went on past the reply that ended its turn: that reply stays superseded, whatever comes before its next one. */
@@ -1136,6 +1183,13 @@ export class TranscriptAccumulator {
     return this.push({ kind: 'prompt', ts, text });
   }
 
+  /** A subagent's type, from its Agent call or its message: the messages it already sent take it too. */
+  private nameAgent(id: unknown, type: unknown): void {
+    if (typeof id !== 'string' || !id || typeof type !== 'string' || !type || this.agentTypes.has(id)) return;
+    this.agentTypes.set(id, type);
+    for (const r of this.rows) if (r.kind === 'peer' && r.from === id) r.from = type;
+  }
+
   /** A message Looper's mod handed the agent mid-turn: a run's guidance, related events or delegated agents' messages show; its notice doesn't. */
   protected takeModNote(text: string, ts?: string): void {
     this.pushGuidance(text, ts);
@@ -1174,7 +1228,7 @@ export class TranscriptAccumulator {
     if (!peers) return false;
     for (const p of peers) {
       const row = this.push({ kind: 'peer', ts, text: p.text });
-      if (p.from) row.from = p.from;
+      if (p.from) row.from = this.agentTypes.get(p.from) ?? p.from;
     }
     return true;
   }
@@ -1366,7 +1420,7 @@ export class TranscriptReader {
   ) {
     this.candidates = Array.isArray(file) ? file : [file];
     this.acc = format === 'codex' ? new CodexAccumulator(opts) : new TranscriptAccumulator(opts);
-    this.live = liveDir && format === 'claude' && !opts.raw ? new LiveRows(liveDir) : null;
+    this.live = liveDir && format === 'claude' && !opts.raw ? new LiveRows(liveDir, (liveId, apiId) => this.acc.sameMessage(liveId, apiId)) : null;
   }
 
   /** Read from the transcript's end as it is now: what it already holds is left out (none yet: all of it). */
@@ -1446,7 +1500,7 @@ export class TranscriptReader {
       return; // torn or foreign line
     }
     if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) return;
-    if (live.transcriptRow((rec as Rec).uuid)) this.acc.addParsed(rec as Rec);
+    if (live.transcriptRow(rec as Rec)) this.acc.addParsed(rec as Rec);
   }
 }
 

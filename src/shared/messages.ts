@@ -268,15 +268,28 @@ export function taskEventsText(text: string): string | null {
 /**
  * The messages other Claude Code sessions sent the agent, with each sender's name, when `text` is how Claude Code
  * hands them over: `<cross-session-message from-name="…">` blocks alone (a queued_command's prompt), or after a header
- * line ("Another Claude session sent a message:"), maybe inside a system-reminder (claude 2.1.x). Null for any other text.
+ * line ("Another Claude session sent a message:"), maybe inside a system-reminder (claude 2.1.x). A subagent's
+ * `<agent-message from="<agent id>">` is named by its agent id, and its hand-back is the report alone (claude 2.1.330).
+ * Null for any other text.
  */
 export function peerMessages(text: string): { from?: string; text: string }[] | null {
   const t = text.trim().replace(/^<system-reminder\b[^>]*>\s*([\s\S]*?)\s*<\/system-reminder\b[^>]*>$/, '$1');
-  if (!/^(?:[^<\n][^\n]*\n)?<cross-session-message\b/.test(t)) return null;
+  if (!/^(?:[^<\n][^\n]*\n)?<(?:cross-session|agent)-message\b/.test(t)) return null;
   const messages: { from?: string; text: string }[] = [];
-  for (const m of t.matchAll(/<cross-session-message\b([^>]*)>([\s\S]*?)<\/cross-session-message>/g)) {
-    const from = /\bfrom-name="([^"]+)"/.exec(m[1])?.[1];
-    messages.push({ ...(from ? { from } : {}), text: m[2].trim() });
+  for (const m of t.matchAll(/<(cross-session-message|agent-message)\b([^>]*)>([\s\S]*?)<\/\1>/g)) {
+    const from = /\bfrom-name="([^"]+)"/.exec(m[2])?.[1] ?? (m[1] === 'agent-message' ? /\bfrom="([^"]+)"/.exec(m[2])?.[1] : undefined);
+    messages.push({ ...(from ? { from } : {}), text: handbackReport(m[3]) });
   }
   return messages.length ? messages : null;
+}
+
+/** A message's text, or a subagent hand-back's report without the line over it and the two spaces each of its lines starts with. */
+function handbackReport(body: string): string {
+  const lines = body.replace(/^\s*\n/, '').split('\n');
+  if (!lines[0].startsWith('[Subagent hand-back]')) return body.trim();
+  return lines
+    .slice(1)
+    .map((l) => l.replace(/^ {2}/, ''))
+    .join('\n')
+    .trim();
 }

@@ -355,6 +355,11 @@ export function contextText(c: ChatContext): string {
   return `${formatTokens(c.tokens)} of ${formatTokens(c.window)} context (${Math.round((c.tokens / c.window) * 100)}%)`;
 }
 
+/** A chat's whole conversation: the history it went on from, then its own rows. */
+export function chatRows(chat: Pick<ChatState, 'history' | 'rows'>): MessageRow[] {
+  return [...chat.history, ...chat.rows];
+}
+
 /** Whether nothing has been said in the chat yet: no user or agent message in its history or rows, and none queued. */
 export function chatIsEmpty(chat: Pick<ChatState, 'history' | 'rows' | 'queued'>): boolean {
   const said = (r: MessageRow) => r.kind === 'prompt' || r.kind === 'guidance' || r.kind === 'agent';

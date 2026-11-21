@@ -4,7 +4,7 @@ import { fieldLabel } from './validate';
 
 /**
  * Who changed a task's definition: the editor, the task builder, the
- * CLI/inbox, a restore, or Looper itself. 'earlier' marks the state a task had
+ * CLI, a restore, or Looper itself. 'earlier' marks the state a task had
  * before its first recorded change (it was saved before Looper kept history).
  */
 export type VersionSource = 'user' | 'agent' | 'cli' | 'restore' | 'looper' | 'earlier';

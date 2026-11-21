@@ -9,6 +9,8 @@ import { HeadlessStream, parseCodexLimitReset } from '../src/engine/steps/sessio
 
 // The banner text a real usage-limited run shows (captured from claude 2.1.258).
 const BANNER = "You've hit your session limit · resets 5:50am (America/Sao_Paulo)";
+// A weekly limit's, which has the date (claude 2.1.330).
+const WEEKLY = "You've hit your weekly limit · resets Nov 24, 4am (America/Vancouver)";
 // Codex's error, from a rollout's task_complete record (codex_error_info "usage_limit_exceeded").
 const CODEX =
   'You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 22nd, 2026 2:21 AM.';
@@ -18,6 +20,7 @@ describe('USAGE_LIMIT_RE', () => {
     expect(USAGE_LIMIT_RE.test(BANNER)).toBe(true);
     expect(USAGE_LIMIT_RE.test("You've reached your usage limit · resets at 10pm")).toBe(true);
     expect(USAGE_LIMIT_RE.test("You've hit your weekly limit · resets 22:30")).toBe(true);
+    expect(USAGE_LIMIT_RE.test(WEEKLY)).toBe(true);
   });
 
   it('needs the reset tail, so conversation text about limits cannot end a run', () => {
@@ -42,6 +45,12 @@ describe('parseUsageLimitReset', () => {
     expect(parseUsageLimitReset('resets 22:30', now)).toBe(local(0, 22, 30));
     expect(parseUsageLimitReset('resets 25:00', now)).toBeNull();
     expect(parseUsageLimitReset('no time here', now)).toBeNull();
+  });
+
+  it("reads a weekly limit's date, in the next year once this year's has passed", () => {
+    expect(parseUsageLimitReset(WEEKLY, now)).toBe(new Date(2026, 10, 24, 4, 0, 0).getTime());
+    expect(parseUsageLimitReset('resets Sep 1, 3:15pm', now)).toBe(new Date(2027, 8, 1, 15, 15, 0).getTime());
+    expect(parseUsageLimitReset('resets Foo 1, 3pm', now)).toBeNull();
   });
 });
 

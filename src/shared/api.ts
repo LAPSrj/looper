@@ -30,7 +30,6 @@ import type { EngineEvent, PreventSleepState, Project, ProjectFolder, RecycleBin
 export interface AppInfo {
   version: string;
   dataDir: string;
-  inboxDir: string;
   host: string;
   /** The machine's regional format (e.g. "en-150"); undefined = use the runtime default. */
   locale?: string;

@@ -1,17 +1,11 @@
 import type { ReactNode } from 'react';
-import type { Harness, Task, TaskFolder } from '@shared/types';
+import type { TaskFolder } from '@shared/types';
 import { folderTree } from '@shared/folders';
 import { lineToEnv, tokenize } from '@shared/cmdline';
 import { CheckboxField, Field, FieldError, FormGroup, InputRow, NumberField, onIos, StepFields, TextArea, TextInput } from './ui';
 import { Icon } from './Icon';
 import { WindowActions } from './WindowActions';
 import { isPhone } from '../web/page-nav';
-import { rid } from '../rid';
-
-/** A new environment's harness, and the one Add Harness starts from. */
-export function newHarness(): Harness {
-  return { id: `h-${rid()}`, name: 'Claude Code', kind: 'claude-code', command: 'claude', args: [], env: {} };
-}
 
 /** Arguments and environment variables as typed, as tokens and a map; or the first problem, after its field's label. */
 export function parseArgsEnv(
@@ -129,14 +123,6 @@ export function ConcurrencyLimit({ value, onChange }: { value: number | undefine
       </StepFields>
     </FormGroup>
   );
-}
-
-/** The note a guidance window saves (none for an empty text), or why it can't. */
-export function guidanceNote(text: string, runsLeft: number): { note: Task['note'] } | { problem: string } {
-  const trimmed = text.trim();
-  if (!trimmed) return { note: undefined };
-  if (!Number.isInteger(runsLeft) || runsLeft < 1) return { problem: 'Applies to next: must be a whole number of runs, at least 1.' };
-  return { note: { text: trimmed, runsLeft } };
 }
 
 /** A guidance window: the text for the next runs and how many runs it applies to (a task's, or every task's in a folder). */

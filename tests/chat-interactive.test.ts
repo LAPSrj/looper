@@ -78,6 +78,16 @@ setInterval(() => {
     rec({ type: 'repl-mode', replMode: true });
     rec({ type: 'user', message: { role: 'user', content: text } });
     setTimeout(() => {
+      // With api-error, the turn ends on the usage limit as Claude Code records it: an error reply, and no Stop.
+      if (fs.existsSync(path.join(dir, 'api-error'))) {
+        fs.rmSync(path.join(dir, 'api-error'));
+        rec({ type: 'assistant', isApiErrorMessage: true, error: 'rate_limit', message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: "You've hit your weekly limit · resets Nov 24, 4am (America/Vancouver)" }] } });
+        // Claude Code runs a StopFailure hook when the session's settings have one.
+        const failure = JSON.parse(fs.readFileSync(path.join(run, 'settings.json'), 'utf8')).hooks?.StopFailure;
+        if (failure) fs.writeFileSync(path.join(run, 'stop-failure.json'), JSON.stringify({ error: 'rate_limit', last_assistant_message: "You've hit your weekly limit · resets Nov 24, 4am (America/Vancouver)" }));
+        fs.writeFileSync(path.join(run, 'turn-end.json'), JSON.stringify({ reason: 'error' }));
+        return;
+      }
       rec({ type: 'assistant', message: { role: 'assistant', model: 'claude-fake', content: [{ type: 'text', text: 'echo: ' + text }] } });
       fs.writeFileSync(path.join(run, 'usage.json'), JSON.stringify({ context: { tokens: 1234, window: 200000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 50, resetsAt: '2030-01-01T00:00:00.000Z' }] }));
       fs.writeFileSync(path.join(run, 'turn-end.json'), '{}');
@@ -226,6 +236,24 @@ describe('an interactive chat on Claude Code', { timeout: 30_000 }, () => {
     await until(() => e.getChat(chatId)?.status === 'ready', 'the session to start');
     return { e, chatId, runDir: e.runDir('t1', chatId) };
   }
+
+  it('keeps Claude Code running when a turn ends on an API error, and takes the limit from its error', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
+    writeFileSync(join(dir, 'api-error'), '');
+    writeFileSync(join(dir, 'go'), '');
+    const { e, chatId } = await readyChat(dir);
+    e.sendChat(chatId, 'hello there', []);
+    await until(() => !!e.getChat(chatId)?.rows.some((r) => r.kind === 'error'), 'the error');
+    await until(() => !!e.getChat(chatId)?.limit, 'the limit');
+    // Time for the session to have ended on the error, which added Looper's note repeating it.
+    await new Promise((r) => setTimeout(r, 2000));
+    expect(e.getChat(chatId)!.rows.filter((r) => r.text.includes('weekly limit')).map((r) => r.kind)).toEqual(['error']);
+    const reset = new Date(e.getChat(chatId)!.limit!.resetsAt!);
+    expect([reset.getMonth(), reset.getDate(), reset.getHours()]).toEqual([10, 24, 4]);
+    e.sendChat(chatId, 'again', []);
+    await until(() => !!e.getChat(chatId)?.rows.some((r) => r.kind === 'agent' && r.text === 'echo: again'), 'the reply');
+    expect(lines(join(dir, 'argv'))).toHaveLength(1);
+  });
 
   it('stops showing a message the mod took once a turn it started ends without it, a moment after', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));

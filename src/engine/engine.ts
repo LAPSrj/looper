@@ -2,12 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { RecentRun } from '../shared/dashboard';
 import { modelWindows } from './model-windows';
-import { eventsMessage, taskEventEntry, taskEventLinesEntry, taskEventsMessage, type MessageImage, type MessagesResult, type ScriptCalls } from '../shared/messages';
+import { eventsMessage, taskEventEntry, taskEventLinesEntry, taskEventsMessage, type MessageImage, type MessageRow, type MessagesResult, type ScriptCalls } from '../shared/messages';
 import { resultLabel } from '../shared/format';
 import { folderParents, itemsInTreeOrder, siblingOrder } from '../shared/folders';
 import type { WatchTarget } from './task-watch';
+import { installCli } from './cli-tool';
+import { cliRequests, flag as paramFlag, optText as paramOptText, text as paramText, type RequestHandler } from './cli-requests';
+import { CommandServer } from './command-server';
+import { allows, levelProblem, REQUEST_LEVELS } from '../shared/cli-levels';
 import { runShown, type RunFilter, type RunSummary } from '../shared/runs';
-import type { EngineEvent, Harness, InboxCommand, PreventSleepState, PreventSleepTimer, Project, ProjectFolder, RecycleBinEntry, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
+import type { EngineEvent, Harness, PreventSleepState, PreventSleepTimer, Project, ProjectFolder, RecycleBinEntry, RestState, RunRecord, RunSkips, Settings, Task, TaskFolder, TaskRuntime } from '../shared/types';
 import {
   FOLDER_TASK_PREFIX,
   folderEnvironment,
@@ -24,8 +28,8 @@ import { SettingsSchema } from '../shared/types';
 import { REPORT_INPUT, issueLines } from '../shared/issues';
 import { harnessModels, resolveEnvironment, resolveHarness, startsWithRemoteControl } from '../shared/environments';
 import { detectDefaultWslDistro, detectHost, detectWslMountPrefix, type HostKind } from './host';
+import type { CommandServerInfo } from './lock';
 import { setDetectedMountPrefix } from './target';
-import { Inbox } from './inbox';
 import { Logger, errMsg } from './log';
 import { MessagesService, readRunSessionId, transcriptHostPath } from './messages';
 import { openCommandTerminal, openTaskTerminal, writeCommandLauncher, writeLoginLauncher, writeTerminalLauncher } from './open-terminal';
@@ -41,7 +45,7 @@ import { fileAttachments, withCommands, withFileList, type CommandOutput } from 
 import { UserCommands } from './command-output';
 import { readPendingGuidance } from './guidance';
 import type { RunContext } from './steps/common';
-import type { Attachment, AttachmentInput, ChatSettings, ChatState, QueuedMessage, TerminalInfo } from '../shared/chat';
+import { chatRows, type Attachment, type AttachmentInput, type ChatSettings, type ChatState, type QueuedMessage, type TerminalInfo } from '../shared/chat';
 import { limitsKey, type SessionActivity, type SessionKind, type SessionsState, type SlashCommand } from '../shared/sessions';
 import { SessionHub } from './sessions';
 import { GitService } from './git';
@@ -53,7 +57,8 @@ import type { ClaudeLogin } from '../shared/logins';
 import { Scheduler, type SchedulerSteps } from './scheduler';
 import { ensureDir, readJson, writeJsonAtomic, writeText } from './store/fsutil';
 import { RunStore, newRunId } from './store/runs';
-import { loadSettings, saveSettings } from './store/settings';
+import { loadSettings, saveSettings, storeFile as settingsStoreFile } from './store/settings';
+import { findRunTask } from './run-lookup';
 import { migrateStateFile, StateStore, type OpenConversation } from './store/state';
 import { expiredBinEntries, TaskStore } from './store/tasks';
 import { TemplateStore } from './store/templates';
@@ -62,7 +67,7 @@ import { createTarget, type Target } from './target';
 import { referencedPaths, taskHostPath } from './task-files';
 import { BuilderManager } from './builder';
 import type { BuilderSetup, BuilderState } from '../shared/builder';
-import { validateTask } from '../shared/validate';
+import { slugify, validateTask } from '../shared/validate';
 import {
   definitionOf,
   diffDefinitions,
@@ -99,6 +104,12 @@ export interface EngineOptions {
   authStatus?: ClaudeLoginsDeps['status'];
   /** Tests give the folders the History window reads conversations from outside Looper in, instead of asking each environment. */
   historyDirs?: HistoryDeps['configDirs'];
+  /** The command-line tool's folder (out/cli): the data dir gets a copy that every session's `looper` command runs. */
+  cliSource?: string;
+  /** `looper` commands only the desktop app can answer (its windows, addons and paired devices), by method. */
+  requests?: Record<string, RequestHandler>;
+  /** The command server is listening, or its address changed: the engine lock publishes it to `looper`. */
+  onCommandServer?: (info: CommandServerInfo) => void;
 }
 
 export interface Engine {
@@ -470,6 +481,10 @@ export interface Engine {
   readOutput(id: string, runId: string, maxBytes?: number, forceRaw?: boolean): string;
   /** The run's conversation from the harness transcript (agentId: a subagent's instead; raw: every record as JSON). */
   readMessages(id: string, runId: string, agentId?: string, raw?: boolean): Promise<MessagesResult>;
+  /** The task a run, chat or terminal session belongs to, open or finished; undefined when nothing has the id. */
+  taskOfRun(runId: string): Promise<string | undefined>;
+  /** A chat's history and rows, or a run's or terminal session's conversation (agentId: a subagent's; raw: every record); null when nothing has the id. */
+  conversation(id: string, agentId?: string, raw?: boolean): Promise<{ taskId: string; rows: MessageRow[] } | null>;
   /** The image payload behind a message row's image marker. */
   readMessageImage(id: string, runId: string, rowId: string, agentId?: string): Promise<MessageImage | null>;
   /** `count` of the tool calls a Code Mode script made, before the `before`th (the newest without it), by its REPL call's tool_use id. */
@@ -477,7 +492,8 @@ export interface Engine {
   /** Delete a task's run history. Refused while the task is mid-cycle. */
   clearRuns(id: string): void;
   runDir(id: string, runId: string): string;
-  inboxDir(): string;
+  /** A `looper` command: its handler's answer, or an error saying why it was refused. */
+  request(method: string, params: Record<string, unknown>): Promise<unknown>;
   /** Tail of the engine log file (whole lines only). */
   readEngineLog(maxBytes?: number): string;
   /** The engine log file's size in bytes (0 when there's none), to read it again only when it grew. */
@@ -514,10 +530,7 @@ export function createEngine(opts: EngineOptions): Engine {
   const settings = loadSettings(dataDir, host);
   const log = new Logger(path.join(dataDir, 'engine.log'), opts.echoLog ?? false);
   const perfLog = new Logger(path.join(dataDir, 'perf.log'));
-  const storeFile = (store: 'tasks' | 'templates'): string => {
-    const custom = store === 'tasks' ? settings.tasksFile : settings.templatesFile;
-    return custom ?? path.join(dataDir, `${store}.json`);
-  };
+  const storeFile = (store: 'tasks' | 'templates'): string => settingsStoreFile(dataDir, store, settings);
   const projects = new ProjectStore(path.join(dataDir, 'projects.json'), () => settings.environments, host);
   const tasks = new TaskStore(storeFile('tasks'), () => settings.environments, host, () => settings.completedFolderId, projects);
   const templates = new TemplateStore(storeFile('templates'));
@@ -965,7 +978,7 @@ export function createEngine(opts: EngineOptions): Engine {
         task.id,
         () => {
           const target = createTarget(task, { host, settings });
-          const { launcherHost } = writeTerminalLauncher(task, { host, settings }, dir, resume?.sessionId, true, launch(dir, target));
+          const { launcherHost } = writeTerminalLauncher(task, { host, settings, dataDir }, dir, resume?.sessionId, true, launch(dir, target));
           return { spec: target.spawnSpec(launcherHost), cwd: dir, launcher: launcherHost };
         },
         runId,
@@ -1234,7 +1247,7 @@ export function createEngine(opts: EngineOptions): Engine {
     const sessionId = terminals.start(
       taskId,
       () => {
-        const { target, launcherHost } = writeTerminalLauncher(task, { host, settings }, dir, resume, !!kind, withRemote ? { name: task.name } : undefined);
+        const { target, launcherHost } = writeTerminalLauncher(task, { host, settings, dataDir }, dir, resume, !!kind, withRemote ? { name: task.name } : undefined);
         return { spec: target.spawnSpec(launcherHost), cwd: dir, launcher: launcherHost };
       },
       runId,
@@ -1612,6 +1625,8 @@ export function createEngine(opts: EngineOptions): Engine {
   let deferredTimer: NodeJS.Timeout | null = null;
   /** How often idle sessions are checked for an expired prompt cache (Settings → Chats). */
   const CACHE_CHECK_MS = 15_000;
+  /** How often Windows looks for WSL's adapter, which comes with WSL and changes its address each time. */
+  const WSL_ADAPTER_CHECK_MS = 5_000;
   let retentionTimer: NodeJS.Timeout | null = null;
   let sweeping = false;
   /** Each task's runs a task at a time, letting the windows go on between them. */
@@ -1660,65 +1675,114 @@ export function createEngine(opts: EngineOptions): Engine {
       .catch((err) => log.error(`perf-log prune failed: ${errMsg(err)}`));
   };
 
-  const inbox = new Inbox(
-    path.join(dataDir, 'inbox'),
-    settings.inboxPollMs,
-    {
-      onTask: (input) => withMeta({ source: 'cli' }, () => tasks.upsert(input)),
-      onCommand: async (cmd: InboxCommand) => {
-        switch (cmd.op) {
-          case 'run':
-            if (cmd.event !== undefined) scheduler.receiveEvent(cmd.taskId, cmd.event);
-            else scheduler.runNow(cmd.taskId);
-            break;
-          case 'pause':
-            scheduler.pause(cmd.taskId, cmd.reason);
-            break;
-          case 'resume':
-            scheduler.resume(cmd.taskId);
-            break;
-          case 'stop':
-            await scheduler.stopTask(cmd.taskId, cmd.reason);
-            break;
-          case 'remove':
-            tasks.remove(cmd.taskId);
-            break;
-          case 'enable':
-            tasks.patch(cmd.taskId, { enabled: true });
-            break;
-          case 'disable':
-            tasks.patch(cmd.taskId, { enabled: false });
-            break;
-          case 'complete':
-            scheduler.completeTask(cmd.taskId, cmd.reason ?? 'completed');
-            break;
-          case 'reopen':
-            scheduler.reopenTask(cmd.taskId);
-            break;
-          case 'guide':
-            scheduler.sendGuidance(cmd.taskId, cmd.runId, cmd.text ?? '');
-            break;
-        }
-      },
-      onChat: (cmd) => {
-        const base = taskOrProject(folderTaskId(cmd.folder));
-        if (!base) throw new Error(`Looper can't read the settings for ${cmd.folder}.`);
-        const agent = { ...base.agent, ...(cmd.model ? { model: cmd.model } : {}), ...(cmd.effort ? { effort: cmd.effort } : {}) };
-        const chat = chats.start({ ...base, agent }, { kind: 'new' });
-        if (cmd.title?.trim()) chats.rename(chat.id, cmd.title);
-        if (!chats.send(chat.id, cmd.text, [])) throw new Error('The chat ended before it got the message.');
-        const where = `Started a chat in ${base.name}${base.name === base.cwd ? '' : ` (${base.cwd})`}`;
-        if (!cmd.open) return `${chat.id}\n${where}.`;
-        if (!opts.showChat) return `${chat.id}\n${where}. This Looper has no windows (looper serve), so it isn't shown.`;
-        opts.showChat(chat.id);
-        return `${chat.id}\n${where}, and showed it.`;
-      },
+  /** A task named by a command's taskId. */
+  const commandTask = (p: Record<string, unknown>): Task => {
+    const id = paramText(p, 'taskId');
+    const task = tasks.get(id);
+    if (!task) throw new Error(`No task has the id ${id}.`);
+    return task;
+  };
+  /** The commands that change a task, add one, or start a chat. */
+  const taskCommands: Record<string, RequestHandler> = {
+    'task-add': (p) => {
+      const input = p.task;
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('task must be an object');
+      const def = { ...(input as Record<string, unknown>) };
+      if (!def.id && typeof def.name === 'string') def.id = slugify(def.name);
+      const exists = typeof def.id === 'string' && !!tasks.get(def.id);
+      if (exists && !paramFlag(p, 'update')) throw new Error(`task ${String(def.id)} already exists: pass --update to change it, or give the new task another id`);
+      if (!exists && paramFlag(p, 'update')) throw new Error(`no task ${String(def.id)} to update: leave out --update to create it`);
+      return withMeta({ source: 'cli' }, () => tasks.upsert(def)).id;
     },
-    log,
-  );
+    'run-now': (p) => {
+      const task = commandTask(p);
+      if (!scheduler.runNow(task.id)) throw new Error(`"${task.name}" didn't start a run; \`looper logs ${task.id}\` says why.`);
+      return `Started a run of "${task.name}".`;
+    },
+    event: (p) => {
+      const task = commandTask(p);
+      scheduler.receiveEvent(task.id, paramText(p, 'event'));
+      return `Sent the event to "${task.name}".`;
+    },
+    pause: (p) => {
+      const task = commandTask(p);
+      scheduler.pause(task.id, paramOptText(p, 'reason'));
+      return `Paused "${task.name}".`;
+    },
+    resume: (p) => {
+      const task = commandTask(p);
+      scheduler.resume(task.id);
+      return `Resumed "${task.name}".`;
+    },
+    stop: async (p) => {
+      const task = commandTask(p);
+      if (!(await scheduler.stopTask(task.id, paramOptText(p, 'reason')))) throw new Error(`"${task.name}" has no run in progress.`);
+      return `Stopped the run of "${task.name}".`;
+    },
+    remove: (p) => {
+      const task = commandTask(p);
+      tasks.remove(task.id);
+      return `Moved "${task.name}" to the Recycle Bin.`;
+    },
+    enable: (p) => {
+      const task = commandTask(p);
+      tasks.patch(task.id, { enabled: true });
+      return `Enabled "${task.name}".`;
+    },
+    disable: (p) => {
+      const task = commandTask(p);
+      tasks.patch(task.id, { enabled: false });
+      return `Disabled "${task.name}".`;
+    },
+    complete: (p) => {
+      const task = commandTask(p);
+      scheduler.completeTask(task.id, paramOptText(p, 'reason') ?? 'completed');
+      return `Completed "${task.name}".`;
+    },
+    reopen: (p) => {
+      const task = commandTask(p);
+      scheduler.reopenTask(task.id);
+      return `Reopened "${task.name}".`;
+    },
+    guide: (p) => {
+      const task = commandTask(p);
+      scheduler.sendGuidance(task.id, paramOptText(p, 'runId'), paramText(p, 'text'));
+      return `Sent the guidance to "${task.name}".`;
+    },
+    chat: (p) => {
+      const folder = paramText(p, 'folder');
+      const message = paramText(p, 'text');
+      const title = paramOptText(p, 'title');
+      const model = paramOptText(p, 'model');
+      const effort = paramOptText(p, 'effort');
+      const open = paramFlag(p, 'open');
+      const base = taskOrProject(folderTaskId(folder));
+      if (!base) throw new Error(`Looper can't read the settings for ${folder}.`);
+      const agent = { ...base.agent, ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+      const chat = chats.start({ ...base, agent }, { kind: 'new' });
+      if (title?.trim()) chats.rename(chat.id, title);
+      if (!chats.send(chat.id, message, [])) throw new Error('The chat ended before it got the message.');
+      const where = `Started a chat in ${base.name}${base.name === base.cwd ? '' : ` (${base.cwd})`}`;
+      if (!open) return `${chat.id}\n${where}.`;
+      if (!opts.showChat) return `${chat.id}\n${where}. This Looper has no windows (looper serve), so it isn't shown.`;
+      opts.showChat(chat.id);
+      return `${chat.id}\n${where}, and showed it.`;
+    },
+  };
+  let requests: Record<string, RequestHandler> | undefined;
+  const request = async (method: string, params: Record<string, unknown>): Promise<unknown> => {
+    requests ??= { ...cliRequests(api), ...taskCommands, ...opts.requests };
+    const handler = Object.hasOwn(requests, method) ? requests[method] : undefined;
+    if (!handler) throw new Error(`This Looper can't answer ${method}: it needs a newer Looper, or the desktop app (looper serve has no windows, addons or paired devices).`);
+    const level = REQUEST_LEVELS[method] ?? 'standard';
+    if (!allows(settings.cliCommands, level)) throw new Error(levelProblem(level, settings.cliCommands));
+    return handler(params);
+  };
+  const commandServer = new CommandServer(request, log, (info) => opts.onCommandServer?.(info));
+  let wslTimer: ReturnType<typeof setInterval> | null = null;
 
   let started = false;
-  return {
+  const api: Engine = {
     dataDir,
     host,
     settings,
@@ -1765,7 +1829,8 @@ export function createEngine(opts: EngineOptions): Engine {
       tasks.on('folders', () => emit({ type: 'folders', folders: tasks.listFolders(), layout: tasks.listLayout() }));
       templates.on('change', () => emit({ type: 'templates', templates: templates.list() }));
       scheduler.start();
-      inbox.start();
+      void commandServer.start().catch((err: unknown) => log.error(`command server: cannot listen: ${errMsg(err)}`));
+      if (process.platform === 'win32') wslTimer = setInterval(() => void commandServer.followWsl(), WSL_ADAPTER_CHECK_MS);
       rest?.init();
       // Remote Control first: a chat that opens again starts with it, as a new one would.
       applyRemote();
@@ -1793,6 +1858,10 @@ export function createEngine(opts: EngineOptions): Engine {
         time('history', () => void history.warm(settings.view.history.showRuns).catch(() => undefined));
         // How long each Claude Code login lasts: its own process per harness.
         time('logins', () => logins.start());
+        const cliSource = opts.cliSource;
+        if (cliSource) time('cli', () => void installCli(cliSource, dataDir).catch((e) => log.warn(`cannot copy the command-line tool into the data dir: ${errMsg(e)}`)));
+        // The drop folder `looper` used before it called the command server.
+        time('inbox', () => void fs.promises.rm(path.join(dataDir, 'inbox'), { recursive: true, force: true }).catch(() => undefined));
         perfLog.info(`engine | after start: ${later.join(', ')}`);
       }, STARTUP_DEFER_MS);
       retentionTimer = setInterval(sweepRunLogs, RETENTION_SWEEP_MS);
@@ -1811,7 +1880,9 @@ export function createEngine(opts: EngineOptions): Engine {
       retentionTimer = null;
       if (deferredTimer) clearTimeout(deferredTimer);
       deferredTimer = null;
-      inbox.stop();
+      commandServer.close();
+      if (wslTimer) clearInterval(wslTimer);
+      wslTimer = null;
       logins.stop();
       loginTerminals.closeAll();
       rest?.dispose();
@@ -2063,7 +2134,7 @@ export function createEngine(opts: EngineOptions): Engine {
       if (!task) throw new Error(`unknown task ${id}`);
       if (runId) requireOwnHarness(task, runId);
       const resumeSessionId = runId ? resumeIdOf(task, runId) : undefined;
-      return openTaskTerminal(task, { host, settings, log }, runs.taskDir(id), resumeSessionId);
+      return openTaskTerminal(task, { host, settings, log, dataDir }, runs.taskDir(id), resumeSessionId);
     },
     startTerminalSession(id: string, runId?: string): string {
       const task = taskOrProject(id);
@@ -2218,7 +2289,7 @@ export function createEngine(opts: EngineOptions): Engine {
       const kind = resolveHarness(task, resolveEnvironment(task, settings)).kind;
       if (kind !== t.harnessKind) throw new Error(kindMismatchText(t.harnessKind, kind));
       if (settings.terminal === 'system') {
-        await openTaskTerminal(task, { host, settings, log }, runs.taskDir(task.id), t.sessionId);
+        await openTaskTerminal(task, { host, settings, log, dataDir }, runs.taskDir(task.id), t.sessionId);
         return null;
       }
       const open = terminalRuns.findOpen(task.id, '', t.sessionId);
@@ -2463,6 +2534,18 @@ export function createEngine(opts: EngineOptions): Engine {
     },
     readOutput: (id, runId, max, raw) => runs.readOutput(id, runId, max, raw),
     readMessages: (id, runId, agentId, raw) => messages.read(id, runId, agentId, raw),
+    async taskOfRun(runId: string): Promise<string | undefined> {
+      const open = chats.taskOf(runId) ?? terminals.taskOf(runId) ?? scheduler.list().find((rt) => [...rt.runs, ...rt.children].some((r) => r.runId === runId))?.taskId;
+      return open ?? findRunTask(dataDir, runId);
+    },
+    async conversation(id: string, agentId?: string, raw = false): Promise<{ taskId: string; rows: MessageRow[] } | null> {
+      const chat = agentId || raw ? undefined : chats.get(id);
+      if (chat) return { taskId: chat.taskId, rows: chatRows(chat) };
+      const taskId = await api.taskOfRun(id);
+      if (!taskId) return null;
+      const result = await messages.read(taskId, id, agentId, raw);
+      return { taskId, rows: result.status === 'ok' ? result.rows : [] };
+    },
     readMessageImage: (id, runId, rowId, agentId) => messages.readImage(id, runId, rowId, agentId),
     readScriptCalls: (id, runId, toolUseId, before, count, agentId) => messages.readScriptCalls(id, runId, toolUseId, before, count, agentId),
     clearRuns(id: string): void {
@@ -2478,7 +2561,7 @@ export function createEngine(opts: EngineOptions): Engine {
       log.info(`cleared run history of ${id}`);
     },
     runDir: (id, runId) => runs.runDir(id, runId),
-    inboxDir: () => path.join(dataDir, 'inbox'),
+    request,
     readEngineLog(maxBytes = 1024 * 1024): string {
       const file = path.join(dataDir, 'engine.log');
       try {
@@ -2508,4 +2591,5 @@ export function createEngine(opts: EngineOptions): Engine {
     },
     logPerf: (line) => perfLog.info(line),
   };
+  return api;
 }

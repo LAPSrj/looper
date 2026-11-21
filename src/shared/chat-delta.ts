@@ -48,6 +48,7 @@ export function rowSignature(r: MessageRow): string {
     r.input === undefined ? 0 : 1,
     r.calls ? `${r.calls.count}:${r.calls.failed}:${r.calls.running ?? 0}` : '',
     tail(r.logs),
+    r.from ?? '',
   ].join('|');
 }
 
