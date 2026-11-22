@@ -545,7 +545,17 @@ export function SettingsApp() {
 
       </div>
       </TabBar>
-      <WindowActions confirm={{ label: 'Save', run: () => saver.save(doSave) }} apply={{ run: () => void saver.apply(doSave) }} busy={saver.busy} />
+      <WindowActions
+        draft={
+          closeToTray === null
+            ? null
+            : [
+                defaultEnvId, completedFolderId, closeToTray, confirmQuitRuns, confirmQuitWatchers, notificationsEnabled, staggerEnabled, staggerMin,
+                staggerMax, staggerInterval, tasksFile, templatesFile, cliCommands, previewNetwork, retentionDays, engineLogDays, deleteCompleted,
+                completedDays, binDays, promptRunOptions, terminal, chats, builderView, restMinSleep, restGrace, restDisarmOnWake, startWithSystem,
+              ]
+        }
+        confirm={{ label: 'Save', run: () => saver.save(doSave) }} apply={{ run: () => void saver.apply(doSave) }} busy={saver.busy} />
     </div>
   );
 }

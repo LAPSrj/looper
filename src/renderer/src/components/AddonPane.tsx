@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { addonPaneKey, matchesSearch, type AddonInfo, type AddonPaneContent, type AddonPaneItem, type AddonRefresh } from '@shared/addons';
 import { contextMenu } from '@shared/commands/build';
 import type { CommandContext } from '@shared/commands/context';
@@ -8,7 +8,8 @@ import { refreshes } from './addon-screen-model';
 import { popupCommands } from './command-surfaces';
 import { GROUP_INDENT, GroupHeader } from './GroupHeader';
 import { ItemText, useGroupedTree, type TreeRow } from './GroupedTree';
-import { Row } from './phone/PhoneList';
+import { Group } from './phone/PhoneList';
+import { PhoneRows } from './RowList';
 import { EmptyState } from './EmptyState';
 import { AddonNotRunning } from './AddonNotRunning';
 
@@ -113,6 +114,7 @@ export function AddonPaneList({
   onSelect,
   onMenu,
   onRetry,
+  head,
 }: {
   addon: AddonInfo;
   pane: string;
@@ -125,6 +127,8 @@ export function AddonPaneList({
   /** A right-click or long press on an item: the commands placed on items, for that one (it's selected first on the desktop). */
   onMenu: (item: AddonPaneItem) => void;
   onRetry: () => void;
+  /** On a phone or tablet, above the sections (a pane's title when the addon has several). */
+  head?: ReactNode;
 }) {
   const total = state?.status === 'ready' ? state.content.items.length : 0;
   const all = shownItems(state, query);
@@ -180,9 +184,11 @@ export function AddonPaneList({
     itemMenu: onMenu,
   });
 
-  if (addon.status !== 'running' || !state) return <AddonNotRunning addon={addon} />;
+  // A phone's or tablet's list is sections (PhoneRows): what stands in place of it is a section's row.
+  const inList = (node: ReactNode) => (isPhone ? <Group>{node}</Group> : node);
+  if (addon.status !== 'running' || !state) return inList(<AddonNotRunning addon={addon} />);
   if (state.status === 'error') {
-    return (
+    return inList(
       <EmptyState
         level="error"
         title={`${addon.name} can't list its items`}
@@ -193,45 +199,44 @@ export function AddonPaneList({
         }
       >
         {state.error}
-      </EmptyState>
+      </EmptyState>,
     );
   }
-  if (!total) return <EmptyState>{state.content.empty ?? 'Nothing here.'}</EmptyState>;
-  if (!all.length) return <EmptyState>No matches.</EmptyState>;
+  if (!total) return inList(<EmptyState>{state.content.empty ?? 'Nothing here.'}</EmptyState>);
+  if (!all.length) return inList(<EmptyState>No matches.</EmptyState>);
 
   const header = (r: Extract<PaneRow, { kind: 'group' }>) => (
     <GroupHeader
       key={`group:${r.key}`}
       {...t.groupProps(r)}
-      as={isPhone ? 'div' : 'li'}
-      inTree={!isPhone}
+      as="li"
       name={r.group.name}
       count={r.group.items.length}
       className={`task-folder${t.activeGroup === r.key ? ' active' : ''}`}
     />
   );
 
-  // A phone draws its rows as the system's list rows; a tap opens the item, a long press shows its menu.
+  // A phone or tablet draws a list section for the loose items and one for each group, as every list of sections does
+  // (PhoneRows): the group's name is the section's title, outside its card. Every group shows open: folding sections on
+  // a phone is not decided (components.md rule 2). A tap opens the item, a long press shows its menu.
   if (isPhone) {
     return (
-      <div>
-        {rows.map((r) =>
-          r.kind === 'group' ? (
-            header(r)
-          ) : (
-            <Row
-              key={r.key}
-              title={r.item.label}
-              sub={r.item.mono && r.item.description ? <span className="mono">{r.item.description}</span> : r.item.description || undefined}
-              tone={r.item.dimmed ? 'muted' : undefined}
-              chevron
-              selected={r.key === selected}
-              onOpen={() => t.pick(r.item)}
-              onMenu={() => onMenu(r.item)}
-            />
-          ),
-        )}
-      </div>
+      <PhoneRows
+        rows={[...loose, ...groups.flatMap((g) => g.items)]}
+        rowKey={(it) => it.id}
+        selected={selected}
+        onOpen={(it) => t.pick(it)}
+        onMenu={onMenu}
+        empty={null}
+        head={head}
+        groupOf={(it) => it.group ?? ''}
+        phoneRow={(it) => ({
+          title: it.label,
+          sub: it.mono && it.description ? <span className="mono">{it.description}</span> : it.description || undefined,
+          tone: it.dimmed ? 'muted' : undefined,
+          chevron: true,
+        })}
+      />
     );
   }
 

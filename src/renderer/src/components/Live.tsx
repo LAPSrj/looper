@@ -35,7 +35,15 @@ export function Elapsed({ since, until }: { since: number; until?: number }) {
 export function WaitedFor({ since, label }: { since: number; label?: string }) {
   const ms = useNow(MINUTE) - since;
   if (label === undefined) return <>{waitedText(ms)}</>;
-  return <>{ms < 60_000 ? label : `${label} for ${waitedText(ms)}`}</>;
+  return <>{waitedLabel(ms, label)}</>;
+}
+
+const waitedLabel = (ms: number, label: string) => (ms < 60_000 ? label : `${label} for ${waitedText(ms)}`);
+
+/** WaitedFor's text with a label, where only a string goes (a bar's subtitle); `since` null: the label alone, still. */
+export function useWaitedText(since: number | null, label: string): string {
+  const now = useNow(since === null ? null : MINUTE);
+  return since === null ? label : waitedLabel(now - since, label);
 }
 
 /** The status bar's Rest Mode text: a countdown to sleep ticks each second, every other phase is still. */

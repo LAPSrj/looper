@@ -57,7 +57,7 @@ export function RenameWindow<T extends { id: string }>({
           </FormGroup>
         </div>
       </div>
-      <WindowActions confirm={{ label: 'Save', run: save, disabled: blank }} busy={saver.busy} />
+      <WindowActions draft={loaded ? name : null} confirm={{ label: 'Save', run: save, disabled: blank }} busy={saver.busy} />
     </div>
   );
 }

@@ -179,8 +179,18 @@ html[data-instant-back] .ph-card {
   content: '';
   position: absolute;
   inset: 0;
+  /* The page is lifted over the rest of the bar (--lift, PhoneIframe) and its sheet's backdrop dims that part. */
+  bottom: var(--lift, 0px);
   background: rgba(0, 0, 0, 0.35);
   animation: ph-fade-in 0.2s ease-out;
+}
+/* The screen behind an iOS sheet dims with black at 20% (ios.md: Sheets), as the page's own backdrop does. */
+.ios .ph-bar-slot.page-modal::after {
+  background: rgba(0, 0, 0, 0.2);
+}
+/* The page lifted over the bar while it shows a sheet of its own (PhoneIframe). */
+.ph-body.lifted {
+  z-index: 2;
 }
 @keyframes ph-fade-in {
   from {
@@ -255,10 +265,12 @@ html[data-instant-back] .ph-card {
 }
 
 /* ---------- the file viewer ---------- */
+/* In a sheet of the shell's own the viewer runs to the screen's bottom edge, and each scroller in it pads its end by
+   --viewer-end (the safe area there: ios.css, android.css), so its last line can scroll above the home indicator. */
 .ph-viewer {
   flex: 1;
   min-height: 0;
-  padding: 12px 16px;
+  padding: 12px 16px calc(12px + var(--viewer-end, 0px));
   -webkit-user-select: text;
   user-select: text;
 }
@@ -292,8 +304,13 @@ html[data-instant-back] .ph-card {
 }
 
 .ph-viewer.code {
-  padding: 0;
+  padding: 0 0 var(--viewer-end, 0px);
   overflow: auto;
+}
+/* The viewer is the scroller, so the document scrolls to its bottom edge; Markdown keeps its own padding. */
+.ph-viewer > .markdown {
+  height: auto;
+  overflow: visible;
 }
 .ph-viewer .code-view {
   width: max-content;

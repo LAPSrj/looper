@@ -93,6 +93,16 @@ export function columnName(index: number): string {
   return name;
 }
 
+/**
+ * The file an HTML page Preview shows was read from, so the page loads the files next to it: one the agent sent,
+ * read or wrote (`taskId`, and its path in the session's form, as sessions.readSentFile takes it), or a path on
+ * the computer (a device's file viewer).
+ */
+export interface PreviewSource {
+  taskId?: string;
+  path: string;
+}
+
 /** Settings → Advanced → Previewed web pages' network access. */
 export const PREVIEW_NETWORKS = ['allow', 'ask', 'deny'] as const;
 export type PreviewNetwork = (typeof PREVIEW_NETWORKS)[number];
@@ -102,6 +112,13 @@ export const PREVIEW_NETWORK_CHOICES: Record<PreviewNetwork, string> = { allow: 
 
 /** The message an Ask page's frame posts to the viewer when it blocked a load from the internet. */
 export const PREVIEW_BLOCKED = 'looper-preview-blocked';
+
+/**
+ * The key of the message the viewer posts to the page's frame with the room to leave after the page's end, in CSS
+ * pixels: on a phone, the safe area under a sheet the page runs to the bottom edge of, so its end can scroll above
+ * the home indicator (the scroll view's inset in Safari).
+ */
+export const PREVIEW_END = 'looper-preview-end';
 
 /**
  * What the frame may do on the computer: run scripts, never share an origin with Looper, and open nothing by
@@ -116,11 +133,13 @@ export const PREVIEW_SANDBOX_DEVICE = 'allow-scripts allow-popups allow-popups-t
 /**
  * The Content-Security-Policy an HTML page is served with in Preview. Its sandbox directive gives the page an
  * origin of its own even when its address is opened outside the frame. `remote`: it may load from the internet;
- * otherwise only what's inline in the file (data: and blob: too) loads.
+ * otherwise only what's inline in the file (data: and blob: too) loads. `files`: the page's folder is served
+ * beside it, so its scripts, styles, images, fonts and media load from its own address ('self') too; what it
+ * fetches, and the frames in it, don't.
  */
-export function previewFrameCsp(remote: boolean, device = false): string {
+export function previewFrameCsp(remote: boolean, device = false, files = false): string {
   const local = "'unsafe-inline' 'unsafe-eval' data: blob:";
-  const net = remote ? '* ' : '';
+  const net = (files ? "'self' " : '') + (remote ? '* ' : '');
   return [
     `sandbox ${device ? PREVIEW_SANDBOX_DEVICE : PREVIEW_SANDBOX}`,
     `default-src ${remote ? `* ${local}` : "'none'"}`,
@@ -147,7 +166,9 @@ export function previewHtmlDocument(html: string, opts: { reportBlocked?: boolea
     : '';
   // <base target="_blank"> would send #section to a new window too (nothing on the computer, the page again in a new tab on a phone).
   const inPage = `<script>addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null,h=a&&a.getAttribute('href');if(e.defaultPrevented||!h||h.charAt(0)!=='#'||a.hasAttribute('target'))return;e.preventDefault();location.hash=h});</script>`;
-  const base = '<base target="_blank">' + inPage + report;
+  // The room the viewer asks for after the page's end (PREVIEW_END): a box after the body, in the page's own scroller.
+  const end = `<script>addEventListener('message',function(e){var n=e.data&&e.data['${PREVIEW_END}'];if(e.source!==parent||typeof n!=='number')return;var s=document.getElementById('${PREVIEW_END}');if(!s){s=document.createElement('style');s.id='${PREVIEW_END}';document.documentElement.appendChild(s)}s.textContent=n>0?'html::after{content:"";display:block;height:'+Math.min(n,400)+'px}':''});</script>`;
+  const base = '<base target="_blank">' + inPage + end + report;
   // First, after a doctype: a <head> or <html> after it still makes the same document.
   const doctype = /^\s*<!doctype[^>]*>/i.exec(html);
   const at = doctype ? doctype[0].length : 0;

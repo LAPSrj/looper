@@ -256,7 +256,7 @@ export default function PdfPages({ data, name }: { data: ArrayBuffer; name: stri
       className="pdf-pages"
       role="document"
       aria-label={name}
-      style={{ flex: 1, alignSelf: 'stretch', minHeight: 0, overflow: 'auto', touchAction: 'pan-x pan-y', background: 'rgba(118, 118, 128, 0.12)' }}
+      style={{ flex: 1, alignSelf: 'stretch', minHeight: 0, overflow: 'auto', touchAction: 'pan-x pan-y', background: 'rgba(118, 118, 128, 0.12)', paddingBottom: 'var(--viewer-end, 0px)', boxSizing: 'border-box' }}
     >
       {/* Holds the pages' laid-out size, so a pinch out (a smaller transform) doesn't shorten the scroll under the fingers. */}
       <div style={{ width: width * zoom }}>

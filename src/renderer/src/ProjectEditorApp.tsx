@@ -107,6 +107,7 @@ export function ProjectEditorApp({ id }: { id?: string }) {
         </div>
       </div>
       <WindowActions
+        draft={[draft, argsText, envText]}
         confirm={{ label: id ? 'Save' : 'Create', run: () => saver.save(doSave) }}
         apply={id ? { run: () => void saver.apply(doSave) } : undefined}
         busy={saver.busy}

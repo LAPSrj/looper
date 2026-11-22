@@ -66,6 +66,7 @@ export function RemoteHelperEditorApp({ id, isNew }: { id: string; isNew?: boole
         </div>
       </div>
       <WindowActions
+        draft={draft}
         confirm={{ label: isNew ? 'Create' : 'Save', run: () => saver.save(doSave) }}
         apply={isNew ? undefined : { run: () => void saver.apply(doSave) }}
         busy={saver.busy}

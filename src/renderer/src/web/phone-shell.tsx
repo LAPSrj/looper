@@ -10,6 +10,7 @@ import { BackStack, drawnScreens, isTablet, presentation, type PhoneOs, type Pre
 import { noMnemonic } from '../../../shared/commands/command';
 import { barModel, dismissFor, type BarModel, type PageNavAction } from './nav-bar-model';
 import { slideCard, useDragToDismiss } from './sheet-drag';
+import { discardQuestion } from './dialog-flows';
 import type { PageNav } from './page-nav';
 import { childStack, mainWindow, useShellState, windowSrc, type ShellState, type WebWindow } from './store';
 import './phone.css';
@@ -400,7 +401,7 @@ function preparePage(el: HTMLIFrameElement, w: string, os: PhoneOs, hooks: React
 }
 
 /** A window's iframe; the controller's ref plus the phone's own setup of the page. */
-function PhoneIframe({ controller, win, os, hooks, safeBottom }: { controller: ShellController; win: WebWindow; os: PhoneOs; hooks: React.RefObject<FrameHooks>; safeBottom: number }) {
+function PhoneIframe({ controller, win, os, hooks, safeBottom, lifted }: { controller: ShellController; win: WebWindow; os: PhoneOs; hooks: React.RefObject<FrameHooks>; safeBottom: number; lifted: boolean }) {
   const base = controller.frameRef(win.w);
   const el = useRef<HTMLIFrameElement | null>(null);
   const ref = useCallback(
@@ -419,6 +420,28 @@ function PhoneIframe({ controller, win, os, hooks, safeBottom }: { controller: S
     node?.addEventListener('load', set);
     return () => node?.removeEventListener('load', set);
   }, [safeBottom, win.nonce]);
+  // While the page shows a sheet of its own (PageNav modal), the iframe rises over the bar to the status bar, so the
+  // sheet can start there (ios.md: Sheets), and the page pads its top by as much, so what it shows stays in place
+  // and the bar shows through that band under the sheet's backdrop. The bar's own dimming keeps to the status bar.
+  useLayoutEffect(() => {
+    const frame = el.current;
+    const body = frame?.parentElement;
+    const slot = body?.parentElement?.querySelector<HTMLElement>(':scope > .ph-bar-slot, :scope > .ph-drag > .ph-bar-slot');
+    if (!frame || !body || !slot) return;
+    const header = slot.querySelector('header');
+    const lift = lifted ? Math.max(0, slot.offsetHeight - (header ? parseFloat(getComputedStyle(header).paddingTop) || 0 : 0)) : 0;
+    const apply = () => {
+      const root = frame.contentDocument?.documentElement;
+      root?.style.setProperty('--looper-lift', `${lift}px`);
+      root?.toggleAttribute('data-lifted', lift > 0);
+    };
+    body.style.marginTop = lift ? `${-lift}px` : '';
+    body.classList.toggle('lifted', lift > 0);
+    slot.style.setProperty('--lift', `${lift}px`);
+    apply();
+    frame.addEventListener('load', apply);
+    return () => frame.removeEventListener('load', apply);
+  }, [lifted, win.nonce]);
   return <iframe key={`${win.w}:${win.nonce}`} ref={ref} className="ph-frame" title={win.title} src={windowSrc(win)} allow="clipboard-read; clipboard-write" />;
 }
 
@@ -467,6 +490,8 @@ export interface TopEdge {
 const isTransparent = (c: string) => c === 'transparent' || /^rgba\(.*,\s*0\)$/.test(c);
 /** What's at `x` (the middle) of a page's top edge: the first background behind it, and whether a scroller there has moved. */
 function readTopEdge(doc: Document, win: Window, x = win.innerWidth / 2): TopEdge | null {
+  // A page lifted over the bar for a sheet of its own: the bar keeps the look it had under the sheet's backdrop.
+  if (doc.documentElement.hasAttribute('data-lifted')) return null;
   const hit = doc.elementFromPoint(x, 1);
   // Nothing hit (a hidden or inert page): keep the last reading.
   if (!hit || hit === doc.documentElement) return null;
@@ -658,7 +683,7 @@ export function usePhoneShell<P extends MenuPlace = MenuPlace>(controller: Shell
   // Back: bottom to top, the windows over the main one, the top page's own deeper screen, then what the shell has open.
   const layers: BackLayer[] = [];
   const live = screens.filter((x) => !x.leaving).sort((a, b) => a.depth - b.depth);
-  for (const sc of live) if (sc.pres !== 'root') layers.push(() => controller.close(sc.win.w));
+  for (const sc of live) if (sc.pres !== 'root') layers.push(() => closeScreen(controller, sc));
   const topNav = top?.nav;
   if (topNav?.back) layers.push(() => topNav.back?.());
   const firstOverlay = layers.length;
@@ -810,6 +835,10 @@ export function usePhoneShell<P extends MenuPlace = MenuPlace>(controller: Shell
   useEffect(() => {
     if (window.__looperFrame) window.__looperFrame.openDevice = () => setDevice(true);
   }, []);
+  // An editor's Cancel asks before it throws its changes away (WindowActions), in the frame's own message box.
+  useEffect(() => {
+    if (window.__looperFrame) window.__looperFrame.askDiscard = (w) => controller.session.ask(w, discardQuestion(os)).then((r) => r === 0);
+  }, [controller, os]);
 
   return { more, setMore, openMore, openActionMenu, device, setDevice, s, os, vp, tablet: isTablet(vp), screens, top, rootRef, probeRef, hooks, goBack: historyBack, scrolledPast, edges };
 }
@@ -852,16 +881,16 @@ export function PhoneWindows({ shell, controller, renderBar, dragToDismiss }: Wi
             inert={!sc.isTop || sc.leaving || blockedByShell}
             aria-hidden={!sc.isTop || undefined}
           >
-            {sheet && <Scrim className="ph-scrim" onTap={() => sc.pres !== 'full-dialog' && os === 'android' && controller.close(sc.win.w)} />}
+            {sheet && <Scrim className="ph-scrim" onTap={() => sc.pres !== 'full-dialog' && os === 'android' && closeScreen(controller, sc)} />}
             <div className={`ph-card${ownsBottom ? ' owns-bottom' : ''}`} role={sheet ? 'dialog' : undefined} aria-modal={sheet || undefined} aria-label={sc.nav?.title || sc.win.title}>
-              <DragArea enabled={sheet && dragToDismiss(sc.pres) && !sc.nav?.modal} root={shell.rootRef} w={sc.win.w} onDismiss={() => controller.close(sc.win.w)}>
+              <DragArea enabled={sheet && dragToDismiss(sc.pres) && !sc.nav?.modal} root={shell.rootRef} w={sc.win.w} onDismiss={() => closeScreen(controller, sc)}>
                 {/* The page has a sheet of its own open: the bar is dimmed with its backdrop and out of reach. */}
                 <div className={`ph-bar-slot${sc.nav?.modal ? ' page-modal' : ''}`} inert={!!sc.nav?.modal}>
                   {renderBar(sc)}
                 </div>
               </DragArea>
               <div className="ph-body">
-                <PhoneIframe controller={controller} win={sc.win} os={os} hooks={hooks} safeBottom={safeBottom} />
+                <PhoneIframe controller={controller} win={sc.win} os={os} hooks={hooks} safeBottom={safeBottom} lifted={!!sc.nav?.modal} />
               </div>
             </div>
           </div>
@@ -874,6 +903,17 @@ export function PhoneWindows({ shell, controller, renderBar, dragToDismiss }: Wi
       )}
     </>
   );
+}
+
+/**
+ * Closes a window as its Back, swipe or backdrop does. An editor with unsaved changes goes through its own Cancel,
+ * which asks first: "If people have unsaved changes in the sheet when they begin swiping to dismiss it, use an action
+ * sheet to let them confirm their action" (HIG Sheets); "a basic dialog should appear to confirm that they want to
+ * discard the unsaved changes" (Material 3 Dialogs).
+ */
+function closeScreen(controller: ShellController, sc: Screen): void {
+  if (sc.nav?.unsaved && sc.nav.cancel) sc.nav.cancel.run();
+  else controller.close(sc.win.w);
 }
 
 /** A sheet's bar: drag it down to close the sheet. */
@@ -910,7 +950,10 @@ export function screenBars(
       split,
       list: barModel({ title: split.title, actions: split.actions, dismiss: sc.pres === 'push' ? { kind: 'back', run: run.listBack } : null }),
       detail: barModel({ title: nav?.title ?? '', subtitle: nav?.subtitle, back, cancel: nav?.cancel, confirm: nav?.confirm, actions: nav?.actions, dismiss: null }),
-      inspector: split.inspector ? barModel({ title: split.inspector.title, dismiss: null }) : null,
+      // What the column's own screens report (a pushed detail's Back and title) goes over its title.
+      inspector: split.inspector
+        ? barModel({ title: nav?.inspectorBar?.title ?? split.inspector.title, subtitle: nav?.inspectorBar?.subtitle, back: nav?.inspectorBar?.back, dismiss: null })
+        : null,
     };
   }
   return {

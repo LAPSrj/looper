@@ -3,7 +3,7 @@ import { XlsxSheetViewer } from '@silurus/ooxml/xlsx';
 import { FILL, NOTE } from './note';
 
 /** The sheets' tabs under the grid, as Excel draws them; inline, as the phone frames and the desktop have different stylesheets. */
-const TABS: React.CSSProperties = { flex: 'none', display: 'flex', overflowX: 'auto', borderTop: '1px solid rgba(128, 128, 128, 0.35)', padding: '0 6px' };
+const TABS: React.CSSProperties = { flex: 'none', display: 'flex', overflowX: 'auto', borderTop: '1px solid rgba(128, 128, 128, 0.35)', padding: '0 6px var(--viewer-end, 0px)' };
 const TAB: React.CSSProperties = { flex: 'none', font: 'inherit', color: 'inherit', background: 'none', border: 0, borderBottom: '2px solid transparent', padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' };
 const ACTIVE: React.CSSProperties = { fontWeight: 600, borderBottomColor: 'currentColor' };
 

@@ -62,7 +62,7 @@ export default function PptxSlides({ data, name }: { data: ArrayBuffer; name: st
   const slideWidth = Math.max(0, width - GAP * 2);
   const aspect = deck.slideHeight / deck.slideWidth;
   return (
-    <div ref={scroller} className="preview-slides" role="document" aria-label={name} style={{ ...FILL, overflow: 'auto', alignItems: 'center', gap: GAP, padding: GAP, boxSizing: 'border-box', background: 'rgba(118, 118, 128, 0.12)' }}>
+    <div ref={scroller} className="preview-slides" role="document" aria-label={name} style={{ ...FILL, overflow: 'auto', alignItems: 'center', gap: GAP, padding: `${GAP}px ${GAP}px calc(${GAP}px + var(--viewer-end, 0px))`, boxSizing: 'border-box', background: 'rgba(118, 118, 128, 0.12)' }}>
       {slideWidth > 0 && Array.from({ length: deck.slideCount }, (_, i) => <Slide key={i} deck={deck} index={i} width={slideWidth} height={Math.round(slideWidth * aspect)} root={scroller} />)}
     </div>
   );

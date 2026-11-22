@@ -1805,6 +1805,14 @@ html.phone-window .pg-row.tone-muted .pg-row-title {
   gap: 8px;
   margin-right: auto;
 }
+/* The commit buttons share one width, the widest's and at least 75 px (Win32 Command buttons: the same width in a
+   window, and a minimum width; 75 x 23 at 96 dpi, Looper's height staying 32). */
+.footer-commit {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(75px, 1fr);
+  gap: 8px;
+}
 .form {
   overflow-y: auto;
   padding: 4px 24px 24px;
@@ -1857,7 +1865,8 @@ html.phone-window .pg-row.tone-muted .pg-row-title {
 }
 .field-label {
   font-size: var(--font-body);
-  font-weight: 500;
+  /* Semibold (CLAUDE.md, Windows app conventions). */
+  font-weight: 600;
   color: var(--fg);
 }
 .checkbox-field {
@@ -2112,22 +2121,18 @@ details[open] > summary::before {
 :where(.inline-field) .input-suffix input {
   height: var(--control-height);
 }
-.day-row {
+/* Several choices at once (CheckboxChoices): check boxes in a row, seven to a line for the days of a month. */
+.checkbox-choices {
   display: flex;
-  gap: 4px;
-}
-.dom-row {
-  display: flex;
-  gap: 4px;
   flex-wrap: wrap;
+  column-gap: 16px;
 }
-.day-toggle {
-  min-width: 44px;
+.checkbox-choices-wrap {
+  display: grid;
+  grid-template-columns: repeat(7, max-content);
 }
-.day-toggle.selected {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-fg);
+.checkbox-choices > .checkbox-field {
+  margin: 6px 0;
 }
 .time-chip-row {
   display: flex;
@@ -3793,7 +3798,8 @@ button:focus-visible,
   white-space: nowrap;
   color: var(--fg-muted);
 }
-.now-place {
+.now-place,
+.toolbar-status {
   flex: none;
   font-size: var(--font-caption);
   margin-left: 8px;
@@ -4105,23 +4111,107 @@ button:focus-visible,
   white-space: pre-wrap;
   font-family: var(--font-mono);
 }
-/* A message between agents on Now, as Gmail shows one: the subject, the sender, "to" the recipient with a details toggle, a rule, then the message. */
-.now-mail-subject {
-  margin: 0 0 8px;
-  font-size: calc(var(--font-body) * 1.4);
-  font-weight: 400;
-  overflow-wrap: anywhere;
+/* A message between agents on Now, as an email client shows it (ActivityPanel's MailView). Here, on the desktop, as Gmail's
+   web message view does, and the phones and tablets too (Gmail's app has the same layout): the thread's subject large above, then each message with a round initial, the sender in semibold,
+   the time at the trailing edge, "to" the recipient with a details toggle, and the message. The first message's subject is
+   the thread's; a reply's is a line under its sender. phone.css has the devices' own text styles. */
+.now-mail {
+  padding-bottom: 8px;
+}
+/* The message is on a white page on every device, as Gmail's is: the body's colors are Gmail's own, so the text, the
+   code and the borders inside it follow. In the dark theme the page is Gmail's dark surface, since a white block would
+   be the only bright area of a dark app. */
+.now-body.now-body-mail {
+  --bg: #fff;
+  --bg-2: #f6f8fc;
+  --bg-3: #e9eef6;
+  --border: #dadce0;
+  --fg: #1f1f1f;
+  --fg-muted: #5f6368;
+  --pg-bg: #fff;
+  --pg-sep: #dadce0;
+  --pg-label-2: #5f6368;
+  background: #fff;
+  color: var(--fg);
+}
+@media (prefers-color-scheme: dark) {
+  .now-body.now-body-mail {
+    --bg: #131314;
+    --bg-2: #1e1f20;
+    --bg-3: #282a2c;
+    --border: #444746;
+    --fg: #e3e3e3;
+    --fg-muted: #c4c7c5;
+    --pg-bg: #131314;
+    --pg-sep: #444746;
+    --pg-label-2: #c4c7c5;
+    background: #131314;
+  }
+}
+.now-mail-msg {
+  display: flex;
+  flex-direction: column;
+}
+.now-mail-msg + .now-mail-msg {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.now-mail-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.now-mail-avatar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: hsl(var(--hue) 45% 38%);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 500;
+  user-select: none;
+}
+.now-mail-meta {
+  flex: 1;
+  min-width: 0;
+}
+.now-mail-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 .now-mail-from {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
+}
+.now-mail-time {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--font-caption);
 }
 .now-mail-to {
   display: flex;
   align-items: center;
   gap: 2px;
+  min-width: 0;
   font-size: var(--font-caption);
 }
+.now-mail-to > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .now-mail-toggle {
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4138,29 +4228,47 @@ button:focus-visible,
 .now-mail-toggle.open svg {
   transform: rotate(180deg);
 }
-.now-mail-head {
-  margin-top: 6px;
+.now-mail-details {
+  margin: 8px 0 0 52px;
   border-collapse: collapse;
   font-size: var(--font-caption);
 }
-.now-mail-head th,
-.now-mail-head td {
+.now-mail-details th,
+.now-mail-details td {
   padding: 2px 10px 2px 0;
   text-align: left;
   vertical-align: top;
   overflow-wrap: anywhere;
 }
-.now-mail-head th {
+.now-mail-details th {
   font-weight: 400;
   color: var(--fg-muted);
   white-space: nowrap;
 }
-.now-mail-body {
-  margin-top: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+.now-mail-subject {
+  margin: 12px 0 0;
+  font-size: var(--font-body);
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
-/* The message lines up with the subject and the sender, as Gmail's does. */
+.now-mail-msg.first .now-mail-subject {
+  order: -1;
+  margin: 0 0 16px;
+  font-size: calc(var(--font-body) * 1.7);
+  font-weight: 400;
+  line-height: 1.3;
+}
+.now-mail-subject.empty {
+  color: var(--fg-muted);
+}
+.now-mail-body {
+  margin-top: 12px;
+}
+.now-mail-notice {
+  margin: 0 0 8px;
+}
+/* The message lines up with the subject and the sender, not with the sender's name. */
 .now-mail-body .markdown {
   height: auto;
   overflow: visible;
@@ -4343,8 +4451,8 @@ html:not(.phone-window) .now-console {
 .now-call-state {
   flex: none;
 }
-.subagent-list,
-.files-tab {
+/* The desktop's pane; a phone's lists keep Group's own inset (ios.md: Lists). */
+:where(html:not(.phone-window)) :is(.subagent-list, .files-tab) {
   padding: 6px;
 }
 .subagent-item {
@@ -4386,7 +4494,8 @@ html:not(.phone-window) .now-console {
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
 }
-.background-tab {
+/* The desktop's pane; a phone's list keeps Group's own inset (ios.md: Lists). */
+:where(html:not(.phone-window)) .background-tab {
   padding: 8px 12px 10px;
 }
 .background-none {
@@ -5621,6 +5730,10 @@ html.phone-window .workflow-text {
 .menu-access {
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+/* A dialog's access keys while Alt is held (components/access-keys.ts), underlined as the menu bar's are. */
+::highlight(access-keys) {
+  text-decoration: underline;
 }
 /* The desktop app's window: its menu bar over the page. */
 .window-frame {

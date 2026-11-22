@@ -9,7 +9,7 @@ const read = (file: string) => fs.readFileSync(path.join(src, file), 'utf8');
 describe('V3 live check fixes', () => {
   it('the iOS segmented control does not clip its 44 pt targets', () => {
     const phone = read('phone.css');
-    const start = phone.indexOf(".tabs-segmented,\nhtml.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs {\n  flex: none;");
+    const start = phone.indexOf("html.phone-window[data-platform='ios'] .tabs-segmented {\n  flex: none;");
     expect(start).toBeGreaterThan(0);
     expect(phone.slice(start, phone.indexOf('}', start))).toContain('overflow: visible');
   });

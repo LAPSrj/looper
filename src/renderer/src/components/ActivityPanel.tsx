@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useThumbnail } from './hooks';
 import { findToolCall, toolCallTitle, type AddonInfo, type AddonToolCall } from '@shared/addons';
 import type { Attachment } from '@shared/chat';
@@ -8,11 +8,11 @@ import { CHANGE_TOOLS, SENT_IMAGE_RE, type MessageRow, type SentFile } from '@sh
 import { baseName, dirName } from '@shared/paths';
 import type { BackgroundTask, SubagentInfo } from '@shared/sessions';
 import { WORKFLOW_STATUS_TEXT, tabStatus, workflowAgents, type WorkflowRun } from '@shared/workflows';
-import { stripAnsi } from '../format';
+import { fmtClock, stripAnsi } from '../format';
 import { isPhone } from '../web/page-nav';
 import { useAddonList } from '../live-state';
 import { AgentRow, tokensText, WorkflowAgentList } from './AgentRows';
-import { BackgroundConsole } from './BackgroundConsole';
+import { BackgroundConsole, useBackgroundStatus } from './BackgroundConsole';
 import { AttachmentList, CHEVRON, localScriptCalls, ScriptCallBox, SentFileList, type RowCtx } from './ChatRows';
 import { languageOf } from './code-languages';
 import { reportError } from '../report-error';
@@ -20,7 +20,6 @@ import { bytesView, FileViewContent } from '../web/file-view';
 import type { FileView } from '../web/file-flows';
 import { imageType, VIEWER_MAX_BYTES, viewerKind } from '../web/dialog-flows';
 import { SplitPane } from './SplitPane';
-import { WaitedFor } from './Live';
 import { changeRows, writtenLines, type EditorLine } from './editor-lines';
 import { gitTabLabel } from '@shared/git';
 import { GitView, useGitStatus } from './GitView';
@@ -30,9 +29,11 @@ import { RowList } from './DataTable';
 import type { ListMenuItem } from './RowList';
 import { EmptyState } from './EmptyState';
 import { ListDetail, selectsFirstRow } from './ListDetail';
+import { NavBar, PanelPushedContext } from './NavBar';
 import { Markdown, MessageBody } from './Markdown';
 import { Section } from './Section';
 import { newestFirst } from './subagents';
+import { BottomToolbar } from './BottomToolbar';
 import { Toolbar } from './Toolbar';
 import { CodeBlock, CodeText, DiffRows, ParamTable, ToolImage, ToolInputView, ToolResultView, gutterLines, useHighlight } from './ToolContent';
 import { TabBar } from './ui';
@@ -125,12 +126,12 @@ function useSentFileView(f: SentFile, taskId: string): FileView | null {
       text: shown?.text ?? null,
       data: shown?.data ?? null,
       error: read && 'error' in read ? read.error : '',
-      htmlPage: (html: string, load: boolean) => window.looper.sessions.previewPage(html, load),
+      htmlPage: (html: string, load: boolean) => window.looper.sessions.previewPage(html, load, { taskId, path: f.path }),
       toDevice: nothing,
       toHost: nothing,
       askDownload: nothing,
     };
-  }, [kind, read, f.name]);
+  }, [kind, read, f.name, f.path, taskId]);
 }
 
 /** One sent file on Now: shown as Now shows a file, a Markdown one as a document; a double-click opens it in the Preview window (or its default program, for a kind Preview doesn't show). */
@@ -199,36 +200,75 @@ const headerLabel = (k: string): string => {
 
 const headerValue = (v: unknown): string => (typeof v === 'string' ? v : (JSON.stringify(v) ?? String(v)));
 
+/** The first letter of a name, in capitals: the initial in a sender's avatar. */
+const initialOf = (name: string): string => (/\p{L}|\p{N}/u.exec(name)?.[0] ?? '?').toUpperCase();
+
+/** A hue (0 to 359) taken from a name, so the same sender has the same avatar color in every view, as Gmail's initials do. */
+const avatarHue = (name: string): number => {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return h;
+};
+
+/** What a message without a subject shows where its subject would be, as Gmail does on every device. */
+const NO_SUBJECT = '(no subject)';
+
+/** A message that comes back in the thread: a notice from Looper that the call failed, or the subagent's report. As in Gmail, a reply doesn't repeat the thread's subject: its subject line is only a notice's own. */
+interface MailReply {
+  from: string;
+  to: string;
+  subject: string;
+  body: ReactNode;
+}
+
 /**
- * A message between agents as Gmail shows a message: the subject on top, the sender, "to" the recipient with a
- * toggle for the details (the call's other parameters), then the message formatted.
+ * One message of a thread, as an email client shows it: the sender's round initial, the sender, the time at the
+ * trailing edge, "to" the recipient with a toggle for the details (the call's other parameters), the subject, then
+ * the message. The first message's subject is the thread's, so it is above the sender, as in Gmail on every device.
  */
-function MailView({ mail }: { mail: Mail }) {
-  const [details, setDetails] = useState(false);
+function MailMessage({ from, to, time, ts, subject, first, details, children }: { from: string; to: string; time?: string; ts?: string; subject?: string; first?: boolean; details?: [string, unknown][]; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
   const rows: [string, string][] = [
-    ['From', mail.from],
-    ['To', mail.to],
-    ...mail.rest.map(([k, v]) => [headerLabel(k), headerValue(v)] as [string, string]),
+    ['From', from],
+    ['To', to],
+    ...(details ?? []).map(([k, v]) => [headerLabel(k), headerValue(v)] as [string, string]),
   ];
   return (
-    <div className="now-mail">
-      {mail.subject && <h2 className="now-mail-subject">{mail.subject}</h2>}
-      <div className="now-mail-from">{mail.from}</div>
-      <div className="now-mail-to muted">
-        <span>to {mail.to}</span>
-        {mail.rest.length > 0 && (
-          <button
-            className={`now-mail-toggle${details ? ' open' : ''}`}
-            aria-label={details ? 'Hide details' : 'Show details'}
-            aria-expanded={details}
-            onClick={() => setDetails((d) => !d)}
-          >
-            {CHEVRON}
-          </button>
-        )}
+    <section className={`now-mail-msg${first ? ' first' : ''}`}>
+      <div className="now-mail-head">
+        <span className="now-mail-avatar" style={{ '--hue': avatarHue(from) } as CSSProperties} aria-hidden="true">
+          {initialOf(from)}
+        </span>
+        <div className="now-mail-meta">
+          <div className="now-mail-line">
+            <span className="now-mail-from">{from}</span>
+            {time && (
+              <time className="now-mail-time muted" dateTime={ts}>
+                {time}
+              </time>
+            )}
+          </div>
+          <div className="now-mail-to muted">
+            {to && (
+              <span>
+                to {to}
+              </span>
+            )}
+            {details && details.length > 0 && (
+              <button
+                className={`now-mail-toggle${open ? ' open' : ''}`}
+                aria-label={open ? 'Hide details' : 'Show details'}
+                aria-expanded={open}
+                onClick={() => setOpen((d) => !d)}
+              >
+                {CHEVRON}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
-      {details && (
-        <table className="now-mail-head">
+      {open && (
+        <table className="now-mail-details">
           <tbody>
             {rows.map(([k, v]) => (
               <tr key={k}>
@@ -239,11 +279,57 @@ function MailView({ mail }: { mail: Mail }) {
           </tbody>
         </table>
       )}
-      <div className="now-mail-body">
+      {(subject || first) && <h2 className={`now-mail-subject${subject ? '' : ' empty'}`}>{subject ?? NO_SUBJECT}</h2>}
+      <div className="now-mail-body">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * A message between agents as Gmail shows it (the web message view on the desktop, the Gmail app on phones and tablets): the
+ * message, and under it, in the same thread, what came back: Looper's "Undelivered" notice when the call failed.
+ * The call's own success is not shown; the message being there says it was sent.
+ */
+function MailView({ mail, ts, reply }: { mail: Mail; ts?: string; reply?: MailReply }) {
+  const when = ts ? Date.parse(ts) : NaN;
+  return (
+    <div className="now-mail">
+      <MailMessage from={mail.from} to={mail.to} time={Number.isNaN(when) ? undefined : fmtClock(when, Date.now())} ts={ts} subject={mail.subject} first details={mail.rest}>
         <MessageBody text={mail.text} />
-      </div>
+      </MailMessage>
+      {reply && (
+        <MailMessage from={reply.from} to={reply.to} subject={reply.subject}>
+          {reply.body}
+        </MailMessage>
+      )}
     </div>
   );
+}
+
+/**
+ * What came back for a message: a failed call is an "Undelivered" notice from Looper with the error; an Agent call
+ * that finished is the subagent's report as its reply. A call that went through has nothing (Claude Code's "Message
+ * queued for delivery…" says only that), nor does one that started an agent in the background.
+ */
+function mailReplyOf(row: MessageRow, mail: Mail, ctx: RowCtx): MailReply | undefined {
+  if (row.result === undefined) return undefined;
+  if (row.resultError) {
+    return {
+      from: 'Looper',
+      to: mail.from,
+      subject: `Undelivered: ${mail.subject ?? NO_SUBJECT}`,
+      body: (
+        <>
+          <p className="now-mail-notice">{mail.to ? `Your message to ${mail.to} wasn’t delivered.` : 'Your message wasn’t delivered.'}</p>
+          <ToolResultView row={row} ctx={ctx} />
+        </>
+      ),
+    };
+  }
+  if ((row.tool === 'Agent' || row.tool === 'Task') && !row.background && row.result.trim()) {
+    return { from: mail.to, to: mail.from, subject: '', body: <ToolResultView row={row} ctx={ctx} /> };
+  }
+  return undefined;
 }
 
 /** A Markdown file as a document: formatted, on a page of a readable width. */
@@ -664,6 +750,7 @@ function NowScreen({
   source,
   nameOf,
   script,
+  inner,
 }: {
   row: MessageRow;
   taskId: string;
@@ -675,6 +762,8 @@ function NowScreen({
   nameOf: (id: string | null) => string;
   /** A REPL call's script calls, under its code. */
   script?: ScriptView;
+  /** A script's call under its REPL call's screen: it keeps its title row, since the bar is the outer call's. */
+  inner?: boolean;
 }) {
   const ctx = { taskId, runId, agentId };
   const running = row.result === undefined;
@@ -697,16 +786,8 @@ function NowScreen({
     screen = false;
     body = (
       <>
-        <MailView mail={mail} />
-        {running ? (
-          runningNote(row)
-        ) : (
-          row.result?.trim() && (
-            <div className="now-result">
-              <ToolResultView row={row} ctx={ctx} />
-            </div>
-          )
-        )}
+        <MailView mail={mail} ts={row.ts} reply={mailReplyOf(row, mail, ctx)} />
+        {running && runningNote(row)}
       </>
     );
   } else if (row.tool === 'SendUserFile' && !row.resultError && sentFilesOf(row).length) {
@@ -781,12 +862,17 @@ function NowScreen({
   }
   return (
     <div className="now-screen">
-      <div className="now-title">
-        <span className={`now-tool${subject ? '' : ' now-tool-only'}`}>{title}</span>
-        {subject && <span className="mono now-subject">{subject}</span>}
-        {row.resultError && <span className="error-text">Failed</span>}
-      </div>
-      <div className={`now-body${screen ? ' now-body-screen' : ''}`}>{body}</div>
+      {isPhone && !inner ? (
+        // A phone's Activity is a sheet or a column with a bar of its own: the call's name and subject go there.
+        <NavBar title={title} subtitle={[row.resultError ? 'Failed' : '', subject].filter(Boolean).join(' · ') || undefined} order={30} />
+      ) : (
+        <div className="now-title">
+          <span className={`now-tool${subject ? '' : ' now-tool-only'}`}>{title}</span>
+          {subject && <span className="mono now-subject">{subject}</span>}
+          {row.resultError && <span className="error-text">Failed</span>}
+        </div>
+      )}
+      <div className={`now-body${screen ? ' now-body-screen' : ''}${mail && !custom && doc === null ? ' now-body-mail' : ''}`}>{body}</div>
     </div>
   );
 }
@@ -803,11 +889,9 @@ function FileThumb({ path, taskId }: { path: string; taskId: string }) {
   return thumb ? <img className="file-thumb" src={thumb} alt="" /> : null;
 }
 
-/** A background command's or workflow's state: "Running for 3 min" counts whole minutes, from a minute on. */
+/** A background command's or workflow's state (useBackgroundStatus), ticking in a component of its own. */
 function BackgroundStatus({ b }: { b: BackgroundTask }) {
-  const started = b.startedAt ? Date.parse(b.startedAt) : NaN;
-  const status = WORKFLOW_STATUS_TEXT[b.status];
-  return b.status !== 'running' || Number.isNaN(started) ? <>{status}</> : <WaitedFor since={started} label={status} />;
+  return <>{useBackgroundStatus(b)}</>;
 }
 
 const effortText = (a: SubagentInfo) => (a.effort ? effortLabel('claude-code', a.effort) : undefined);
@@ -844,7 +928,7 @@ function ScriptCallScreen({ repl, index, script, ...screen }: { repl: MessageRow
   if (!current || call === null || call === 'gone') {
     return <div className="now-body muted">{!current || call === null ? 'Loading the call…' : 'The call can’t be shown.'}</div>;
   }
-  return <NowScreen {...screen} row={call} />;
+  return <NowScreen {...screen} row={call} inner />;
 }
 
 /**
@@ -979,6 +1063,8 @@ export function ActivityPanel({
   // A phone's Background or Subagents row pushed what the desktop shows under the list; `pushed`: it covers the list.
   const [detailOpen, setDetailOpen] = useState(false);
   const [pushed, setPushed] = useState(false);
+  // A phone's sheet or column whose bar has a pushed screen's Back (a Git diff, an addon's item): the tabs give way too.
+  const panelPushed = useContext(PanelPushedContext);
   const setTab = (t: Tab) => {
     pickTab(t);
     setDetailOpen(false);
@@ -1176,7 +1262,7 @@ export function ActivityPanel({
 
   return (
     <aside className="activity-panel">
-      {!(pushed && detailOpen) && (
+      {!(pushed && detailOpen) && !panelPushed && (
         <TabBar
           tabs={(
             [
@@ -1197,32 +1283,28 @@ export function ActivityPanel({
       <div className="activity-body">
         {tab === 'now' &&
           (row ? (
-            <>
-              <Toolbar
-                inline
-                className="pane-toolbar"
-                groups={[
-                  {
-                    id: 'calls',
-                    items: [
-                      { id: 'previous', label: 'Previous Tool Call', icon: 'previous', enabled: i > 0, run: () => step(i - 1) },
-                      { id: 'next', label: 'Next Tool Call', icon: 'next', enabled: i < tools.length - 1, run: () => step(i + 1) },
-                      { id: 'latest', label: 'Follow the Latest Tool Call', icon: 'latest', pressed: pos === null, run: () => step(tools.length - 1) },
-                    ],
-                  },
-                  {
-                    id: 'view',
-                    items: [
-                      { id: 'list', label: 'Tool Call List', icon: 'list', pressed: listView, run: () => setListView((v) => !v) },
-                      ...(!listView && markdownDoc(row) !== null ? [{ id: 'source', label: 'Markdown Source', icon: 'source', pressed: mdSource, run: () => setMdSource((v) => !v) }] : []),
-                    ],
-                  },
-                ]}
-              >
-                <span className="muted now-place">
-                  {i + 1} of {tools.length}
-                </span>
-              </Toolbar>
+            <BottomToolbar
+              label="Tool Calls"
+              groups={[
+                {
+                  id: 'calls',
+                  items: [
+                    { id: 'previous', label: 'Previous Tool Call', icon: 'previous', enabled: i > 0, run: () => step(i - 1) },
+                    { id: 'next', label: 'Next Tool Call', icon: 'next', enabled: i < tools.length - 1, run: () => step(i + 1) },
+                    { id: 'latest', label: 'Follow the Latest Tool Call', icon: 'latest', pressed: pos === null, run: () => step(tools.length - 1) },
+                  ],
+                },
+                {
+                  id: 'view',
+                  items: [
+                    { id: 'list', label: 'Tool Call List', icon: 'list', pressed: listView, run: () => setListView((v) => !v) },
+                    ...(!listView && markdownDoc(row) !== null ? [{ id: 'source', label: 'Markdown Source', icon: 'source', pressed: mdSource, run: () => setMdSource((v) => !v) }] : []),
+                  ],
+                },
+              ]}
+              places={{ leading: [['previous', 'next']], trailing: [['list', 'source'], ['latest']] }}
+              status={`${i + 1} of ${tools.length}`}
+            >
               {listView ? (
                 <CallList
                   tools={tools}
@@ -1262,7 +1344,7 @@ export function ActivityPanel({
                   script={{ ...script, shown: shownCall?.index, onShown: (index) => setInner(index === undefined ? null : { repl: row.toolUseId!, index }) }}
                 />
               )}
-            </>
+            </BottomToolbar>
           ) : (
             <EmptyState>The agent hasn't used a tool yet.</EmptyState>
           ))}
@@ -1278,7 +1360,6 @@ export function ActivityPanel({
               open={detailOpen && !!shownBackground}
               onClose={() => setDetailOpen(false)}
               detailTitle={shownBackground?.label}
-              backLabel="Background"
               onPushed={setPushed}
               list={
                 <div className="background-tab activity-list">
@@ -1286,7 +1367,7 @@ export function ActivityPanel({
                   {backgroundList('Finished', finished)}
                 </div>
               }
-              detail={shownBackground && <BackgroundConsole key={shownBackground.id} b={shownBackground} sessionId={sessionId} status={<BackgroundStatus b={shownBackground} />} />}
+              detail={shownBackground && <BackgroundConsole key={shownBackground.id} b={shownBackground} sessionId={sessionId} />}
             />
           ))}
         {tab === 'subagents' &&
@@ -1301,7 +1382,6 @@ export function ActivityPanel({
               open={detailOpen && !!shownAgent}
               onClose={() => setDetailOpen(false)}
               detailTitle={shownSubagent ? shownSubagent.description || shownSubagent.type : shownFlowAgent?.label}
-              backLabel="Subagents"
               onPushed={setPushed}
               list={
                 <div className="subagent-list activity-list">

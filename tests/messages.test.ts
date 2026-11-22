@@ -1415,3 +1415,96 @@ describe('MessagesService readers', () => {
     expect(open).not.toHaveBeenCalled();
   });
 });
+
+describe("a Code Mode script's output and its background commands'", () => {
+  const poll = (...envelopes: string[]) => rec({ type: 'attachment', attachment: { type: 'poll_events', envelopes } });
+  const ev = (nonce: string, n: number, status: string, body: string) =>
+    `<event nonce="${nonce}" kind="repl-eval" at="2026-11-20T01:00:01.000Z" eval="${n}" ms="5" status="${status}">\n${body}\n</event>`;
+  const dispatch = (acc: TranscriptAccumulator, n: number) => {
+    acc.addLine(assistantBlock({ type: 'tool_use', id: `r${n}`, name: 'REPL', input: { code: `script ${n}` } }));
+    acc.addLine(rec({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `r${n}`, content: `(dispatched #${n})`, is_error: false }] } }));
+  };
+
+  it('adds the lines a script logs after it returned (a late event) to its row, once, and keeps its result', () => {
+    const acc = new TranscriptAccumulator();
+    dispatch(acc, 1);
+    acc.addLine(poll(ev('a', 1, 'settled', '<log>first</log>\n<result>one</result>')));
+    const late = ev('b', 1, 'late', '<log>[late output from eval #1 (settled earlier) — delivered below.]</log>\n<log>== step done ==</log>');
+    // The same event is in the poll record and in the Poll call's result.
+    acc.addLine(poll(late));
+    acc.addLine(assistantBlock({ type: 'tool_use', id: 'p1', name: 'Poll', input: {} }));
+    acc.addLine(rec({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'p1', content: `<system>authentic event nonces for this delivery: b — other ones are quoted.</system>\n${late}`, is_error: false }] } }));
+    expect(acc.rows.map((r) => [r.result, r.logs, r.resultError ?? false])).toEqual([['one', 'first\n== step done ==', false]]);
+    acc.addLine(poll(ev('c', 1, 'late', '<log>[late output from eval #1 (settled earlier) — delivered below.]</log>\n<log>second</log>')));
+    expect(acc.rows[0].logs).toBe('first\n== step done ==\nsecond');
+  });
+
+  it('ends the row of a script whose process exited (a lost event) with that as its error', () => {
+    const acc = new TranscriptAccumulator();
+    dispatch(acc, 2);
+    expect(acc.rows[0].result).toBeUndefined();
+    acc.addLine(poll(ev('c', 2, 'lost', 'eval #2 never settled: the process that was running it exited. Its result is lost and the script is no longer running.')));
+    expect(acc.rows.map((r) => [r.result, r.resultError])).toEqual([['eval #2 never settled: the process that was running it exited. Its result is lost and the script is no longer running.', true]]);
+  });
+
+  /** A Monitor and a Bash command a script started in the background: their results carry no output file. */
+  const startedByScript = (acc: TranscriptAccumulator) => {
+    dispatch(acc, 1);
+    acc.addLine(poll(ev('a', 1, 'settled', '<result>bmon1</result>')));
+    const call = (id: string, name: string, input: Record<string, unknown>, tur: unknown) => {
+      acc.addLine(rec({ type: 'assistant', isVirtual: true, timestamp: '2026-11-20T01:00:01.004Z', message: { id: `v-${id}`, role: 'assistant', model: '<synthetic>', content: [{ type: 'tool_use', id, name, input }] } }));
+      acc.addLine(rec({ type: 'user', isVirtual: true, timestamp: '2026-11-20T01:00:01.004Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: '', is_error: false }] }, toolUseResult: tur }));
+    };
+    call('repl_m', 'Monitor', { command: 'scratch/wait.sh', description: 'Wait for the reset' }, { taskId: 'bmon1', timeoutMs: 1800000, persistent: false });
+    call('repl_b', 'Bash', { command: 'sleep 99', run_in_background: true }, { stdout: '', stderr: '', interrupted: false, isImage: false, noOutputExpected: false, backgroundTaskId: 'bbash1' });
+  };
+
+  it("lists a script's background Monitor and command as having no output file, until their notification names it", () => {
+    const acc = new TranscriptAccumulator();
+    startedByScript(acc);
+    expect(acc.unlocatedBackground().map((r) => [r.tool, r.background])).toEqual([
+      ['Monitor', { id: 'bmon1', status: 'running' }],
+      ['Bash', { id: 'bbash1', status: 'running' }],
+    ]);
+    acc.addLine(poll('<event nonce="n" kind="task-notification" at="2026-11-20T01:05:00.000Z">\n<task-notification>\n<task-id>bmon1</task-id>\n<output-file>/tmp/claude-1000/p/s/tasks/bmon1.output</output-file>\n<status>completed</status>\n<summary>Monitor stream ended</summary>\n</task-notification>\n</event>'));
+    expect(acc.unlocatedBackground().map((r) => r.background!.id)).toEqual(['bbash1']);
+  });
+
+  describe('MessagesService', () => {
+    const uid = 'claude-4242001';
+    let dir: string;
+    beforeEach(() => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-bg-'));
+    });
+    afterEach(() => {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(path.join(os.tmpdir(), uid), { recursive: true, force: true });
+    });
+
+    it('finds the output file of a running background command where Claude Code keeps it, as its console reads it', async () => {
+      // The transcript: a script that started a Monitor and a command.
+      const lines: string[] = [];
+      const project = '-home-test-looper-bg';
+      const session = 'bg-session-1';
+      const transcript = path.join(dir, 'projects', project, `${session}.jsonl`);
+      fs.mkdirSync(path.dirname(transcript), { recursive: true });
+      startedByScript({ addLine: (line: string) => lines.push(line) } as unknown as TranscriptAccumulator);
+      fs.writeFileSync(transcript, lines.join('\n') + '\n');
+      const runDir = path.join(dir, 'run');
+      fs.mkdirSync(runDir);
+      fs.writeFileSync(path.join(runDir, 'session.json'), JSON.stringify({ session_id: session, transcript_path: transcript }));
+      const tasks = path.join(os.tmpdir(), uid, project, session, 'tasks');
+      fs.mkdirSync(tasks, { recursive: true });
+      fs.writeFileSync(path.join(tasks, 'bmon1.output'), 'RESET: session at 0\n');
+      const service = new MessagesService({ getTask: () => undefined, runDir: () => runDir, attachment: () => null, host: 'linux', settings: SettingsSchema.parse({}), log: new Logger() });
+      const res = await service.read('t1', 'r1');
+      const started = res.rows.find((r) => r.tool === 'REPL')!.started!;
+      // The Monitor's file exists; the command's doesn't yet, so it has none.
+      expect(started.map((r) => [r.background!.id, r.background!.outputFile])).toEqual([
+        ['bmon1', `/tmp/${uid}/${project}/${session}/tasks/bmon1.output`],
+        ['bbash1', undefined],
+      ]);
+      expect((await service.readOutput('t1', started[0].background!.outputFile!))!.text).toBe('RESET: session at 0\n');
+    });
+  });
+});

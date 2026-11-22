@@ -58,6 +58,7 @@
     "src/renderer/src/components/term-theme.ts",
     "src/renderer/src/components/workflow-summary.ts",
     "src/renderer/src/components/phone/sheet-detents.ts",
+    "src/renderer/src/components/access-key-assign.ts",
     "src/renderer/src/components/editor-lines.ts",
     "src/renderer/src/components/highlight.ts",
     "src/renderer/src/components/code-languages.ts",

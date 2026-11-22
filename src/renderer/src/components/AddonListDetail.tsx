@@ -69,7 +69,6 @@ export function AddonListDetail({
       stacked={!!node.stack}
       onClose={() => onPick(null)}
       detailTitle={current?.title}
-      backLabel={node.label}
       onPushed={onPushed}
       empty={node.detailEmpty ?? ''}
       list={

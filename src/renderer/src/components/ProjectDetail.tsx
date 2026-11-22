@@ -181,7 +181,6 @@ function ProjectChats({ projectId, openKey }: { projectId: string; openKey: stri
       open={!!item}
       onClose={() => setSelected(null)}
       detailTitle={item?.title}
-      backLabel="Chats"
       empty="Select a conversation"
       list={
         <TreeListSection>

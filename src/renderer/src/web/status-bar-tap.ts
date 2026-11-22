@@ -8,7 +8,11 @@
  * scrolls it back to 0; a scroll there with no finger on the screen is the tap, and the shell scrolls the screen's
  * main scroller. A smooth scrollTo on an overflow scroller is UIKit's own animation
  * (ScrollingTreeScrollingNodeDelegateIOS::startAnimatedScrollToPosition: `setContentOffset:animated:YES`).
+ *
+ * A list that draws its items in parts (a conversation's older messages) is taken to its real top by scrollToTop
+ * (components/scroll-top.ts), not stopped partway where the older items it loaded put the reader back.
  */
+import { scrollToTop } from '../components/scroll-top';
 
 /** How far down the top document waits for the status bar to scroll it back. */
 const PARKED = 1;
@@ -49,10 +53,13 @@ export function installStatusBarTap(doc: Document, target: () => Document | null
     for (const type of ['touchstart', 'touchend', 'touchcancel'] as const) d.addEventListener(type, touched, { capture: true, passive: true });
   };
   watch(doc);
-  const watchFrames = () => doc.querySelectorAll('iframe').forEach((f) => watch(f.contentDocument));
+  // A sandboxed frame (a page Preview shows) has an origin of its own: reading its document only gets null and an error in the console.
+  const docOf = (f: HTMLIFrameElement) => (f.hasAttribute('sandbox') ? null : f.contentDocument);
+  const watchFrames = () => doc.querySelectorAll('iframe').forEach((f) => watch(docOf(f)));
   watchFrames();
-  const onLoad = (e: Event) => e.target instanceof HTMLIFrameElement && watch(e.target.contentDocument);
+  const onLoad = (e: Event) => e.target instanceof HTMLIFrameElement && watch(docOf(e.target));
   doc.addEventListener('load', onLoad, true);
+  let scrolling = false;
   let parkTimer: ReturnType<typeof setTimeout> | undefined;
   const park = () => {
     if (win.scrollY !== PARKED) win.scrollTo(0, PARKED);
@@ -67,7 +74,12 @@ export function installStatusBarTap(doc: Document, target: () => Document | null
     if (fingers > 0 || performance.now() - touchedAt < AFTER_TOUCH_MS) return parkSoon(AFTER_TOUCH_MS);
     const d = target();
     const el = d ? mainScroller(d) : null;
-    el?.scrollTo({ top: 0, behavior: 'smooth' });
+    if (el && !scrolling) {
+      // A finger on the screen after the tap takes over from it.
+      const tappedAt = performance.now();
+      scrolling = true;
+      void scrollToTop(el, () => touchedAt > tappedAt).finally(() => (scrolling = false));
+    }
     // After UIKit's own scroll of the 1 px has ended.
     parkSoon(400);
   };

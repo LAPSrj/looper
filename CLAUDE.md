@@ -215,6 +215,14 @@ little memory as Electron allows. Every rule below comes from a measured cost.
   adding or changing an icon.
 - **iOS screens follow `src/renderer/src/web/ios.md`** (iOS 27, measured from
   Apple's UI kit). Read it before changing anything an iPhone or iPad shows.
+- **Components follow `src/renderer/src/components/components.md`.** It names the
+  shared component that draws each role, the spec it follows on each platform and
+  the test that guards it. Read it before drawing markup, and register a new
+  custom component there with its reason: `tests/ui-roles.test.ts` fails on a
+  class name it doesn't list.
+- **A change to a phone screen runs `npm run ui-check`.** It opens the built
+  app's phone screens on every phone and tablet and measures them against
+  `ios.md` and Material 3 (`scripts/ui-check/`).
 - **Section headers only when they group 3+ related fields.** Don't add
   headers for one or two fields. Don't add tab descriptions (text between the
   tab bar and the first field).

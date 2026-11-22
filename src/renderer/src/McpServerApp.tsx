@@ -120,7 +120,7 @@ export function McpServerApp({ requestKey }: { requestKey: string }) {
           </FormGroup>
         </div>
       </div>
-      <WindowActions confirm={{ label: request.isNew ? 'Create' : 'Save', run: confirm }} />
+      <WindowActions draft={[draft, argsText, envText, headersText]} confirm={{ label: request.isNew ? 'Create' : 'Save', run: confirm }} />
     </div>
   );
 }

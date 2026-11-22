@@ -44,7 +44,7 @@ export function ContinueRunApp({ taskId, runId, mode }: { taskId: string; runId:
           </FormGroup>
         </div>
       </div>
-      <WindowActions confirm={{ label: mode === 'send' ? 'Send' : 'Continue', run: start, disabled: !text.trim() }} busy={saver.busy} />
+      <WindowActions draft={text} confirm={{ label: mode === 'send' ? 'Send' : 'Continue', run: start, disabled: !text.trim() }} busy={saver.busy} />
     </div>
   );
 }

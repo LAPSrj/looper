@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { platform } from '../../platform';
 import { AxisDrag } from '../../web/gestures';
@@ -90,6 +90,8 @@ export function Row({
   const button = useRef<HTMLSpanElement>(null);
   const open = disabled || !onOpen ? undefined : (row: HTMLElement) => onOpen((popUp && button.current) || row);
   const valueEl = value !== undefined && <span className="pg-row-value">{value}</span>;
+  // A command row's label has no trailing "…" (ios.md: Lists; the commands' own rule, plainLabel).
+  const shown = (tone === 'action' || tone === 'destructive') && typeof title === 'string' ? title.replace(/…$/, '') : title;
   return (
     <div
       className={`pg-row${open ? ' tappable' : ''}${tone ? ` tone-${tone}` : ''}${valueTone ? ` value-${valueTone}` : ''}${selected ? ' selected' : ''}${disabled ? ' disabled' : ''}`}
@@ -119,7 +121,7 @@ export function Row({
     >
       {lead && <span className="pg-row-lead">{lead}</span>}
       <span className="pg-row-text">
-        <span className="pg-row-title">{title}</span>
+        <span className="pg-row-title">{shown}</span>
         {sub && <span className="pg-row-sub">{sub}</span>}
       </span>
       {popUp ? (
@@ -381,6 +383,47 @@ export function LargeTitle({ children }: { children: ReactNode }) {
   ) : null;
 }
 
+/** How a segmented control's segments share its width: equally, by their labels' widths, or not at all (they don't fit). */
+type SegmentFit = 'equal' | 'content' | 'over';
+
+/**
+ * Equal segments while every label fits one; else each as wide as its label and an equal share of the rest, as
+ * UIKit's apportionsSegmentWidthsByContent does (`byContent`); 'over' when even that doesn't fit. Material's fixed
+ * tabs are only ever as wide as the widest (m3.material.io/components/tabs/guidelines), so there it's equal or 'over'. Widths are each segment's
+ * own (min-content off), with its label as wide as the selected one's semibold (.pg-segment-label::after).
+ */
+function useSegmentFit(ref: React.RefObject<HTMLDivElement | null>, key: string, byContent: boolean, onFit?: (fits: boolean) => void): SegmentFit {
+  const [fit, setFit] = useState<SegmentFit>('equal');
+  const last = useRef<SegmentFit>('equal');
+  const report = useRef(onFit);
+  report.current = onFit;
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const buttons = [...el.children] as HTMLElement[];
+      if (!buttons.length) return;
+      el.classList.add('pg-seg-measure');
+      const cs = getComputedStyle(el);
+      const inner = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const gaps = (parseFloat(cs.columnGap) || 0) * (buttons.length - 1);
+      const need = buttons.map((b) => b.getBoundingClientRect().width);
+      el.classList.remove('pg-seg-measure');
+      const next: SegmentFit =
+        Math.max(...need) <= (inner - gaps) / buttons.length + 0.5 ? 'equal' : byContent && need.reduce((a, b) => a + b, 0) + gaps <= inner + 0.5 ? 'content' : 'over';
+      if (next === last.current) return;
+      last.current = next;
+      setFit(next);
+      report.current?.(next !== 'over');
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, key, byContent]);
+  return fit;
+}
+
 /** iOS's segmented control, Material's tabs: a few views of one screen. */
 export function Segmented<T extends string>({
   items,
@@ -390,6 +433,8 @@ export function Segmented<T extends string>({
   className = 'pg-segmented',
   activeClass = 'active',
   ctrlTab,
+  onFit,
+  probe,
 }: {
   items: readonly (readonly [T, string])[];
   value: T;
@@ -399,14 +444,23 @@ export function Segmented<T extends string>({
   activeClass?: string;
   /** Ctrl+Tab and Ctrl+Shift+Tab cycle the segments while the window has focus, as Tabs' `ctrlTab`. */
   ctrlTab?: boolean;
+  /** Whether the labels fit, by equal widths or by content: false lets the caller show a scrolling strip instead. */
+  onFit?: (fits: boolean) => void;
+  /** Drawn at no height only to keep measuring (onFit) while the caller shows the strip. */
+  probe?: boolean;
 }) {
   const ids = items.map(([id]) => id);
-  useCtrlTab(ids, value, onChange as (id: string) => void, ctrlTab);
+  useCtrlTab(ids, value, onChange as (id: string) => void, ctrlTab && !probe);
+  const ref = useRef<HTMLDivElement>(null);
+  const fit = useSegmentFit(ref, items.map(([, text]) => text).join('\n'), platform !== 'android', onFit);
   return (
     <div
-      className={className}
-      role="tablist"
-      aria-label={label}
+      ref={ref}
+      className={`${className}${fit === 'equal' ? '' : ' by-content'}${probe ? ' probe' : ''}`}
+      role={probe ? undefined : 'tablist'}
+      aria-label={probe ? undefined : label}
+      aria-hidden={probe || undefined}
+      inert={probe || undefined}
       // The ARIA tabs pattern as in Tabs.tsx: one Tab stop, the arrow keys, Home and End move to a segment and select it.
       onKeyDown={(e) => {
         const to = tabKeyTarget(ids, value, e);
@@ -426,7 +480,9 @@ export function Segmented<T extends string>({
           className={value === id ? activeClass : undefined}
           onClick={() => onChange(id)}
         >
-          <span className="pg-segment-label">{text}</span>
+          <span className="pg-segment-label" data-label={text}>
+            {text}
+          </span>
         </button>
       ))}
     </div>

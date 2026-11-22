@@ -3,9 +3,11 @@
 
 .ios-bar-row {
   display: grid;
-  grid-template-columns: minmax(max-content, 1fr) minmax(0, max-content) minmax(max-content, 1fr);
+  /* Both sides at least as wide as the wider one (--ios-bar-side, set by IosBarRow), so the title is centered. */
+  grid-template-columns: minmax(var(--ios-bar-side, max-content), 1fr) minmax(0, max-content) minmax(var(--ios-bar-side, max-content), 1fr);
   align-items: center;
-  gap: 8px;
+  /* No gap: with both sides as wide as the wider one, the title has only what's left between them, so its own padding is its clearance. */
+  gap: 0;
   min-height: 54px;
   /* The kit's top bar: its buttons at its top, 10 under them, 16 from the sides, 10 between them. */
   padding: 0 16px 10px;
@@ -26,7 +28,7 @@
 .ios-bar-title {
   min-width: 0;
   margin: 0;
-  padding: 0 4px;
+  padding: 0 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -101,7 +101,7 @@ export function PreviewApp({
       text: null,
       data: null,
       error: '',
-      htmlPage: (html, load) => window.looper.sessions.previewPage(html, load),
+      htmlPage: (html, load) => window.looper.sessions.previewPage(html, load, path !== null ? { taskId, path } : undefined),
       toDevice: nothing,
       toHost: nothing,
       askDownload: nothing,

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Harness, HarnessModel, Settings } from '@shared/types';
 import { DEFAULT_MODELS, EFFORT_LEVELS, harnessModels, sameModels } from '@shared/environments';
-import { EmptyWindow, Field, FormGroup, SelectInput, TextInput, ToggleButtons } from './components/ui';
+import { EmptyWindow, Field, FormGroup, SelectInput, TextInput, CheckboxChoices } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { useLiveSettings, useSave } from './components/hooks';
 
@@ -115,7 +115,7 @@ export function ModelEditorApp({ envId, harnessId, index, copyOf }: { envId: str
           {kindLevels.length > 0 && (
             <FormGroup>
               <Field label="Effort levels">
-                <ToggleButtons options={kindLevels} value={efforts} onChange={setLevels} label="Effort levels" />
+                <CheckboxChoices options={kindLevels} value={efforts} onChange={setLevels} label="Effort levels" />
               </Field>
               <Field label="Default effort">
                 <SelectInput value={defaultEffort} onChange={(e) => setDefaultEffort(e.target.value)}>
@@ -133,7 +133,7 @@ export function ModelEditorApp({ envId, harnessId, index, copyOf }: { envId: str
           )}
         </div>
       </div>
-      <WindowActions confirm={{ label: isNew ? 'Create' : 'Save', run: () => saver.save(doSave) }} busy={saver.busy} />
+      <WindowActions draft={loaded ? [id, name, efforts, defaultEffort] : null} confirm={{ label: isNew ? 'Create' : 'Save', run: () => saver.save(doSave) }} busy={saver.busy} />
     </div>
   );
 }

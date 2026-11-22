@@ -184,6 +184,8 @@ export class Session {
   private nextId = 1;
   private nextLocal = 1;
   private localDialog: string | null = null;
+  /** What a question the shell asked itself (ask) is waiting for, by its dialog id. */
+  private readonly localAnswers = new Map<string, (response: number) => void>();
   /** The window the user is working in, which a local alert belongs to. */
   private lastW = '';
   private readonly openWindows = new Set<string>();
@@ -293,6 +295,20 @@ export class Session {
     return Promise.reject(new Error(NOT_CONNECTED));
   }
 
+  /**
+   * A question the shell asks itself, which needs no connection (Discard your changes?): the button chosen. One local
+   * message box at a time; while another shows, the answer is the question's cancel button.
+   */
+  ask(w: string, spec: MessageBoxSpec): Promise<number> {
+    if (this.localDialog) return Promise.resolve(spec.cancelId);
+    const dialogId = `local-${this.nextLocal++}`;
+    this.localDialog = dialogId;
+    return new Promise((resolve) => {
+      this.localAnswers.set(dialogId, resolve);
+      this.emit({ t: 'dialog', dialogId, w, kind: 'message', spec });
+    });
+  }
+
   /** A message box drawn by the shell itself, which needs no connection. One at a time. */
   private alert(w: string, spec: MessageBoxSpec = NOT_CONNECTED_ALERT): void {
     if (this.localDialog) return;
@@ -348,6 +364,9 @@ export class Session {
   dialogResult(dialogId: string, result: DialogResult): void {
     if (dialogId.startsWith('local-')) {
       if (dialogId === this.localDialog) this.localDialog = null;
+      const answer = this.localAnswers.get(dialogId);
+      this.localAnswers.delete(dialogId);
+      answer?.(result.kind === 'message' ? result.response : -1);
       return;
     }
     this.post({ t: 'dialog-result', dialogId, result });

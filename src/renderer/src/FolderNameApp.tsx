@@ -97,7 +97,7 @@ function NewFolder({ scope, parentId, moveProject }: { scope: Scope; parentId?: 
           </FormGroup>
         </div>
       </div>
-      <WindowActions confirm={{ label: 'Create', run: save, disabled: !name.trim() }} busy={saver.busy} />
+      <WindowActions draft={[name, chosen]} confirm={{ label: 'Create', run: save, disabled: !name.trim() }} busy={saver.busy} />
     </div>
   );
 }

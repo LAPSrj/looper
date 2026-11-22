@@ -1,6 +1,7 @@
 import { useContext, useState, type ReactNode } from 'react';
 import { isPhone } from '../web/page-nav';
-import { InPanel, InspectorHost } from './ListDetail';
+import { InspectorHost } from './ListDetail';
+import { NavBar, PanelNavContext, PanelPushedContext, usePanelNav } from './NavBar';
 import { PhoneSheet } from './phone/PhoneSheet';
 import { Splitter } from './SplitPane';
 
@@ -51,17 +52,25 @@ export function Inspector({ title, open, onClose, children }: InspectorProps) {
       </>
     );
   }
+  return split?.inspector ? (
+    <InspectorColumn title={title}>{children}</InspectorColumn>
+  ) : (
+    <PhoneSheet title={title} onClose={onClose ?? (() => undefined)}>
+      {children}
+    </PhoneSheet>
+  );
+}
+
+/** The iPad's inspector column: the frame draws its bar over it, with what the column's NavBars report (a pushed detail's Back and title). */
+function InspectorColumn({ title, children }: { title: string; children: ReactNode }) {
+  const inner = usePanelNav();
+  const nav = inner.nav;
   return (
-    <InPanel.Provider value={true}>
-      {split?.inspector ? (
-        <aside className="pg-split-inspector" aria-label={title}>
-          {children}
-        </aside>
-      ) : (
-        <PhoneSheet title={title} onClose={onClose ?? (() => undefined)}>
-          {children}
-        </PhoneSheet>
-      )}
-    </InPanel.Provider>
+    <aside className="pg-split-inspector" aria-label={title}>
+      <NavBar inspectorBar={nav && (nav.title !== undefined || nav.subtitle !== undefined || nav.back) ? { title: nav.title, subtitle: nav.subtitle, back: nav.back } : undefined} />
+      <PanelNavContext.Provider value={inner.target}>
+        <PanelPushedContext.Provider value={!!nav?.back}>{children}</PanelPushedContext.Provider>
+      </PanelNavContext.Provider>
+    </aside>
   );
 }

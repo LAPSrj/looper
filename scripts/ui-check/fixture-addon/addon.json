@@ -1,0 +1,21 @@
+{
+  "$type": "looper/addon",
+  "$version": 2,
+  "id": "ui-check-passwords",
+  "name": "Passwords",
+  "version": "1.0.0",
+  "description": "A made-up grouped pane for npm run ui-check: a few hundred items in several groups",
+  "run": {
+    "on": "looper",
+    "command": [
+      "${addonDir}/addon.mjs"
+    ]
+  },
+  "panes": [
+    {
+      "id": "passwords",
+      "title": "Passwords"
+    }
+  ],
+  "panesIcon": "terminal"
+}

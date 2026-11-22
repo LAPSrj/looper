@@ -230,7 +230,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       openFile: (taskId, runId, path, image, images) => t.invoke('sessions:openFile', taskId, runId, path, image, images).catch(plainError),
       saveFile: (taskId, path) => t.invoke('sessions:saveFile', taskId, path).catch(plainError),
       openFileDefault: (taskId, path) => t.invoke('sessions:openFileDefault', taskId, path).catch(plainError),
-      previewPage: (html, load) => t.invoke('sessions:previewPage', html, load),
+      previewPage: (html, load, file) => t.invoke('sessions:previewPage', html, load, file),
     },
     attachment: {
       open: (path) => t.invoke('attachment:open', path),

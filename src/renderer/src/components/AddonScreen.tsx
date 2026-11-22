@@ -698,6 +698,7 @@ export function AddonScreenView({
       </div>
       {wizard ? (
         <WindowActions
+          draft={screen ? values : null}
           wizard={{
             back: { disabled: !wizard.back, run: click({ id: wizard.back ?? '' }) },
             next: wizard.commit
@@ -709,6 +710,7 @@ export function AddonScreenView({
         />
       ) : footer?.type === 'footer' && 'primary' in footer ? (
         <WindowActions
+          draft={screen ? values : null}
           confirm={{ label: footer.primary.label, disabled: missing || footer.primary.disabled, run: click(footer.primary) }}
           apply={footer.apply && { label: footer.apply.label, disabled: footer.apply.disabled, run: click(footer.apply) }}
           busy={busy}

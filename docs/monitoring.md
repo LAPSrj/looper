@@ -1279,9 +1279,12 @@ browser shows the same kinds in its own viewer (see [Remote
 Access](remote-access.md#files)).
 
 An HTML page runs its scripts, apart from Looper: it can't reach Looper's
-windows, files or data. **Settings → Advanced → Internet access for web pages
-in Preview** says whether it may load content from the internet: **Allow** (the
-default), **Ask** or **Deny**, which loads only what the file holds. With Ask, a
+windows, files or data. It loads the images, styles, scripts, fonts and media
+in its own folder and the folders inside it by their relative addresses
+(`img/a.png`), and nothing outside that folder. **Settings → Advanced →
+Internet access for web pages in Preview** says whether it may load content
+from the internet: **Allow** (the default), **Ask** or **Deny**, which loads
+only what the file and its folder hold. With Ask, a
 bar above the page says "This page loads content from the internet" when it
 tries to, with **Load** and **Don't Load**.
 

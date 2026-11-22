@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { platform } from '../../platform';
+import { columnCopy, swapColumns } from '../../web/motion';
 import { splitLayout, type ScreenSize, type SplitLayout } from '../../web/nav-stack';
 
 const sameSplit = (a: SplitLayout | null, b: SplitLayout | null) => a?.lead === b?.lead && a?.inspector === b?.inspector;
@@ -68,11 +69,15 @@ export function useContainerSplit(ref: RefObject<HTMLElement | null>, enabled: b
   return split;
 }
 
+/** The column a push leaves (the list), over the one it shows until the motion ends. */
+const LEAVING: CSSProperties = { position: 'absolute', inset: 0 };
+
 /**
  * The list in a leading column, what a row opens in the detail column, and
  * optionally an inspector at the trailing edge. With `split` null there's one
  * column: `shows` says which, and the other stays mounted out of sight, so the
- * list keeps its place and rotating doesn't start it over.
+ * list keeps its place and rotating doesn't start it over. Going from one to the
+ * other pushes or pops as the phone's screens do (motion.ts swapColumns).
  */
 export function SplitView({
   split,
@@ -90,13 +95,55 @@ export function SplitView({
   detail: ReactNode;
   inspector?: ReactNode;
 }) {
-  const hidden = (column: 'lead' | 'detail') => (!split && !stacked && shows !== column ? { display: 'none' } : undefined);
+  const one = !split && !stacked;
+  // The column shown, and the one a push or pop is leaving while it moves.
+  const [view, setView] = useState<{ shows: 'lead' | 'detail'; leaving: 'lead' | 'detail' | null }>({ shows, leaving: null });
+  const box = useRef<HTMLDivElement>(null);
+  const leadRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
+  // A pop empties the detail column as it starts: what it showed leaves as a copy, taken before React changes it.
+  const leavingCopy = useRef<ReturnType<typeof columnCopy> | null>(null);
+  if (view.shows !== shows) {
+    leavingCopy.current = one && view.shows === 'detail' && detailRef.current ? columnCopy(detailRef.current) : null;
+    setView({ shows, leaving: one ? view.shows : null });
+  } else if (!one && view.leaving) setView({ shows, leaving: null });
+  useLayoutEffect(() => {
+    const from = view.leaving;
+    if (!from || !box.current || !leadRef.current || !detailRef.current) return;
+    let old: HTMLElement | null = leadRef.current;
+    let fresh = detailRef.current;
+    const copy = from === 'detail' ? leavingCopy.current : null;
+    leavingCopy.current = null;
+    if (from === 'detail') {
+      fresh = leadRef.current;
+      old = copy?.copy ?? null;
+      if (copy) {
+        Object.assign(copy.copy.style, LEAVING);
+        box.current.append(copy.copy);
+        copy.rescroll();
+      }
+    }
+    if (!old) {
+      setView((v) => ({ ...v, leaving: null }));
+      return;
+    }
+    const motion = swapColumns(old, fresh, from === 'detail');
+    let live = true;
+    void motion.done.then(() => live && setView((v) => (v.leaving === from ? { ...v, leaving: null } : v)));
+    return () => {
+      live = false;
+      motion.cancel();
+      copy?.copy.remove();
+    };
+  }, [view.leaving]);
+  const style = (column: 'lead' | 'detail') => (!one || view.shows === column ? undefined : view.leaving === column && column === 'lead' ? LEAVING : { display: 'none' });
+  const vars = split ? ({ '--split-lead': `${split.lead}px`, '--split-inspector': `${split.inspector}px` } as CSSProperties) : undefined;
   return (
-    <div className={`pg-split${stacked ? ' stacked' : split ? '' : ' one-column'}`} style={split ? ({ '--split-lead': `${split.lead}px`, '--split-inspector': `${split.inspector}px` } as React.CSSProperties) : undefined}>
-      <div className="pg-split-lead" style={hidden('lead')}>
+    <div ref={box} className={`pg-split${stacked ? ' stacked' : split ? '' : ' one-column'}`} style={view.leaving ? { ...vars, position: 'relative', overflow: 'clip' } : vars}>
+      <div ref={leadRef} className="pg-split-lead" style={style('lead')} inert={view.leaving === 'lead' || undefined}>
         {lead}
       </div>
-      <div className="pg-split-detail" style={hidden('detail')}>
+      <div ref={detailRef} className="pg-split-detail" style={style('detail')} inert={view.leaving === 'detail' || undefined}>
         {detail}
       </div>
       {inspector}

@@ -1,9 +1,9 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useMemo, useState } from 'react';
 import { platform } from '../platform';
 import { barModel, dismissFor } from '../web/nav-bar-model';
 import type { Presentation } from '../web/nav-stack';
 import { IosBarRow, MdBarRow } from '../web/NavBarRow';
-import { usePageNav, type PageNav } from '../web/page-nav';
+import { panelNavTarget, usePageNav, type NavTarget, type PageNav } from '../web/page-nav';
 
 /**
  * A sheet or dialog that draws its own bar (a page's PhoneSheet, the frames'
@@ -16,6 +16,22 @@ export interface BarHost {
 
 export const BarHostContext = createContext<BarHost | null>(null);
 
+/** A panel that draws its own bar (PhoneSheet, the iPad's inspector column): the NavBars inside it report to it, not to the frame. */
+export const PanelNavContext = createContext<NavTarget | null>(null);
+
+/**
+ * A screen inside the panel pushed a detail, whose Back is in the panel's bar: the panel's own tabs give way to it, as
+ * a pushed screen's bar replaces the list's (HIG Sheets; Material 3 list-detail: a single pane shows the detail).
+ */
+export const PanelPushedContext = createContext(false);
+
+/** A panel's bar: what the NavBars inside its PanelNavContext (`target`) report, merged; null while none does. */
+export function usePanelNav(): { nav: PageNav | null; target: NavTarget } {
+  const [nav, setNav] = useState<PageNav | null>(null);
+  const target = useMemo(() => panelNavTarget(setNav), []);
+  return { nav, target };
+}
+
 export type NavBarProps = PageNav & {
   /** Where this part goes among the page's other NavBars: a higher order overrides a lower one's fields and adds its toolbar after. */
   order?: number;
@@ -26,16 +42,18 @@ export type NavBarProps = PageNav & {
  * its bar buttons, toolbar and More menu. The desktop draws nothing (its
  * window has a title bar, a toolbar and a footer); a phone draws the bar of
  * its platform, with the buttons placed by the one set of rules in
- * nav-bar-model.ts. Inside a BarHost it's drawn in place; anywhere else the
- * phone frame draws it over the window.
+ * nav-bar-model.ts. Inside a BarHost it's drawn in place; inside a panel with
+ * a bar of its own, that panel draws it; anywhere else the phone frame draws it
+ * over the window.
  */
 export function NavBar(props: NavBarProps) {
   const host = useContext(BarHostContext);
-  return host ? <HostedBar host={host} nav={props} /> : <ReportedBar {...props} />;
+  const panel = useContext(PanelNavContext);
+  return host ? <HostedBar host={host} nav={props} /> : <ReportedBar nav={props} target={panel ?? undefined} />;
 }
 
-function ReportedBar({ order = 0, ...nav }: NavBarProps) {
-  usePageNav(platform === 'ios' ? nav : withoutLargeTitle(nav), order);
+function ReportedBar({ nav: { order = 0, ...nav }, target }: { nav: NavBarProps; target?: NavTarget }) {
+  usePageNav(platform === 'ios' ? nav : withoutLargeTitle(nav), order, target);
   return null;
 }
 

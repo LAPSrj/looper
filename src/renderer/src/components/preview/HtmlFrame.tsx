@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { DESKTOP_WIDTH, PREVIEW_BLOCKED, PREVIEW_SANDBOX, PREVIEW_SANDBOX_DEVICE, type PreviewNetwork } from '@shared/preview';
+import { DESKTOP_WIDTH, PREVIEW_BLOCKED, PREVIEW_END, PREVIEW_SANDBOX, PREVIEW_SANDBOX_DEVICE, type PreviewNetwork } from '@shared/preview';
 import { isPhone } from '../../web/page-nav';
 import { FILL, NOTE } from './note';
 
@@ -16,12 +16,15 @@ const BUTTON: React.CSSProperties = { font: 'inherit', padding: '4px 12px', bord
  * `window.looper` or the Remote Access API. What it may load from the internet is Settings → Advanced's: with
  * Ask, the page reports a blocked load and a bar offers to load it. On the computer the frame opens nothing
  * itself: Looper's preload sends a link the user clicks in it, or in a frame inside it, to main, which opens it
- * in the browser. `desktop`: laid out at a desktop's width and scaled down to fit.
+ * in the browser. `desktop`: laid out at a desktop's width and scaled down to fit. In a phone's sheet the frame runs
+ * to the screen's bottom edge, and the page gets room after its end as tall as the safe area there (--viewer-end),
+ * so its last line can scroll above the home indicator.
  */
 export default function HtmlFrame({ html, name, desktop, page }: { html: string; name: string; desktop: boolean; page: PageOf }) {
   const box = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
-  const [size, setSize] = useState({ w: 0, h: 0 });
+  const endProbe = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ w: 0, h: 0, end: 0 });
   const [load, setLoad] = useState(false);
   const [src, setSrc] = useState<{ url: string; network: PreviewNetwork } | null>(null);
   const [error, setError] = useState('');
@@ -61,7 +64,10 @@ export default function HtmlFrame({ html, name, desktop, page }: { html: string;
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return;
-    const read = () => setSize((s) => (s.w === el.clientWidth && s.h === el.clientHeight ? s : { w: el.clientWidth, h: el.clientHeight }));
+    const read = () => {
+      const end = endProbe.current?.offsetHeight ?? 0;
+      setSize((s) => (s.w === el.clientWidth && s.h === el.clientHeight && s.end === end ? s : { w: el.clientWidth, h: el.clientHeight, end }));
+    };
     const ro = new ResizeObserver(read);
     ro.observe(el);
     read();
@@ -72,6 +78,12 @@ export default function HtmlFrame({ html, name, desktop, page }: { html: string;
   const style: React.CSSProperties =
     scale < 1 ? { width: DESKTOP_WIDTH, height: size.h / scale, transform: `scale(${scale})`, transformOrigin: '0 0' } : { width: '100%', height: '100%' };
   const ask = src?.network === 'ask' && !load && blocked && !dismissed;
+  // In the page's own pixels: a page at desktop width is scaled down.
+  const end = Math.round(size.end / scale);
+  const postEnd = () => frame.current?.contentWindow?.postMessage({ [PREVIEW_END]: end }, '*');
+  const postEndRef = useRef(postEnd);
+  postEndRef.current = postEnd;
+  useEffect(() => postEndRef.current(), [end]);
   return (
     <div className="preview-html" style={FILL}>
       {ask && (
@@ -86,6 +98,7 @@ export default function HtmlFrame({ html, name, desktop, page }: { html: string;
         </div>
       )}
       <div ref={box} style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: '#fff' }}>
+        <div ref={endProbe} aria-hidden="true" style={{ position: 'absolute', width: 0, height: 'var(--viewer-end, 0px)', visibility: 'hidden', pointerEvents: 'none' }} />
         {error && <div style={NOTE}>{error}</div>}
         {src && (
           <iframe
@@ -95,6 +108,7 @@ export default function HtmlFrame({ html, name, desktop, page }: { html: string;
             sandbox={src.url.startsWith('looper-preview:') ? PREVIEW_SANDBOX : PREVIEW_SANDBOX_DEVICE}
             referrerPolicy="no-referrer"
             src={src.url}
+            onLoad={() => postEndRef.current()}
             style={{ ...style, position: 'absolute', inset: '0 auto auto 0', border: 0, display: 'block', background: '#fff' }}
           />
         )}

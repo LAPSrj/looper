@@ -11,11 +11,11 @@ import { mainThread } from './main-thread.mjs';
 
 // The Android tablet is held sideways: a tablet's portrait width (712 px on a Galaxy Tab S4) is under Material's
 // expanded width (840 dp), where the layout takes its rail and two panes, so only landscape draws the tablet layout.
-const DEVICE = { ios: devices['iPhone 15'], ipad: devices['iPad Pro 11'], android: devices['Pixel 7'], 'android-tablet': devices['Galaxy Tab S4 landscape'] };
+export const DEVICE = { ios: devices['iPhone 15'], ipad: devices['iPad Pro 11'], android: devices['Pixel 7'], 'android-tablet': devices['Galaxy Tab S4 landscape'] };
 const TABLET = new Set(['ipad', 'android-tablet']);
 // Playwright's own Chromium in its new headless mode ("chromium" channel, the real browser rather than the headless shell),
 // so the browser stays the version the repo installed instead of following Edge's updates.
-const launchBrowser = (os) => (os === 'ios' || os === 'ipad' ? webkit.launch() : chromium.launch({ channel: 'chromium' }));
+export const launchBrowser = (os) => (os === 'ios' || os === 'ipad' ? webkit.launch() : chromium.launch({ channel: 'chromium' }));
 
 // CDP slowdown that makes this PC's Chromium score a Pixel 7's 100 on Speedometer 2.0 (101 and 102 at 2, 328 at 1; Notebookcheck's Pixel 7 review);
 // BENCH_CPU_SLOWDOWN overrides it (1 for none).
@@ -158,7 +158,7 @@ async function tabletLayoutMissing(page, os, screen) {
 }
 
 /** Tap the first visible element with exactly this text (or matching this pattern), in the page or any of its windows' frames. */
-async function tap(page, text) {
+export async function tap(page, text) {
   for (let i = 0; i < 20 * SLOW; i++) {
     for (const f of page.frames()) {
       const el = f.getByText(text, { exact: typeof text === 'string' }).first();
@@ -170,7 +170,7 @@ async function tap(page, text) {
 }
 
 /** A tab of the main window's tab bar, which is inside the main window's frame. */
-async function tab(page, label, timeout = 5000 * SLOW) {
+export async function tab(page, label, timeout = 5000 * SLOW) {
   const t0 = Date.now();
   for (;;) {
     for (const f of page.frames()) {
@@ -200,6 +200,16 @@ async function settledCount(page) {
 /** main-thread.mjs's result as `<key>Ms` (and `<key>ProbeMs` when the probe ran beside it). */
 const threadValues = (key, t) => (typeof t === 'number' ? { [`${key}Ms`]: t } : { [`${key}Ms`]: t.ms, [`${key}ProbeMs`]: t.probeMs });
 
+/** Pairs `phone` (a browser page) with the app's main window `main` the way a person types its pairing code: true when the app accepted it. */
+export async function pairDevice(main, phone, url, name) {
+  const { code } = await main.evaluate(() => window.looper.remoteAccess.pairingCode());
+  await phone.goto(url);
+  return phone.evaluate(
+    async ([c, n]) => (await fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Looper-Request': '1' }, body: JSON.stringify({ code: c, name: n }) })).ok,
+    [code, name],
+  );
+}
+
 export async function phoneScreens(app, page, chats, screens, phones, wanted) {
   const measured = {};
   const broken = [];
@@ -225,12 +235,7 @@ export async function phoneScreens(app, page, chats, screens, phones, wanted) {
       if (SLOW > 1) await (await context.newCDPSession(phone)).send('Emulation.setCPUThrottlingRate', { rate: SLOW });
       const errors = [];
       phone.on('pageerror', (e) => errors.push(e.message));
-      const { code } = await page.evaluate(() => window.looper.remoteAccess.pairingCode());
-      await phone.goto(url);
-      const paired = await phone.evaluate(
-        async (c) => (await fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Looper-Request': '1' }, body: JSON.stringify({ code: c, name: 'Perf phone' }) })).ok,
-        code,
-      );
+      const paired = await pairDevice(page, phone, url, 'Perf phone');
       if (!paired) {
         broken.push(`${os}: pairing failed`);
         continue;

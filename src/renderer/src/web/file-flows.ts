@@ -531,7 +531,7 @@ export function usePathRequest(controller: ShellController, req: PathRequest): P
       ? {
           kind,
           ...shown,
-          htmlPage: (html, load) => controller.invoke<{ url: string; network: PreviewNetwork }>(w, 'sessions:previewPage', html, load),
+          htmlPage: (html, load) => controller.invoke<{ url: string; network: PreviewNetwork }>(w, 'sessions:previewPage', html, load, { path: current }),
           toDevice,
           toHost,
           askDownload: (thisDevice) =>

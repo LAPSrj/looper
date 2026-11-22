@@ -31,6 +31,16 @@ export function materialDialogButtons(spec: MessageBoxSpec): { order: number[]; 
   return { order: stacked ? order.reverse() : order, stacked, confirm };
 }
 
+/**
+ * Discard an editor's changes? Button 0 discards. iOS: the destructive choice first and red, Keep Editing last, as an
+ * action sheet's buttons (ios.md: Action sheets); Material: Keep editing, then Discard at the dialog's edge (Dialogs).
+ */
+export function discardQuestion(os: 'ios' | 'android'): MessageBoxSpec {
+  return os === 'ios'
+    ? { message: 'Discard your changes?', buttons: ['Discard Changes', 'Keep Editing'], defaultId: 1, cancelId: 1, destructiveId: 0 }
+    : { message: 'Discard your changes?', buttons: ['Discard', 'Keep editing'], defaultId: 1, cancelId: 1 };
+}
+
 // ---------- file dialogs ----------
 
 export type FileDialogKind = 'open' | 'save';

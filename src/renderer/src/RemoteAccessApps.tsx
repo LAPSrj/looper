@@ -140,7 +140,7 @@ export function RemoteAccessSettingsApp() {
           </FormGroup>
         </div>
       </div>
-      <WindowActions confirm={{ label: 'Save', run: () => saver.save(doSave) }} apply={{ run: () => void saver.apply(doSave) }} busy={saver.busy} />
+      <WindowActions draft={draft} confirm={{ label: 'Save', run: () => saver.save(doSave) }} apply={{ run: () => void saver.apply(doSave) }} busy={saver.busy} />
     </div>
   );
 }
@@ -370,7 +370,7 @@ export function RemoteAccessDeviceApp({ id }: { id: string }) {
           </FormGroup>
         </div>
       </div>
-      <WindowActions confirm={{ label: 'Save', run: () => !blank && saver.save(doSave), disabled: blank }} busy={saver.busy} />
+      <WindowActions draft={draft} confirm={{ label: 'Save', run: () => !blank && saver.save(doSave), disabled: blank }} busy={saver.busy} />
     </div>
   );
 }
@@ -516,6 +516,7 @@ export function RemoteAccessSetupApp() {
         <div className="form ra-setup">{body}</div>
       </div>
       <WindowActions
+        draft={sources ? [sources, hostname, pair] : null}
         wizard={{ back: { run: () => setStep(steps[at - 1]), disabled: at === 0 }, next: { run: next, disabled: !canNext }, commit: step === 'finish' ? 'Finish' : undefined }}
         busy={saver.busy}
       />

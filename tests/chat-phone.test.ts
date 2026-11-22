@@ -223,10 +223,12 @@ describe('settleSheet', () => {
 });
 
 describe('draggedHeight', () => {
-  it('follows the finger between nothing and the large height', () => {
-    expect(draggedHeight('medium', 0, 1000)).toBe(500);
-    expect(draggedHeight('medium', 100, 1000)).toBe(400);
-    expect(draggedHeight('medium', -900, 1000)).toBe(920);
-    expect(draggedHeight('medium', 900, 1000)).toBe(0);
+  it('follows the finger between nothing and the large height, which leaves the gap above it', () => {
+    expect(draggedHeight('medium', 0, 1000, 80)).toBe(500);
+    expect(draggedHeight('medium', 100, 1000, 80)).toBe(400);
+    expect(draggedHeight('medium', -900, 1000, 80)).toBe(920);
+    expect(draggedHeight('medium', -900, 1000, 0)).toBe(1000);
+    expect(draggedHeight('large', 0, 1000, 32)).toBe(968);
+    expect(draggedHeight('medium', 900, 1000, 80)).toBe(0);
   });
 });

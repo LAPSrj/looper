@@ -152,7 +152,7 @@ export function SendToSessionsApp({ group }: { group?: string }) {
           }
         }}
       />
-      <WindowActions confirm={{ label: 'Send', run: send, disabled: !text.trim() || picked.size === 0 }} />
+      <WindowActions draft={text} confirm={{ label: 'Send', run: send, disabled: !text.trim() || picked.size === 0 }} />
     </div>
   );
 }

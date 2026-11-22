@@ -182,6 +182,18 @@ html.phone-window {
 html.phone-window #root {
   height: calc(100% - var(--keyboard-inset, 0px));
 }
+/* While a sheet of the page's is up, the frame lifts the page over its bar (PhoneIframe): the page pads its top by as
+   much, so what it shows stays in place, and leaves that band clear, where the frame's bar shows under the backdrop. */
+html.phone-window[data-lifted] {
+  padding-top: var(--looper-lift, 0px);
+  background: transparent;
+}
+html.phone-window[data-lifted] body {
+  background: transparent;
+}
+html.phone-window[data-lifted] #root {
+  background: var(--bg);
+}
 html.phone-window .phone-page {
   height: 100%;
   display: flex;
@@ -440,7 +452,16 @@ html.phone-window[data-platform='ios'] .picker-body > .field > .field-label {
 html.phone-window[data-platform] :is(.form, .picker-body) .pg-list {
   margin-inline: 0;
 }
-html.phone-window[data-platform='ios'] :is(.form, .picker-body) .pg-group-footer {
+/* Text in a list card (an addon's Notes) is a row's content: 16 pt in from the card's edge, with a row's vertical padding. */
+html.phone-window .pg-list > .addon-text {
+  margin: 0;
+  padding: var(--pg-row-y) 16px;
+}
+/* An addon screen's own margin on an iPhone: its list cards are 16 from the edges, as its property card is (Android's lists keep their 16). */
+html.phone-window[data-platform='ios'] .addon-screen .pg-list {
+  margin-inline: 0;
+}
+html.phone-window[data-platform='ios'] :is(.form, .picker-body, .addon-screen) .pg-group-footer {
   margin-inline: 16px;
 }
 html.phone-window[data-platform='ios'] .pg-group,
@@ -531,18 +552,6 @@ html.phone-window[data-platform='android'] .pg-list > :is(.pg-row, .empty-sectio
   border-bottom-left-radius: 16px;
   border-bottom-right-radius: 16px;
 }
-/* An addon pane's rows (AddonPaneList) sit in a div of their own between its group headers: each run of them as a .pg-list's. */
-html.phone-window[data-platform='android'] .pg-addon-pane > div > .pg-row + .pg-row {
-  margin-top: 2px;
-}
-html.phone-window[data-platform='android'] .pg-addon-pane > div > :is(.pg-row:first-child, .task-folder + .pg-row) {
-  border-top-left-radius: 16px;
-  border-top-right-radius: 16px;
-}
-html.phone-window[data-platform='android'] .pg-addon-pane > div > :is(.pg-row:last-child, .pg-row:has(+ .task-folder)) {
-  border-bottom-left-radius: 16px;
-  border-bottom-right-radius: 16px;
-}
 html.phone-window[data-platform='android'] .empty-section,
 html.phone-window[data-platform='android'] .pg-row-title {
   font-size: calc(16 * var(--u));
@@ -568,8 +577,7 @@ html.phone-window .pg-segmented-wrap {
 html.phone-window[data-platform='android'] .pg-segmented-wrap {
   padding: 0 0 8px;
 }
-html.phone-window[data-platform='ios'] .pg-segmented,
-html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs {
+html.phone-window[data-platform='ios'] .pg-segmented {
   display: flex;
   gap: 4px;
   padding: 2px;
@@ -577,15 +585,13 @@ html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs {
   border-radius: 999px;
   background: var(--pg-fill);
 }
-html.phone-window[data-platform='ios'] .tabs-segmented,
-html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs {
+html.phone-window[data-platform='ios'] .tabs-segmented {
   flex: none;
   margin: 8px 16px;
   /* .tabs-scroll's overflow-x: auto also clips y, which cut the 44 pt target below down to the 32 pt strip. */
   overflow: visible;
 }
-html.phone-window[data-platform='ios'] .pg-segmented button,
-html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs .tab {
+html.phone-window[data-platform='ios'] .pg-segmented button {
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -595,7 +601,9 @@ html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs .tab {
   border-radius: 999px;
   background: transparent;
   color: var(--pg-label);
-  font-size: 13px;
+  /* Labels 13.33/18 medium, the selected one semibold (ios.md: Segmented control). */
+  font-size: 13.33px;
+  line-height: 18px;
   font-weight: 500;
   letter-spacing: -0.08px;
   white-space: nowrap;
@@ -606,26 +614,51 @@ html.phone-window[data-platform='ios'] .pg-segment-label {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Each label is as wide as its semibold form (the selected one's), so a segment sized by its label doesn't move when
+   it's selected. */
+html.phone-window[data-platform='ios'] .pg-segment-label::after {
+  content: attr(data-label);
+  display: block;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 600;
+}
+/* Segmented measures each segment at its own width (useSegmentFit). */
+html.phone-window .pg-segmented.pg-seg-measure > button {
+  flex: none !important;
+}
+/* A label that would be cut in an equal share: each segment as wide as its label plus an equal share of the rest
+   (UIKit's apportionsSegmentWidthsByContent). */
+html.phone-window[data-platform] .pg-segmented.by-content > button {
+  flex: 1 1 auto;
+}
+/* TabBar's measure of whether its segments fit, while the strip shows instead: in the flow at no height. */
+html.phone-window .pg-segmented.probe {
+  height: 0;
+  min-height: 0;
+  margin-block: 0;
+  padding-block: 0;
+  border: none;
+  overflow: hidden;
+  visibility: hidden;
+}
 /* A 28 pt segment, a 44 pt target (no overflow clipping on the segment: it would clip the target too) (the slop reaches into the gap above and below, not into its neighbors). */
-html.phone-window[data-platform='ios'] .pg-segmented button,
-html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs .tab {
+html.phone-window[data-platform='ios'] .pg-segmented button {
   position: relative;
 }
-html.phone-window[data-platform='ios'] .pg-segmented button::after,
-html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs .tab::after {
+html.phone-window[data-platform='ios'] .pg-segmented button::after {
   content: '';
   position: absolute;
   inset: -8px 0;
 }
-html.phone-window[data-platform='ios'] .pg-segmented button.active,
-html.phone-window[data-platform='ios'] .phone-detail > .detail > .tabs .tab.active {
+html.phone-window[data-platform='ios'] .pg-segmented button.active {
   background: var(--pg-seg-on);
   color: var(--pg-label);
   font-weight: 600;
   box-shadow: 0 2px 20px rgba(0, 0, 0, 0.06);
 }
-html.phone-window[data-platform='android'] .pg-segmented,
-html.phone-window[data-platform='android'] .phone-detail > .detail > .tabs {
+html.phone-window[data-platform='android'] .pg-segmented {
   display: flex;
   flex: none;
   gap: 0;
@@ -633,8 +666,7 @@ html.phone-window[data-platform='android'] .phone-detail > .detail > .tabs {
   border-bottom: 1px solid var(--pg-sep);
   background: var(--pg-bg);
 }
-html.phone-window[data-platform='android'] .pg-segmented button,
-html.phone-window[data-platform='android'] .phone-detail > .detail > .tabs .tab {
+html.phone-window[data-platform='android'] .pg-segmented button {
   flex: 1;
   min-width: 0;
   height: 48px;
@@ -649,8 +681,7 @@ html.phone-window[data-platform='android'] .phone-detail > .detail > .tabs .tab 
   letter-spacing: 0.1px;
   white-space: nowrap;
 }
-html.phone-window[data-platform='android'] .pg-segmented button.active,
-html.phone-window[data-platform='android'] .phone-detail > .detail > .tabs .tab.active {
+html.phone-window[data-platform='android'] .pg-segmented button.active {
   color: var(--pg-tint);
   border-bottom-color: var(--pg-tint);
 }
@@ -904,6 +935,15 @@ html.phone-window .props dd + dt::before {
   height: 0.5px;
   background: var(--pg-sep, var(--border));
 }
+/* A value with nothing beside it (an addon's text row) keeps the row's 16 pt, as its label has: the desktop's padding for it is 0 at the sides. */
+html.phone-window .addon-screen .props dd.addon-prop-text {
+  padding: 2px 16px 10px;
+}
+/* A monospaced value (a port) is still the list's value: Body 17, as the others (ios.md: Lists), not the status pane's 14. */
+html.phone-window .addon-screen .props dd.mono,
+html.phone-window .addon-screen .props dd .mono {
+  font-size: inherit;
+}
 html.phone-window .props dd.mono,
 html.phone-window .props dd .mono {
   font-size: calc(14 * var(--u));
@@ -1065,31 +1105,26 @@ html.phone-window .pg-result {
   padding: 12px 16px;
   overflow-wrap: anywhere;
 }
+/* The commit's message (git, an addon list's head) sits in that card's own padding: its text is 16 in from the card's edge (ios.md: Lists). */
+html.phone-window :is(.git-commit-head, .detail-head) {
+  padding: 0;
+}
+/* A segmented control has no strip with a line under it: Git's Changes and History line up with the project's own segments (ios.md: Segmented control). */
+html.phone-window[data-platform='ios'] .tabs-head {
+  padding: 0;
+  border-bottom: none;
+}
+/* Android: the tabs under the project's (Git's Changes and History) are Material 3 secondary tabs: the same 48 dp
+   container and 1 dp divider, a 2 dp active indicator instead of 3 dp (m3.material.io/components/tabs/specs). */
+html.phone-window[data-platform='android'] .tabs-head {
+  padding: 0;
+}
+html.phone-window[data-platform='android'] .tabs-head :is(.tab, .pg-segmented button) {
+  border-bottom-width: 2px;
+}
 /* A message's own screen. */
 html.phone-window .pg-split-detail > .messages-detail {
   padding-bottom: 16px;
-}
-/* Back inside a sheet or an inspector, where the frame's bar isn't this content's. */
-html.phone-window .pg-inline-back {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 6px;
-  min-height: 44px;
-  padding: 12px 16px 4px;
-  border: none;
-  background: none;
-  color: var(--pg-tint, var(--accent));
-  font-size: calc(17 * var(--u));
-}
-/* Android: Material's back arrow before the list's name, in the surface's text color. */
-html.phone-window[data-platform='android'] .pg-inline-back {
-  gap: 16px;
-  min-height: 48px;
-  padding: 8px 16px 4px 12px;
-  color: var(--md-on-surface);
-  font-size: calc(16 * var(--u));
-  font-weight: 500;
 }
 /* The main window's sidebar-and-pane windows (an addon pane's own window): the list over the item. */
 html.phone-window .app {
@@ -1136,8 +1171,7 @@ html.phone-window .pg-sessions .session-sub {
   margin-top: 2px;
   color: var(--pg-label-2);
 }
-html.phone-window .pg-sessions .session-group,
-html.phone-window .pg-addon-pane .task-folder {
+html.phone-window .pg-sessions .session-group {
   margin: 0 !important;
   min-height: 44px;
   padding: 18px 16px 7px;
@@ -1166,14 +1200,12 @@ html.phone-window[data-platform='ios'] .pg-sessions .empty-row {
   border-radius: 26px;
 }
 /* iOS: each run of rows between group headers is one rounded inset card, hairlines between rows. */
-/* An addon pane's list is already inside a Group's inset card. */
 html.phone-window[data-platform='ios'] .pg-sessions .session-list {
   margin: 0 16px;
 }
 /* A group's header reads as a section title (17 pt semibold), and the chevron that folds it sits at its trailing
    end in the tint (ios.md: Lists). */
-html.phone-window[data-platform='ios'] .pg-sessions .session-group,
-html.phone-window[data-platform='ios'] .pg-addon-pane .task-folder {
+html.phone-window[data-platform='ios'] .pg-sessions .session-group {
   padding-left: 16px;
   padding-bottom: 9px;
   font-size: calc(17 * var(--u));
@@ -1181,7 +1213,7 @@ html.phone-window[data-platform='ios'] .pg-addon-pane .task-folder {
   font-weight: 600;
   letter-spacing: -0.43px;
 }
-html.phone-window[data-platform='ios'] :is(.pg-sessions .session-group, .pg-addon-pane .task-folder) > .chev {
+html.phone-window[data-platform='ios'] .pg-sessions .session-group > .chev {
   order: 1;
   margin-left: auto;
   color: var(--pg-tint);
@@ -1191,6 +1223,16 @@ html.phone-window[data-platform='ios'] .pg-sessions .session-row {
   min-height: 52px;
   padding-top: 13px;
   padding-bottom: 13px;
+}
+/* A row with a subtitle is 68 high: the title in Body (17/22) over the subtitle in Subheadline (15/20) (ios.md: Lists, Type). */
+html.phone-window[data-platform='ios'] .pg-sessions .session-title {
+  line-height: calc(22 * var(--u));
+  letter-spacing: -0.43px;
+}
+html.phone-window[data-platform='ios'] .pg-sessions .session-sub {
+  margin-top: 0;
+  line-height: calc(20 * var(--u));
+  letter-spacing: -0.23px;
 }
 html.phone-window[data-platform='ios'] .pg-sessions .session-group + .session-row,
 html.phone-window[data-platform='ios'] .pg-sessions .session-list > .session-row:first-child,
@@ -1250,8 +1292,7 @@ html.phone-window[data-platform='android'] .pg-sessions .session-sub {
   line-height: calc(20 * var(--u));
   letter-spacing: 0.25px;
 }
-html.phone-window[data-platform='android'] .pg-sessions .session-group,
-html.phone-window[data-platform='android'] .pg-addon-pane .task-folder {
+html.phone-window[data-platform='android'] .pg-sessions .session-group {
   padding: 16px 16px 8px;
   font-size: calc(14 * var(--u));
   line-height: calc(20 * var(--u));
@@ -1327,8 +1368,9 @@ html.phone-window .phone-sessions .overview-meta {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Material 3 cards: a 12 dp corner (m3.material.io/components/cards/specs). */
 html.phone-window[data-platform='android'] .phone-sessions .overview-card {
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--pg-container);
 }
 /* Focus (PhoneOverview): the large conversation, with the others in a row of small cards above it, or in a
@@ -1438,6 +1480,14 @@ html.phone-window .builder-app,
 html.phone-window .sessions-app,
 html.phone-window .run-detail-app {
   height: 100%;
+}
+/* The History window's lists are inset cards, which show only against the grouped page behind them (ios.md: Lists). */
+html.phone-window .history-app {
+  background: var(--pg-bg);
+}
+/* The conversation it opens keeps the page it had: its bubbles are the grouped background's color. */
+html.phone-window .history-app .sessions-center {
+  background: var(--bg);
 }
 html.phone-window .chat-scroll {
   padding: 12px 12px;
@@ -1877,9 +1927,12 @@ html.phone-window .pg-sheet-scrim {
   background: rgba(0, 0, 0, 0.35);
   animation: pg-fade 0.2s ease-out;
 }
+/* Medium is half the page; large all of it but --sheet-gap at the top: none on an iPhone, where it starts right under
+   the status bar (ios.md: Sheets), 32 on an iPad (as the frame's page sheets), Material's top margin on Android. */
 html.phone-window .pg-sheet {
+  --sheet-gap: 0px;
   width: 100%;
-  height: calc(var(--detent, 0.92) * 100%);
+  height: 50%;
   display: flex;
   flex-direction: column;
   background: var(--bg-2);
@@ -1890,6 +1943,9 @@ html.phone-window .pg-sheet {
     transform 0.18s ease-in;
   animation: pg-rise 0.3s cubic-bezier(0.2, 0.9, 0.3, 1);
 }
+html.phone-window .pg-sheet.detent-large {
+  height: calc(100% - var(--sheet-gap));
+}
 html.phone-window .pg-sheet.closing {
   transform: translateY(100%);
 }
@@ -1899,9 +1955,21 @@ html.phone-window[data-platform='ios'] .pg-sheet {
 html.phone-window[data-platform='ios'] .pg-sheet-scrim {
   background: rgba(0, 0, 0, 0.2);
 }
+/* Material 3 bottom sheet: a 72 dp top margin; on a window wider than 640 dp, at most 640 wide with 56 dp margins
+   (m3.material.io/components/bottom-sheets/specs, Measurements). */
 html.phone-window[data-platform='android'] .pg-sheet {
+  --sheet-gap: 72px;
   border-radius: 28px 28px 0 0;
   background: var(--pg-container);
+}
+@media (min-width: 641px) {
+  html.phone-window[data-platform='android'] .pg-sheet-scrim {
+    justify-content: center;
+  }
+  html.phone-window[data-platform='android'] .pg-sheet {
+    --sheet-gap: 56px;
+    width: min(640px, calc(100% - 112px));
+  }
 }
 /* The grabber and the title row are the drag handle. */
 html.phone-window .pg-sheet-handle {
@@ -1909,20 +1977,60 @@ html.phone-window .pg-sheet-handle {
   touch-action: none;
   cursor: grab;
 }
+/* The grabber is a button (a tap moves the sheet to its other height, HIG Sheets) drawn as its stroke (::before). */
 html.phone-window .pg-sheet-grabber {
+  all: unset;
+  display: flex;
+  justify-content: center;
+  box-sizing: border-box;
+  cursor: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+html.phone-window .pg-sheet-grabber::before {
+  content: '';
   width: 60px;
   height: 4px;
-  margin: 6px auto 0;
   border-radius: 2px;
   background: var(--pg-grabber, var(--pg-label-3));
 }
+html.phone-window .pg-sheet-grabber:focus-visible {
+  outline: 2px solid var(--pg-tint, Highlight);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+/* Material 3's drag handle: 32 x 4 with 22 dp above and below it, then the sheet's title row
+   (m3.material.io/components/bottom-sheets/specs, Measurements: drag handle padding top/bottom 22 dp), in a 48 dp target. */
 html.phone-window[data-platform='android'] .pg-sheet-grabber {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto;
+  align-items: center;
+}
+html.phone-window[data-platform='android'] .pg-sheet-grabber::before {
   width: 32px;
-  height: 4px;
-  margin-top: 16px;
-  border-radius: 2px;
   background: var(--pg-label-2);
   opacity: 0.4;
+}
+/* iOS: the grabber 6 down over the sheet's top edge and the bar's buttons 16 down (ios.md: Sheets, Navigation bar),
+   as the frame's own sheets (ios.css .ios-grabber); on an iPad 10 in from the sheet's edges. */
+html.phone-window[data-platform='ios'] .pg-sheet-handle {
+  position: relative;
+}
+/* Its target runs from the sheet's top to the bar's buttons (16 down), the stroke 6 down in it. */
+html.phone-window[data-platform='ios'] .pg-sheet-grabber {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: calc(50% - 50px);
+  width: 100px;
+  height: 16px;
+  padding-top: 6px;
+}
+html.phone-window[data-platform='ios'] .pg-sheet-handle .ios-bar-row {
+  padding-top: 16px;
+}
+html.phone-window.tablet[data-platform='ios'] .pg-sheet-handle .ios-bar-row {
+  padding: 10px;
 }
 html.phone-window .pg-sheet-body {
   flex: 1;
@@ -1945,6 +2053,21 @@ html.phone-window .pg-sheet .activity-panel {
   flex: 1;
   min-height: 0;
   background: transparent;
+}
+/* A conversation in a sheet or the iPad's inspector column (a subagent's, pushed in Activity) looks as the chat screen
+   does (.phone-conversation): on the plain background, under bubbles of the grouped gray, not on the sheet's gray where
+   they vanish. A sheet is elevated, and dark mode's plain elevated background is #1C1C1E with #2C2C2E cells (ios.md:
+   Color, Elevated); in light it's the chat's own white and #F2F2F7. */
+html.phone-window :is(.pg-sheet, .pg-split-inspector) .chat-scroll {
+  background: var(--bg);
+}
+@media (prefers-color-scheme: dark) {
+  html.phone-window[data-platform='ios'] .pg-sheet .chat-scroll {
+    background: var(--bg-2);
+  }
+  html.phone-window[data-platform='ios'] .pg-sheet .chat-agent {
+    background: var(--bg-3);
+  }
 }
 /* The usage panel: one fact per row at one height, the value cut short rather than a second line. */
 html.phone-window .usage-panel {
@@ -2169,19 +2292,10 @@ html.phone-window .inline-field {
 html.phone-window .inline-field > .input-suffix {
   flex: 1 0 100%;
 }
-/* The week's seven day buttons share the row. */
-html.phone-window .day-row .day-toggle.day-toggle {
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 44px;
-  padding: 0;
-}
-
-/* The phone .btn rules would draw a chosen day like the others. */
-html.phone-window .day-row .day-toggle.selected.selected {
-  border-color: var(--pg-tint);
-  background: var(--pg-tint);
-  color: var(--pg-on-tint);
+/* Several choices at once (CheckboxChoices): a switch row each, one under another (ios.md: Switch, only in a list row). */
+html.phone-window .checkbox-choices,
+html.phone-window .checkbox-choices-wrap {
+  display: block;
 }
 
 /* Check boxes are switches at the row's end (iOS's and Material's). */
@@ -2196,8 +2310,10 @@ html.phone-window .checkbox-field {
   font-size: calc(17 * var(--u));
   font-weight: 400;
 }
+/* A switch row is a one-line list item: 56 dp, the rows touching (Material 3 Lists: one-line container height 56dp). */
 html.phone-window[data-platform='android'] .checkbox-field {
-  min-height: 48px;
+  min-height: 56px;
+  margin: 0;
   font-size: calc(16 * var(--u));
 }
 html.phone-window .checkbox-field input[type='checkbox'] {
@@ -2549,7 +2665,7 @@ html.phone-window .picker-body {
 }
 
 /* ---------- the rest ---------- */
-html.phone-window .empty-pane {
+html.phone-window :is(.empty-pane, .background-tab > .background-none) {
   padding: 24px 16px;
 }
 html.phone-window .markdown {
@@ -3087,6 +3203,43 @@ html.phone-window[data-platform='ios'] .select-control select:active {
 html.phone-window[data-platform='ios'] .select-control.disabled {
   opacity: 0.4;
 }
+/* Tabs a segmented control can't hold (more than five, or labels too long even sized by content): a pop-up button
+   with the shown tab's name, whose menu lists them all (TabBar; HIG Pop-up buttons). A bordered medium button: the
+   tint on the fill, 34 high in a 44 pt target (ios.md: Buttons), with the up-and-down chevrons in the tint. */
+html.phone-window[data-platform='ios'] .tabs-popup {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  margin: 3px 16px;
+}
+html.phone-window[data-platform='ios'] .tabs-popup .select-control {
+  align-items: center;
+  min-height: 44px;
+  border-radius: 999px;
+}
+html.phone-window[data-platform='ios'] .tabs-popup .select-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px 0 16px;
+  border-radius: 999px;
+  background: var(--pg-fill);
+  color: var(--pg-tint);
+  font-size: calc(15 * var(--u));
+  font-weight: 500;
+  line-height: 20px;
+  text-align: center;
+}
+html.phone-window[data-platform='ios'] .tabs-popup .select-value::after {
+  content: '';
+  flex: none;
+  width: 12px;
+  height: 16px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='16' viewBox='0 0 12 16'%3E%3Cpath d='M2.5 6 6 2.5 9.5 6M2.5 10 6 13.5 9.5 10' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='16' viewBox='0 0 12 16'%3E%3Cpath d='M2.5 6 6 2.5 9.5 6M2.5 10 6 13.5 9.5 10' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center;
+}
 /* In a row, the select covers the line, so a tap on the label opens the menu too; the value and the label share the width by how much each needs. */
 html.phone-window[data-platform='ios'] .form-group .field-line > .select-control {
   position: static;
@@ -3186,6 +3339,8 @@ html.phone-window[data-platform='ios'] .form-group .checkbox-field {
   gap: 16px;
   flex-direction: row-reverse;
   align-items: center;
+  /* A row is 52 high (ios.md: Lists): the 28-high switch with 12 above and below. */
+  padding-block: 12px;
 }
 html.phone-window[data-platform='ios'] .form-group .checkbox-note {
   padding: 0 16px var(--pg-row-y);
@@ -3316,13 +3471,67 @@ html.phone-window .now-script-stack :is(.now-script-now, .now-screen, .now-body)
   min-height: auto;
   overflow: visible;
 }
+/* A message between agents on Now (ActivityPanel's MailView) is Gmail's message view on every device (the Gmail app is the
+   same on iOS and Android), on a white page; styles.css has the layout and the page's colors. Only the text styles are
+   the device's own. iOS (ios.md, Type): the subject in Title 2, the sender in Headline, "to" and the time in Subheadline,
+   the message in Body, a reply's subject in Headline. */
+html.phone-window[data-platform='ios'] .now-mail-msg.first .now-mail-subject {
+  font-size: calc(22 * var(--u));
+  line-height: calc(28 * var(--u));
+}
+html.phone-window[data-platform='ios'] .now-mail-subject {
+  font-size: calc(17 * var(--u));
+  line-height: calc(22 * var(--u));
+}
+html.phone-window[data-platform='ios'] .now-mail-from {
+  font-size: calc(17 * var(--u));
+  line-height: calc(22 * var(--u));
+}
+html.phone-window[data-platform='ios'] :is(.now-mail-time, .now-mail-to, .now-mail-details) {
+  font-size: calc(15 * var(--u));
+  line-height: calc(20 * var(--u));
+}
+html.phone-window[data-platform='ios'] .now-mail-body .markdown {
+  font-size: calc(17 * var(--u));
+}
+/* Android: Material 3's roles: the subject in Title Large, the sender in Title Medium, "to" in Body Medium and the time in
+   a Label, the message in Body Large, a reply's subject in Title Medium. */
+html.phone-window[data-platform='android'] .now-mail-subject {
+  font-size: calc(16 * var(--u));
+  line-height: calc(24 * var(--u));
+}
+html.phone-window[data-platform='android'] .now-mail-msg.first .now-mail-subject {
+  font-size: calc(22 * var(--u));
+  line-height: calc(28 * var(--u));
+  letter-spacing: 0;
+}
+html.phone-window[data-platform='android'] .now-mail-from {
+  font-size: calc(16 * var(--u));
+  line-height: calc(24 * var(--u));
+  font-weight: 500;
+}
+html.phone-window[data-platform='android'] .now-mail-to {
+  font-size: calc(14 * var(--u));
+  line-height: calc(20 * var(--u));
+}
+html.phone-window[data-platform='android'] .now-mail-time {
+  font-size: calc(12 * var(--u));
+}
+html.phone-window[data-platform='android'] .now-mail-details {
+  font-size: calc(14 * var(--u));
+}
+html.phone-window[data-platform='android'] .now-mail-body .markdown {
+  font-size: calc(16 * var(--u));
+  line-height: calc(24 * var(--u));
+}
 /* The page's own sheets (Activity in portrait, Usage) present as page sheets do on iPad: 704 pt, centered. */
 html.phone-window.tablet[data-platform='ios'] .pg-sheet-scrim {
   justify-content: center;
 }
 html.phone-window.tablet[data-platform='ios'] .pg-sheet {
+  --sheet-gap: 32px;
   width: min(704px, calc(100% - 48px));
-  border-radius: 28px 28px 0 0;
+  border-radius: 32px 32px 0 0;
 }
 /* The detail column with no row chosen: its sentence in the middle. */
 html.phone-window .empty-detail {
@@ -3404,12 +3613,12 @@ html.phone-window.tablet[data-platform='ios'] .chat-scroll {
 }
 /* Segmented controls size to their segments, centered, as UISegmentedControl does on iPad (the inspector's
    narrow column keeps the full-width control). */
-html.phone-window.tablet[data-platform='ios'] :is(.pg-segmented, .phone-detail > .detail > .tabs):not(.pg-split-inspector *) {
+html.phone-window.tablet[data-platform='ios'] .pg-segmented:not(.pg-split-inspector *) {
   width: fit-content;
   max-width: calc(100% - 32px);
   margin-inline: auto;
 }
-html.phone-window.tablet[data-platform='ios'] :is(.pg-segmented button, .phone-detail > .detail > .tabs .tab):not(.pg-split-inspector *) {
+html.phone-window.tablet[data-platform='ios'] .pg-segmented button:not(.pg-split-inspector *) {
   flex: none;
   min-width: 96px;
   padding: 0 16px;
@@ -3478,12 +3687,165 @@ html.phone-window .toolbar.pane-toolbar button {
 html.phone-window .toolbar.pane-toolbar button:disabled {
   color: var(--pg-label-3, var(--pg-label-2));
 }
-html.phone-window .toolbar.pane-toolbar button:is(.pressed, [aria-pressed='true']) {
+/* Material 3's selected icon button is a filled container. */
+html.phone-window[data-platform='android'] .toolbar.pane-toolbar button:is(.pressed, [aria-pressed='true']) {
   background: var(--pg-tint);
   color: var(--pg-on-tint, #fff);
 }
+/* iOS: bar buttons are label-colored symbols and the one that's on takes the tint, as in the bar (.ios-icon-btn.on);
+   a filled tint circle is only the confirming action's (ios.md: Navigation bar). */
+html.phone-window[data-platform='ios'] .toolbar.pane-toolbar button:not(:disabled) {
+  color: var(--pg-label);
+}
+html.phone-window[data-platform='ios'] .toolbar.pane-toolbar button:not(:disabled):is(.pressed, [aria-pressed='true']) {
+  background: transparent;
+  box-shadow: none;
+  color: var(--pg-tint);
+}
 html.phone-window .toolbar.pane-toolbar .toolbar-sep {
   display: none;
+}
+
+/* ---------- a content's bottom toolbar (BottomToolbar.tsx) ---------- */
+/* It floats over the content's bottom edge: the content takes the whole area and runs under it to the edge, and
+   what scrolls ends with room for it (--bottom-toolbar-clear), as the conversation does under its message box. */
+html.phone-window .bottom-toolbar-host {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  --bottom-toolbar-clear: calc(var(--bottom-toolbar-h) + var(--bottom-toolbar-gap) + 8px);
+}
+html.phone-window .bottom-toolbar-host > :not(.bottom-toolbar) {
+  grid-area: 1 / 1 / -1 / -1;
+  min-height: 0;
+}
+html.phone-window .bottom-toolbar {
+  grid-area: 2 / 1;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-bottom: var(--bottom-toolbar-gap);
+}
+html.phone-window :is(.bottom-toolbar-side, .bottom-toolbar-group) {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+html.phone-window .bottom-toolbar-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The scrollers under it end with room for it: a list's rows, a page, and Now's screens, whose own background (a
+   console's, an editor's) runs on under the toolbar. */
+html.phone-window .bottom-toolbar-host :is(.pg-rows, .pg-scroll) {
+  padding-bottom: calc(16px + var(--bottom-toolbar-clear));
+}
+html.phone-window .bottom-toolbar-host :is(.now-body:not(.now-body-screen), .now-body-screen > :last-child)::after {
+  content: '';
+  display: block;
+  flex: none;
+  height: var(--bottom-toolbar-clear);
+}
+/* iOS: glass capsules 16 from the sides, 10 apart, the status centered between the two ends (ios.md: Bottom toolbar). */
+html.phone-window[data-platform='ios'] .bottom-toolbar-host {
+  --bottom-toolbar-h: 44px;
+  /* 21 above an iPhone's home indicator, where the tab bar sits (ios.md: Tab bar); 8 where there's none. */
+  --bottom-toolbar-gap: max(8px, calc(var(--looper-safe-bottom, 0px) - 13px));
+}
+html.phone-window[data-platform='ios'] .bottom-toolbar {
+  gap: 10px;
+  margin-inline: 16px;
+}
+html.phone-window[data-platform='ios'] .bottom-toolbar-side {
+  flex: 1 1 0;
+  gap: 10px;
+}
+html.phone-window[data-platform='ios'] .bottom-toolbar-side.end {
+  justify-content: flex-end;
+}
+html.phone-window[data-platform='ios'] .bottom-toolbar-status {
+  flex: 0 1 auto;
+  font-size: calc(13 * var(--u));
+  line-height: calc(18 * var(--u));
+  letter-spacing: -0.08px;
+  color: var(--pg-label-2);
+}
+/* Its glass buttons don't blur again what the scroll edge under them already blurs: "glass cannot sample other glass"
+   (WWDC25 323), and in WebKit a backdrop-filter over another one in the sheet held the iPad's frames for seconds at a
+   time (requestAnimationFrame stopped; scratch/bottom-toolbar/bisect-ipad.mjs). They keep their fill and rim. */
+html.phone-window[data-platform='ios'] .bottom-toolbar :is(.ios-icon-btn, .ios-text-btn, .ios-bar-group) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+/* The scroll edge behind it: soft, a blur under a gradient mask with no color, under glass buttons alone; hard, the
+   uniform bar with its line, when it holds text outside the glass (ios.md: Scroll edge effects; HIG Scroll views). */
+html.phone-window[data-platform='ios'] .bottom-toolbar-host::after {
+  content: '';
+  grid-area: 2 / 1 / -1 / -1;
+  z-index: 1;
+  margin-top: -16px;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 70%);
+  mask-image: linear-gradient(to bottom, transparent, #000 70%);
+}
+html.phone-window[data-platform='ios'] .bottom-toolbar-host.has-status::after {
+  margin-top: -10px;
+  border-top: 0.5px solid rgba(0, 0, 0, 0.05);
+  background: rgba(255, 255, 255, 0.85);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+@media (prefers-color-scheme: dark) {
+  html.phone-window[data-platform='ios'] .bottom-toolbar-host.has-status::after {
+    border-top-color: rgba(0, 0, 0, 0.1);
+    background: rgba(0, 0, 0, 0.55);
+  }
+}
+/* Android: Material 3's floating toolbar, 64 dp high and fully rounded, its items 8 dp in, centered 16 dp above the
+   bottom on the surface container at elevation 3; a toggle that's on is a 40 dp secondary container
+   (m3.material.io/components/toolbars/guidelines and /specs; the 8 dp padding and elevation 3, which the pages show only
+   in images, from MDC-Android floatingtoolbar tokens.xml and standard_toolbar_tokens.xml). */
+html.phone-window[data-platform='android'] .bottom-toolbar-host {
+  --bottom-toolbar-h: 64px;
+  --bottom-toolbar-gap: calc(16px + var(--looper-safe-bottom, 0px));
+}
+html.phone-window[data-platform='android'] .bottom-toolbar {
+  justify-self: center;
+  box-sizing: border-box;
+  max-width: calc(100% - 32px);
+  height: 64px;
+  padding: 0 8px;
+  border-radius: 32px;
+  background: var(--md-surface-container);
+  color: var(--md-on-surface-variant);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 8px 3px rgba(0, 0, 0, 0.15);
+}
+html.phone-window[data-platform='android'] .bottom-toolbar-side {
+  flex: none;
+}
+html.phone-window[data-platform='android'] .bottom-toolbar-status {
+  padding: 0 8px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  letter-spacing: 0.1px;
+}
+html.phone-window[data-platform='android'] .bottom-toolbar .md-icon-btn {
+  color: var(--md-on-surface-variant);
+}
+html.phone-window[data-platform='android'] .bottom-toolbar .md-icon-btn.on {
+  padding: 4px;
+  background: var(--md-secondary-container);
+  background-clip: content-box;
+  color: var(--md-on-secondary-container);
 }
 /* The task builder's conversation, and its draft as a grouped list. */
 html.phone-window .builder {
@@ -3567,6 +3929,19 @@ html.phone-window[data-platform='ios'] .phone-plus-menu {
     transform: scale(0.2);
     opacity: 0;
   }
+}
+/* A collapsible row's chevron is at the trailing end of its header, in the tint (ios.md: Lists, the Disclosure accessory):
+   the conversation's "Thinking", "N tool uses" and each call. */
+html.phone-window[data-platform='ios'] .chat-aside > summary {
+  position: relative;
+  padding-right: 32px;
+}
+html.phone-window[data-platform='ios'] .chat-aside > summary::before {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  margin: -5px 0 0;
+  color: var(--pg-tint);
 }
 /* A group's and a disclosure's chevron turns on the snappy spring, and what a disclosure opens fades in under it. */
 html.phone-window[data-platform='ios'] .group-header .chev,

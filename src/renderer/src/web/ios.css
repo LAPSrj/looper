@@ -84,7 +84,8 @@ html[data-platform='ios'] {
   background: var(--ios-bar);
   box-shadow: 0 1px 0 var(--ios-bar-line);
 }
-/* In a sheet the bar starts 16 below the sheet's top, under its grabber (the kit's sheet). */
+/* In a sheet the bar's buttons sit 16 below the sheet's top (the kit's sheet). These sheets have one height, so no
+   grabber: "Include a grabber in a resizable sheet" (HIG Sheets; ios.md: Sheets). */
 .ios .pres-page-sheet .ios-bar,
 .ios .pres-form-sheet .ios-bar,
 .ios-own-sheet .ios-bar {
@@ -168,17 +169,6 @@ html[data-platform='ios'] {
 }
 .ios-bar-split > .ios-bar-list.edge {
   box-shadow: 0 1px 0 var(--ios-bar-line), inset -0.5px 0 0 var(--ios-sep);
-}
-/* Over the sheet's top edge, 6 down, above the bar's buttons (16 down). */
-.ios-grabber {
-  position: absolute;
-  z-index: 1;
-  top: 6px;
-  left: calc(50% - 30px);
-  width: 60px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--ios-grabber);
 }
 
 /* ---------- how windows present ---------- */
@@ -349,7 +339,7 @@ html[data-platform='ios'] {
 .ph-root .ios-own-sheet .ph-files {
   background: transparent;
   border-top: none;
-  padding: 16px 0;
+  padding: 16px 0 calc(16px + var(--viewer-end, 0px));
 }
 /* In a sheet the folder's rows are an inset grouped card, as the Name field above them is: rounded
    at each run's ends, no hairline under its last row. */
@@ -400,12 +390,17 @@ html[data-platform='ios'] {
 .ios-own-sheet.tablet-sheet.small .ph-card {
   height: min(440px, calc(100% - 80px));
 }
+/* No bottom inset here: the sheet's content runs to the screen's bottom edge under the home indicator, and its
+   scroller pads its end by --viewer-end, so the last line can still scroll above the indicator (as a window's page
+   does, .ph-body). An inset here showed the card's gray as a band under Preview's page. */
 .ios-sheet-body {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  padding-bottom: env(safe-area-inset-bottom);
+}
+.ios-own-sheet:not(.tablet-sheet) .ios-sheet-body {
+  --viewer-end: env(safe-area-inset-bottom);
 }
 .ios-own-sheet.small .ios-sheet-body {
   padding-bottom: max(0px, calc(env(safe-area-inset-bottom) - 6px));
@@ -418,7 +413,7 @@ html[data-platform='ios'] {
 .ios-grouped {
   flex: 1;
   min-height: 0;
-  padding-bottom: 24px;
+  padding-bottom: calc(24px + var(--viewer-end, 0px));
 }
 .ios-group {
   margin: 20px 16px 0;

@@ -9,7 +9,7 @@ import type {
   AddonValue,
 } from './addons';
 import type { BuilderSetup, BuilderState } from './builder';
-import type { PreviewNetwork } from './preview';
+import type { PreviewNetwork, PreviewSource } from './preview';
 import type { RecentRun } from './dashboard';
 import type { RunFilter } from './runs';
 import type { CommandOutput, CommandPrompt } from './bash-mode';
@@ -392,9 +392,10 @@ export interface LooperApi {
     openFileDefault(taskId: string, path: string): Promise<void>;
     /**
      * An HTML file as a page Preview's frame loads, served apart from Looper with the network access Settings →
-     * Advanced allows; `load`: the Ask setting's Load was chosen for it. Resolves its address and that setting.
+     * Advanced allows; `load`: the Ask setting's Load was chosen for it. `file`: where it was read from, so the
+     * page loads the files in its folder by relative address. Resolves its address and that setting.
      */
-    previewPage(html: string, load: boolean): Promise<{ url: string; network: PreviewNetwork }>;
+    previewPage(html: string, load: boolean, file?: PreviewSource): Promise<{ url: string; network: PreviewNetwork }>;
     /** Save As… on a file the agent sent or changed: asks where, then copies it there from where the agent runs. Resolves when the file is saved or the dialog is cancelled. */
     saveFile(taskId: string, path: string): Promise<void>;
   };

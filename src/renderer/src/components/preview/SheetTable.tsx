@@ -104,7 +104,7 @@ function PhoneGrid({ labels, body, numbered, name }: { labels: string[]; body: S
   const width = labels.length * PHONE_COL + (numbered ? NUM_COL : 0);
   const num = (text: string) => numbered && <div style={cell(NUM_COL, { textAlign: 'right', opacity: 0.6 })}>{text}</div>;
   return (
-    <div ref={box} role="table" aria-label={name} style={{ flex: 1, minHeight: 0, overflow: 'auto', WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
+    <div ref={box} role="table" aria-label={name} style={{ flex: 1, minHeight: 0, overflow: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 'var(--viewer-end, 0px)', boxSizing: 'border-box' } as React.CSSProperties}>
       <div style={{ width, minWidth: '100%' }}>
         <div role="row" style={{ position: 'sticky', top: 0, zIndex: 1, display: 'flex', height: ROW_H, background: 'Canvas', fontWeight: 600, borderBottom: LINE }}>
           {num('')}

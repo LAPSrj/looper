@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
-import { firstDrawn, nextDrawn, placeKey as keyOf, placeToRestore, type Drawn, type Place } from './kept-place';
+import { platform } from '../platform';
+import { BatchPlace, firstDrawn, nextDrawn, placeKey as keyOf, placeToRestore, type Drawn, type Place } from './kept-place';
+import { useTopRequests } from './scroll-top';
 
 /** How many items a conversation draws at first: about a screen's worth, so it shows at once. */
 export const FIRST_ITEMS = 15;
@@ -16,6 +18,8 @@ const READY_SCREENS = 2;
 const OLDER_AT = 600;
 /** How many older items are added at a time, so each batch fits in a frame on a phone. */
 const BATCH = 20;
+/** How long a batch waits for what `prepare` fetches (its thumbnails): past it, it's drawn without them. */
+const PREPARE_MS = 1000;
 
 const whenIdle = (fn: () => void): (() => void) => {
   if (typeof requestIdleCallback === 'function') {
@@ -30,6 +34,18 @@ const placeKey = (): string => keyOf(location.search, location.hash);
 
 /** The scroller shows its end, give or take `slack` px. */
 export const atEnd = (el: HTMLElement, slack = 40): boolean => el.scrollHeight - el.scrollTop - el.clientHeight < slack;
+
+/** Fingers on the screen, for BatchPlace: on iOS a scroll held under a finger hasn't ended. */
+let fingers = 0;
+const fingersOn = new WeakSet<Document>();
+function countFingers(doc: Document): void {
+  if (fingersOn.has(doc)) return;
+  fingersOn.add(doc);
+  const count = (e: TouchEvent) => {
+    fingers = e.touches.length;
+  };
+  for (const type of ['touchstart', 'touchend', 'touchcancel'] as const) doc.addEventListener(type, count, { capture: true, passive: true });
+}
 
 /** The page put its kept place back already: a later conversation is one the reader opened. */
 let placeRead = false;
@@ -164,6 +180,10 @@ function followSize(el: HTMLElement, stays: RefObject<boolean>): () => void {
  * and the newer ones below are added as the reader scrolls down to them; `newer` counts those not drawn yet.
  * `lead`: how many items come ahead of the conversation's last part (a chat's history, read in after it opened):
  * items added there don't draw, and the drawn ones stay drawn (nextDrawn).
+ * A status bar tap (scroll-top.ts) scrolls through what's drawn without adding older items, then draws the first
+ * ones, at the top, and the newer ones as the reader scrolls down.
+ * `prepare(from, to)`: what older items [from, to) need before they're drawn (their thumbnails, so they're drawn at
+ * their size and don't grow above the reader); null when nothing.
  */
 export function useNewestFirst(
   scrollRef: RefObject<HTMLElement | null>,
@@ -173,6 +193,7 @@ export function useNewestFirst(
   first = FIRST_ITEMS,
   startAt?: number,
   lead = 0,
+  prepare?: (from: number, to: number) => Promise<void> | null,
 ): { hidden: number; newer: number; onScroll: (el: HTMLElement) => void; toEnd: () => void } {
   const [drawn, setDrawn] = useState<Drawn>(() => ({ key, lead, empty: total === 0, ...firstDrawn(total, first, startAt) }));
   const next = nextDrawn(drawn, key, total, lead, first, startAt);
@@ -180,34 +201,81 @@ export function useNewestFirst(
   const hidden = Math.min(drawn.start, total);
   const newer = drawn.end === null ? 0 : Math.max(0, total - drawn.end);
   const card = first < FIRST_ITEMS;
-  // Where the reader was as older items were added above, to keep them there.
-  const anchor = useRef<{ height: number; top: number } | null>(null);
-  // Newer items are being added: older ones wait, or the anchor would count their height too.
+  // Older items are being added: the reader's place is kept while they are (BatchPlace).
+  const asking = useRef(false);
+  const place = useRef<BatchPlace | null>(null);
+  place.current ??= new BatchPlace({
+    shiftWhileScrolling: platform === 'ios',
+    fingers: () => fingers,
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
+    frame: (fn) => requestAnimationFrame(fn),
+  });
+  const keeper = place.current;
+  // Newer items are being added: older ones wait, so one batch is drawn at a time.
   const addingNewer = useRef(false);
+  // A status bar tap is scrolling to the top (older items wait), or has asked for the first items and the scroller is to go to 0 with them.
+  const toTop = useRef(false);
+  const jump = useRef(false);
+  const latest = useRef({ key, hidden });
+  latest.current = { key, hidden };
   const older = (count: number) => {
-    const el = scrollRef.current;
-    if (anchor.current || addingNewer.current) return;
-    if (el) anchor.current = { height: el.scrollHeight, top: el.scrollTop };
-    setDrawn((d) => ({ ...d, start: Math.max(0, d.start - count) }));
+    if (asking.current || addingNewer.current || toTop.current || jump.current) return;
+    asking.current = true;
+    const draw = () => {
+      const el = scrollRef.current;
+      if (el) {
+        if (platform === 'ios') countFingers(el.ownerDocument);
+        keeper.before(el);
+      }
+      setDrawn((d) => ({ ...d, start: Math.max(0, d.start - count) }));
+    };
+    const wait = prepare?.(Math.max(0, hidden - count), hidden);
+    if (!wait) return draw();
+    void Promise.race([wait, new Promise((done) => setTimeout(done, PREPARE_MS))]).then(() => {
+      // Another conversation, or this one drawn otherwise meanwhile (from its end, a status bar tap): not this batch.
+      if (latest.current.key !== key || latest.current.hidden !== hidden || toTop.current || jump.current) {
+        if (latest.current.hidden === hidden) asking.current = false;
+        return;
+      }
+      draw();
+    });
   };
   const drawNewer = (count: number) => {
-    if (anchor.current || addingNewer.current) return;
+    if (asking.current || addingNewer.current) return;
     addingNewer.current = true;
     setDrawn((d) => ({ ...d, end: d.end === null ? null : d.end + count }));
   };
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    const a = anchor.current;
-    anchor.current = null;
+    const asked = asking.current;
+    asking.current = false;
     addingNewer.current = false;
-    if (el && a) el.scrollTop = a.top + el.scrollHeight - a.height;
+    const jumped = jump.current;
+    jump.current = false;
+    if (el && jumped) {
+      keeper.drop(el);
+      el.scrollTop = 0;
+    } else if (el) keeper.drawn(el);
     // Too few to scroll, so no scroll would ever ask for more: add them now. A card only fills its own height.
-    else if (el && el.scrollHeight <= el.clientHeight + (card ? 0 : OLDER_AT)) {
+    if (el && (!asked || jumped) && el.scrollHeight <= el.clientHeight + (card ? 0 : OLDER_AT)) {
       if (newer > 0) drawNewer(BATCH);
       else if (hidden > 0) older(card ? CARD_ITEMS : BATCH);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hidden, drawn.end]);
+  useEffect(() => () => keeper.drop(null), [keeper]);
+  useTopRequests(scrollRef, {
+    hold: (on) => {
+      toTop.current = on;
+    },
+    arrived: () => {
+      if (hidden === 0) return false;
+      jump.current = true;
+      setDrawn((d) => ({ ...d, ...firstDrawn(total, first, 0) }));
+      return true;
+    },
+  });
   // `all`: the next batch once this one is on the screen. Otherwise, older ones while the page has nothing else to do.
   const prefetch = !card && total - newer - hidden < READY;
   // The next idle batch, while one waits: older items until READY_SCREENS of them are above the view.
@@ -235,6 +303,7 @@ export function useNewestFirst(
   }, [all, hidden, newer, prefetch]);
   // `all` is drawing them already, a batch a frame. A reader scrolling up into what's drawn above gets more while idle.
   const onScroll = (el: HTMLElement) => {
+    keeper.scrolled();
     if (all) return;
     if (hidden > 0 && el.scrollTop <= OLDER_AT) older(BATCH);
     else if (newer > 0 && el.scrollHeight - el.scrollTop - el.clientHeight <= OLDER_AT) drawNewer(BATCH);

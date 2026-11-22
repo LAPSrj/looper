@@ -1,6 +1,7 @@
-import { app, BrowserWindow, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, protocol, shell, Tray } from 'electron';
-import { previewFrame, previewFrameHeaders } from './preview-frames';
+import { app, BrowserWindow, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, protocol, session, shell, Tray } from 'electron';
+import { previewCorsType, previewDesktopLoad, previewFrame, previewFrameHeaders, previewFrameResource } from './preview-frames';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import fs from 'node:fs';
 import { createEngine, type CommandPlace, type Engine } from '../engine/engine';
 import { writeAppLaunch } from '../engine/cli-tool';
@@ -129,16 +130,31 @@ if (!app.requestSingleInstanceLock()) {
     if (file) void openLooperFile(file);
   });
 
-  // Preview's HTML pages: an origin of their own (looper-preview://<token>/), apart from Looper's windows.
-  protocol.registerSchemesAsPrivileged([{ scheme: 'looper-preview', privileges: { standard: true, secure: true } }]);
+  // Preview's HTML pages: an origin of their own (looper-preview://<token>/), apart from Looper's windows. CORS, so a
+  // page's fonts and module scripts load; no Fetch API, so its scripts can't fetch() from it, and session.webRequest
+  // below cancels every other load that isn't one the page shows or runs (an XHR, a frame or a page of a file).
+  protocol.registerSchemesAsPrivileged([{ scheme: 'looper-preview', privileges: { standard: true, secure: true, corsEnabled: true } }]);
 
   app.whenReady().then(async () => {
-    protocol.handle('looper-preview', (req) => {
-      // The page is the only thing served: a frame or a file it names by a relative address isn't, as on a device.
+    protocol.handle('looper-preview', async (req) => {
+      // The page at /, and the files in its folder by their relative addresses below it, when its folder is known.
       const url = new URL(req.url);
-      const f = url.pathname === '/' ? previewFrame(url.host) : undefined;
-      return f ? new Response(f.html, { headers: previewFrameHeaders(f) }) : new Response('Not Found', { status: 404 });
+      if (url.pathname === '/') {
+        const f = previewFrame(url.host);
+        return f ? new Response(f.html, { headers: previewFrameHeaders(f) }) : new Response('Not Found', { status: 404 });
+      }
+      const r = await previewFrameResource(url.host, url.pathname, previewCorsType);
+      if (!r) return new Response('Not Found', { status: 404 });
+      if (req.method === 'HEAD') {
+        await r.handle.close();
+        return new Response(null, { headers: r.headers });
+      }
+      return new Response(Readable.toWeb(r.handle.createReadStream()) as ReadableStream<Uint8Array>, { headers: r.headers });
     });
+    // The one onBeforeRequest listener of the session (a second would replace it): only Preview's addresses.
+    session.defaultSession.webRequest.onBeforeRequest({ urls: ['looper-preview://*/*'] }, (details, done) =>
+      done({ cancel: !previewDesktopLoad(details.url, details.resourceType) }),
+    );
     // When each step of starting ended, from the process's start, for perf.log once the main window has loaded.
     const startup: string[] = [];
     const mark = (step: string) => startup.push(`${step} ${Math.round(performance.now())} ms`);
@@ -1515,7 +1531,7 @@ function addonDeps(): AddonUiDeps {
 }
 
 function openInstructionsWindow(): void {
-  openChildWindow('instructions', 'Instructions', 800, 700, undefined, { role: 'editor' });
+  openChildWindow('instructions', 'Instructions', 800, 700, undefined, { role: 'tool' });
 }
 
 function openEngineLogWindow(): void {
@@ -1646,7 +1662,7 @@ function openVersionsWindow(taskId: string): void {
     open.focus();
     return;
   }
-  versionWindows.set(openChildWindow(`versions/${encodeURIComponent(taskId)}`, 'Version History', 640, 480, undefined, { role: 'editor' }), taskId);
+  versionWindows.set(openChildWindow(`versions/${encodeURIComponent(taskId)}`, 'Version History', 640, 480, undefined, { role: 'tool' }), taskId);
 }
 
 function openVersionDetailWindow(taskId: string, n: number, compare: boolean, _parent: AppWindow | null): void {
@@ -1766,7 +1782,7 @@ function openRemoteHelpersWindow(): void {
     open.focus();
     return;
   }
-  remoteHelpersWindows.set(openChildWindow('remote-helpers', 'Helpers', 640, 440, undefined, { role: 'editor', contentSize: true }));
+  remoteHelpersWindows.set(openChildWindow('remote-helpers', 'Helpers', 640, 440, undefined, { role: 'tool', contentSize: true }));
 }
 
 // Page sizes: every field shows without a scroll bar.
@@ -2059,7 +2075,7 @@ function openRemoteConversationsWindow(): void {
     open.focus();
     return;
   }
-  const child = openChildWindow('remote-conversations', 'Remote Control Conversations', 820, 600, undefined, { role: 'editor' });
+  const child = openChildWindow('remote-conversations', 'Remote Control Conversations', 820, 600, undefined, { role: 'workspace' });
   child.setMaximizable(true);
   remoteConversationsWindows.set(child);
 }

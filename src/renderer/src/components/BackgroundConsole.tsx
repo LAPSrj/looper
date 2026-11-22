@@ -1,7 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { mergeOutput, type OutputShown } from '@shared/output-tail';
 import type { BackgroundTask } from '@shared/sessions';
+import { WORKFLOW_STATUS_TEXT } from '@shared/workflows';
 import { stripAnsi } from '../format';
+import { DetailInBar } from './ListDetail';
+import { useWaitedText } from './Live';
+import { NavBar } from './NavBar';
 import { atEnd, useNewestFirst, useStayAtEnd } from './newest-first';
 
 /** How often a running command's output is asked for; an unchanged file answers with nothing. */
@@ -72,12 +76,21 @@ function outputBlocks(text: string): string[] {
   return blocks;
 }
 
+/** A background command's or workflow's state: "Running for 3 min" counts whole minutes, from a minute on. */
+export function useBackgroundStatus(b: BackgroundTask): string {
+  const started = b.startedAt ? Date.parse(b.startedAt) : NaN;
+  return useWaitedText(b.status === 'running' && !Number.isNaN(started) ? started : null, WORKFLOW_STATUS_TEXT[b.status]);
+}
+
 /**
  * The selected background task as a console, as Now shows a command: its title and state, then the command at
  * the prompt and its output as it comes, with a cursor while it runs and Claude's summary once it ends. Only the
- * newest output is drawn at first; older lines are drawn as the reader scrolls up to them.
+ * newest output is drawn at first; older lines are drawn as the reader scrolls up to them. Pushed on a phone, its
+ * title is the bar's (ListDetail's detailTitle) and its state the line under it, so it has no title row of its own.
  */
-export function BackgroundConsole({ b, sessionId, status }: { b: BackgroundTask; sessionId: string; status: ReactNode }) {
+export function BackgroundConsole({ b, sessionId }: { b: BackgroundTask; sessionId: string }) {
+  const status = useBackgroundStatus(b);
+  const inBar = useContext(DetailInBar);
   const out = useBackgroundOutput(sessionId, b);
   const text = out && out !== 'gone' ? out.text : '';
   const blocks = useMemo(() => outputBlocks(text), [text]);
@@ -88,10 +101,14 @@ export function BackgroundConsole({ b, sessionId, status }: { b: BackgroundTask;
   useStayAtEnd(ref, stays, `${text.length}/${b.status}`);
   return (
     <div className="now-screen bg-screen">
-      <div className="now-title">
-        <span className="now-tool bg-screen-label">{b.label}</span>
-        <span className={`bg-screen-status${b.status === 'failed' ? ' error-text' : ' muted'}`}>{status}</span>
-      </div>
+      {inBar ? (
+        <NavBar subtitle={status} order={30} />
+      ) : (
+        <div className="now-title">
+          <span className="now-tool bg-screen-label">{b.label}</span>
+          <span className={`bg-screen-status${b.status === 'failed' ? ' error-text' : ' muted'}`}>{status}</span>
+        </div>
+      )}
       <div
         ref={ref}
         className="now-terminal bg-console"

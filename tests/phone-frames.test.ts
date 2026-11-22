@@ -297,8 +297,14 @@ describe('presentation', () => {
     expect(presentation('ios', win('workspace', false), true, phone)).toBe('root');
     expect(presentation('ios', win('workspace', false), false, phone)).toBe('push');
     expect(presentation('ios', win('editor', true), false, phone)).toBe('page-sheet');
+    // An editor is a sheet on an iPhone as on an iPad, modal or not (HIG Sheets: Cancel leading, Done trailing).
+    expect(presentation('ios', win('editor', false), false, phone)).toBe('page-sheet');
+    expect(presentation('ios', win('tool', false), false, phone)).toBe('push');
     expect(presentation('android', win('workspace', false), false, phone)).toBe('push');
     expect(presentation('android', win('editor', true), false, phone)).toBe('full-dialog');
+    // An editor is a full-screen dialog on an Android phone, modal or not (Material 3, Dialogs).
+    expect(presentation('android', win('editor', false), false, phone)).toBe('full-dialog');
+    expect(presentation('android', win('tool', false), false, phone)).toBe('push');
     expect(presentation('android', win('prompt', true), false, phone)).toBe('bottom-sheet');
   });
 
@@ -311,7 +317,8 @@ describe('presentation', () => {
 
   it('on an Android tablet: modal windows are dialogs', () => {
     expect(presentation('android', win('editor', true), false, ipad)).toBe('dialog');
-    expect(presentation('android', win('editor', false), false, ipad)).toBe('push');
+    expect(presentation('android', win('editor', false), false, ipad)).toBe('dialog');
+    expect(presentation('android', win('tool', false), false, ipad)).toBe('push');
   });
 
   it('knows which presentations hide what is under them', () => {

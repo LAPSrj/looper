@@ -165,7 +165,6 @@ function IosBar({
       className={`ios-bar${edge?.scrolled ? ' edge' : ''}${edge && !edge.scrolled && darkColor(edge.color) ? ' on-dark' : ''}`}
       style={edge && !edge.scrolled ? { background: edge.color } : undefined}
     >
-      {sc.pres === 'page-sheet' && !shell.tablet && <div className="ios-grabber" aria-hidden="true" />}
       {shell.tablet && nav?.tabs && <IosTabBar tabs={nav.tabs} />}
       <IosBarRow model={model} onMore={more} onActionMenu={actionMenuHere} titleFaded={!showTitle} />
       <OfflineBanner connection={connection} />
@@ -268,7 +267,6 @@ function Sheet({
       <div className="ph-scrim" />
       <div ref={card} className="ph-card" role="dialog" aria-modal="true" aria-label={label}>
         <header className="ios-bar" {...drag}>
-          {!shell.tablet && <div className="ios-grabber" aria-hidden="true" />}
           {header ?? (
             <BarHostContext.Provider value={host}>
               <NavBar title={label} {...bar} />

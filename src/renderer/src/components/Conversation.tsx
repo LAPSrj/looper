@@ -7,6 +7,7 @@ import { ChatRow, ToolGroup, type RowCtx } from './ChatRows';
 import type { ChatItem } from './chat-groups';
 import { firstBelow } from './kept-place';
 import { atEnd, CARD_ITEMS, FIRST_ITEMS, readPlace, useKeepPlace, useNewestFirst, useStayAtEnd } from './newest-first';
+import { prefetchThumbs } from './thumb-sizes';
 
 /**
  * A run of a conversation's items under one heading (a chat's earlier sessions, then the chat itself). The first
@@ -115,6 +116,16 @@ export function Conversation({
     card ? CARD_ITEMS : FIRST_ITEMS,
     place && !place.atEnd ? place.item : undefined,
     lead,
+    // Older items' thumbnails are fetched first, so they're drawn at their size above the reader.
+    (from, to) => {
+      const items: ChatItem[] = [];
+      let at = 0;
+      for (const p of parts) {
+        items.push(...p.items.slice(Math.max(0, from - at), Math.max(0, to - at)));
+        at += p.items.length;
+      }
+      return prefetchThumbs(items, ctx.taskId);
+    },
   );
   const end = total - newer;
   const savePlace = useKeepPlace(

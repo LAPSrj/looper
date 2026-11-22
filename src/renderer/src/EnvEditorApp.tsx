@@ -255,7 +255,7 @@ export function EnvEditorApp({ envId, isNew }: { envId: string; isNew?: boolean 
           </div>
         )}
       />
-      <WindowActions confirm={{ label: 'Save', run: () => saver.save(doSave) }} apply={{ run: () => void saver.apply(doSave) }} busy={saver.busy} />
+      <WindowActions draft={draft} confirm={{ label: 'Save', run: () => saver.save(doSave) }} apply={{ run: () => void saver.apply(doSave) }} busy={saver.busy} />
     </div>
   );
 }

@@ -31,7 +31,7 @@ import {
 import { cleanDeviceName, safeEqual, type Clock, type DeviceStore, type Pairing, type StoredDevice } from './devices';
 import { manifest, serviceWorker, withMobileHead } from './pwa';
 import { parseSubscription } from './push';
-import { previewFrame, previewFrameHeaders } from '../preview-frames';
+import { previewDeviceLoad, previewFrame, previewFrameHeaders, previewFrameResource } from '../preview-frames';
 import { sendPayload, StaticCache } from './static-cache';
 
 export const MAX_PAIR_BODY_BYTES = 4 * 1024;
@@ -573,8 +573,9 @@ export class RemoteServer {
         return await this.api(req, res, url, via.source);
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return this.text(res, 405, 'Method Not Allowed');
-      const frame = /^\/preview-frame\/([0-9a-f]{32})$/.exec(url.pathname);
-      if (frame) return this.previewPage(req, res, frame[1], via.source);
+      // A previewed page at /preview-frame/<token>/, and the files of its folder below it.
+      const frame = /^\/preview-frame\/([0-9a-f]{32})(\/.*)?$/.exec(url.pathname);
+      if (frame) return !frame[2] || frame[2] === '/' ? this.previewPage(req, res, frame[1], via.source) : await this.previewFile(req, res, frame[1], frame[2]);
       return await this.serveStatic(req, res, url.pathname, via.source);
     } catch (err) {
       // The browser went away mid-response (a closed tab, a canceled download): nothing went wrong here.
@@ -595,6 +596,29 @@ export class RemoteServer {
     if (!f) return this.text(res, 404, 'Not Found');
     res.writeHead(200, previewFrameHeaders(f));
     res.end(req.method === 'HEAD' ? undefined : f.html);
+  }
+
+  /**
+   * A file a previewed page loads by a relative address (previewFrameResource): only for a page issued to a device,
+   * only from its file's folder, and only for a load the page shows or runs (previewDeviceLoad: Sec-Fetch-Dest), never
+   * for its scripts to read. The token lets it in, not the device's cookie: the page's sandbox gives it an opaque
+   * origin, so Chromium counts its loads as cross-site and sends no SameSite=Strict cookie with them.
+   */
+  private async previewFile(req: http.IncomingMessage, res: http.ServerResponse, token: string, pathname: string): Promise<void> {
+    if (!previewFrame(token)?.device) return this.text(res, 404, 'Not Found');
+    const dest = header(req, 'sec-fetch-dest');
+    if (!previewDeviceLoad(dest)) return this.text(res, 403, 'Forbidden');
+    // A font or a module script loads in CORS mode; Access-Control-Allow-Origin goes with that load only.
+    const cors = (dest === 'font' || dest === 'script') && header(req, 'sec-fetch-mode') === 'cors';
+    const r = await previewFrameResource(token, pathname, () => cors);
+    if (!r) return this.text(res, 404, 'Not Found');
+    res.writeHead(200, r.headers);
+    if (req.method === 'HEAD') {
+      await r.handle.close();
+      res.end();
+      return;
+    }
+    await pipeline(r.handle.createReadStream(), res);
   }
 
   private text(res: http.ServerResponse, status: number, body: string): void {

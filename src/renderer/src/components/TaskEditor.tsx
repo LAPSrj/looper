@@ -8,7 +8,7 @@ import { agentDiffers, projectAgentIn, sameFolder, withProjectAgent } from '@sha
 import { envToLine, joinTokens } from '@shared/cmdline';
 import { claudeArgsProblem } from '@shared/claude-args';
 import { EXAMPLE_TASK } from '@shared/example-task';
-import { CheckboxField, Field, FieldRow, FormGroup, InlineField, InputRow, NumberField, NumberInput, RadioField, RangeField, SelectInput, StepFields, TabBar, TextArea, TextInput, ToggleButtons } from './ui';
+import { CheckboxField, Field, FieldRow, FormGroup, InlineField, InputRow, NumberField, NumberInput, RadioField, RangeField, SelectInput, StepFields, TabBar, TextArea, TextInput, CheckboxChoices } from './ui';
 import { WindowActions } from './WindowActions';
 import { useDialogKeys, useSave } from './hooks';
 import { parseArgsEnv } from './form-blocks';import { blankDraft, type Draft } from './blank-draft';
@@ -609,7 +609,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                 )}
                 {schedForm.mode === 'monthly' && (
                   <Field label="Days of month">
-                    <ToggleButtons wrap options={MONTH_DAYS} value={schedForm.days} onChange={(days) => setSchedule({ ...schedForm, days })} />
+                    <CheckboxChoices wrap options={MONTH_DAYS} value={schedForm.days} onChange={(days) => setSchedule({ ...schedForm, days })} />
                   </Field>
                 )}
                 {(schedForm.mode === 'weekly' || schedForm.mode === 'monthly') && (
@@ -631,7 +631,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                     onChange={(h) => setSchedule({ ...schedForm, from: h?.from, to: h?.to })}
                   />
                   <Field label="On days">
-                    <ToggleButtons options={WEEKDAYS} value={constraintDays} onChange={(days) => setSchedule({ ...schedForm, days: days.length === 7 ? undefined : days })} />
+                    <CheckboxChoices options={WEEKDAYS} value={constraintDays} onChange={(days) => setSchedule({ ...schedForm, days: days.length === 7 ? undefined : days })} />
                   </Field>
                 </>
               )}
@@ -674,7 +674,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
               )}
               {schedForm.mode === 'weekly' && (
                 <Field label="On days">
-                  <ToggleButtons options={WEEKDAYS} value={schedForm.days} onChange={(days) => setSchedule({ ...schedForm, days })} />
+                  <CheckboxChoices options={WEEKDAYS} value={schedForm.days} onChange={(days) => setSchedule({ ...schedForm, days })} />
                 </Field>
               )}
               {schedForm.mode === 'custom' && (
@@ -744,7 +744,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                   />
                   <ActiveHours value={hours} onChange={(h) => setWatcher({ activeHours: h })} />
                   <Field label="On days">
-                    <ToggleButtons options={WEEKDAYS} value={watcherDays} onChange={(days) => setWatcher({ days: days.length === 7 ? undefined : days })} />
+                    <CheckboxChoices options={WEEKDAYS} value={watcherDays} onChange={(days) => setWatcher({ days: days.length === 7 ? undefined : days })} />
                   </Field>
                   {(hours || watcher?.days) && (
                     <Field label="Time zone">
@@ -1122,7 +1122,7 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
         )}
       </div>
       </TabBar>
-      <WindowActions confirm={{ label: isNew ? 'Create' : 'Save', run: save }} cancel={onCancel} apply={isNew ? undefined : { run: apply }} busy={saver.busy} />
+      <WindowActions draft={[draft, extraArgsText, envText]} confirm={{ label: isNew ? 'Create' : 'Save', run: save }} cancel={onCancel} apply={isNew ? undefined : { run: apply }} busy={saver.busy} />
     </div>
   );
 }

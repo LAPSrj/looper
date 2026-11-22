@@ -190,6 +190,8 @@ export class LiveSweep {
 const MAX_TEXT = 65_536;
 /** Code Mode: the delivered scripts kept to find whose calls a batch of them is (several can end together). */
 const SETTLED_KEPT = 16;
+/** How long after a search a running background command's output file is looked for again. */
+const LOCATE_RETRY_MS = 3000;
 const MAX_PREVIEW = 200;
 /** Readers kept warm for polling; least recently used beyond this are dropped (a transcript's, once unused for READER_KEEP_MS). */
 const MAX_READERS = 16;
@@ -673,6 +675,10 @@ export class TranscriptAccumulator {
   private structuredAnswers = new Map<string, MessageRow>();
   /** Code Mode: the REPL calls Claude Code dispatched, by their eval number, until a Poll delivers their result. */
   private replByEval = new Map<string, MessageRow>();
+  /** Code Mode: the REPL rows whose scripts ended, by eval number: output they log after returning (a "late" event) goes to them. */
+  private replEnded = new Map<string, MessageRow>();
+  /** Code Mode: the late output already added to a row, by eval number and text, since the same event comes in more than one record. */
+  private lateSeen = new Set<string>();
   /** Code Mode: the Poll calls (plumbing that delivers dispatched results), by tool_use id. */
   private pollIds = new Set<string>();
   /** The id of the record addLine is folding: its rows get it. */
@@ -723,6 +729,8 @@ export class TranscriptAccumulator {
     this.byToolId.clear();
     this.structuredAnswers.clear();
     this.replByEval.clear();
+    this.replEnded.clear();
+    this.lateSeen.clear();
     this.pollIds.clear();
     this.byBackgroundId.clear();
     this.ended.clear();
@@ -1275,7 +1283,7 @@ export class TranscriptAccumulator {
     const nonces = new Set(listed.split(/[\s,]+/).filter(Boolean));
     for (const m of text.matchAll(/<event nonce="([^"]+)" kind="repl-eval"([^>]*)>([\s\S]*?)<\/event>/g)) {
       const evalNo = /\beval="(\d+)"/.exec(m[2])?.[1];
-      const row = evalNo !== undefined && nonces.has(m[1]) ? this.replByEval.get(evalNo) : undefined;
+      const row = evalNo !== undefined && nonces.has(m[1]) ? this.replRow(evalNo, m[2]) : undefined;
       if (row) this.settleRepl(row, evalNo!, m[2], m[3]);
     }
     // A background task's end comes in the same delivery, as an event of its own.
@@ -1292,16 +1300,42 @@ export class TranscriptAccumulator {
     }
     const m = /^<event nonce="[^"]+" kind="repl-eval"([^>]*)>([\s\S]*)<\/event>$/.exec(envelope.trim());
     const evalNo = m ? /\beval="(\d+)"/.exec(m[1])?.[1] : undefined;
-    const row = evalNo !== undefined ? this.replByEval.get(evalNo) : undefined;
+    const row = evalNo !== undefined ? this.replRow(evalNo, m![1]) : undefined;
     if (row) this.settleRepl(row, evalNo!, m![1], m![2]);
+  }
+
+  /** The REPL row an event names by its eval number: the script that's still out, or (a "late" event) one that ended. */
+  private replRow(evalNo: string, attrs: string): MessageRow | undefined {
+    return this.replByEval.get(evalNo) ?? (/\bstatus="late"/.test(attrs) ? this.replEnded.get(evalNo) : undefined);
   }
 
   /**
    * A script's repl-eval event fills in its REPL row: its result, or the error that ended it, and the lines it
-   * logged. An event with neither (output logged after it ended) leaves the row as it is.
+   * logged. A "late" event (claude 2.1.327: output logged after the script returned, "[late output from eval #N
+   * (settled earlier) — delivered below.]") adds its lines to the row's logs, and a "lost" one (the process that
+   * ran the script exited) ends the row with that as its error. Any other event without a result or an error
+   * leaves the row as it is.
    */
   private settleRepl(row: MessageRow, evalNo: string, attrs: string, body: string): void {
+    const status = /\bstatus="(\w+)"/.exec(attrs)?.[1];
+    if (status === 'lost') {
+      this.replByEval.delete(evalNo);
+      row.result = cap(body.trim(), MAX_TEXT);
+      row.resultError = true;
+      this.rememberEnded(row, evalNo);
+      this.settle(row, attrs);
+      return;
+    }
     const logs = [...body.matchAll(/<log>([\s\S]*?)<\/log>/g)].map((l) => l[1].trim());
+    if (status === 'late') {
+      const lines = logs.filter((l) => !/^\[late output from eval #\d+/.test(l));
+      const text = lines.join('\n');
+      const key = `${evalNo}\0${text}`;
+      if (!text || this.lateSeen.has(key)) return;
+      this.lateSeen.add(key);
+      row.logs = cap(row.logs ? `${row.logs}\n${text}` : text, MAX_TEXT);
+      return;
+    }
     const result = /<result>([\s\S]*)<\/result>/.exec(body);
     const error = result ? null : /<error>([\s\S]*)<\/error>/.exec(body);
     const end = result ?? error;
@@ -1310,7 +1344,22 @@ export class TranscriptAccumulator {
     row.result = cap(end[1].trim(), MAX_TEXT);
     if (logs.length) row.logs = cap(logs.join('\n'), MAX_TEXT);
     if (error) row.resultError = true;
+    this.rememberEnded(row, evalNo);
     this.settle(row, attrs);
+  }
+
+  private rememberEnded(row: MessageRow, evalNo: string): void {
+    this.replEnded.set(evalNo, row);
+    if (this.replEnded.size > SETTLED_KEPT) this.replEnded.delete(this.replEnded.keys().next().value as string);
+  }
+
+  /**
+   * The background commands and Monitors whose output file is unknown: Claude Code says where a Monitor's, or a
+   * script's command's, goes only in the notification of its end (and an expired Monitor's names none), though the
+   * file is there from the start (MessagesService.locateBackground finds it).
+   */
+  unlocatedBackground(): MessageRow[] {
+    return [...this.byBackgroundId.values()].filter((r) => r.background && !r.background.outputFile && (r.tool === 'Bash' || r.tool === 'Monitor'));
   }
 
   /** The image a tool call's result carried, by the call's tool_use id (TranscriptReader.toolImage reads a transcript's). */
@@ -1634,6 +1683,10 @@ export class TranscriptReader {
   }
   private readonly candidates: string[];
   private file: string | null = null;
+  /** The transcript's path once it's found (the host's form). */
+  get path(): string | null {
+    return this.file;
+  }
   /** Where the next line starts: a line the file doesn't have the end of yet is read again from here. */
   private offset = 0;
   /** How much of the file has been read, so a poll that finds it the same size reads nothing. */
@@ -2146,6 +2199,7 @@ export class MessagesService {
       } catch {
         continue; // this step's transcript is not written yet (or was cleaned up)
       }
+      await this.locateBackground(taskId, reader);
       rows.push(...reader.acc.rows);
       for (const [id, status] of reader.acc.ended) ended[id] = status;
       // The classifier's session isn't the one guidance goes to; the newest agent session's list counts.
@@ -2519,6 +2573,58 @@ export class MessagesService {
   async contextModel(taskId: string, runId: string): Promise<string | null> {
     const found = await findStepTranscript(this.deps.runDir(taskId, runId), '', (p) => this.toHostPath(p, taskId));
     return found?.kind === 'claude' ? ((await readSubagentStats(found.file).catch(() => null))?.model ?? null) : null;
+  }
+
+  /** When each background command's output file was last looked for (taskId/id), so one that isn't there yet isn't searched for on every read. */
+  private readonly locating = new Map<string, number>();
+
+  /**
+   * A Monitor's output file, or a script's background command's, isn't named until the task ends, but Claude Code
+   * keeps it from the start at /tmp/claude-<uid>/<project>/<session>/tasks/<task>.output, in the target's /tmp, where
+   * <project> and <session> are the transcript's folder and name. The rows that lack one get it once the file exists.
+   */
+  private async locateBackground(taskId: string, reader: TranscriptReader): Promise<void> {
+    const rows = reader.acc.unlocatedBackground();
+    const file = reader.path;
+    if (!rows.length || !file) return;
+    const parts = file.split(/[\\/]/);
+    const session = parts.pop()?.replace(/\.jsonl$/, '');
+    const project = parts.pop();
+    if (!session || !project) return;
+    const now = Date.now();
+    // A running one's file may not be there yet: it's looked for again; a finished one's only once.
+    const due = rows.filter((r) => {
+      const last = this.locating.get(`${taskId}/${r.background!.id}`);
+      return last === undefined || (r.background!.status === 'running' && now - last >= LOCATE_RETRY_MS);
+    });
+    if (!due.length) return;
+    const tmp = await transcriptHostPath('/tmp', this.deps.host, this.wslDistro(taskId));
+    if (!tmp) return;
+    let owners: string[] = [];
+    try {
+      owners = (await fs.promises.readdir(tmp)).filter((n) => /^claude-\d+$/.test(n));
+    } catch {
+      /* no /tmp of the target to read */
+    }
+    for (const r of due) {
+      const id = r.background!.id;
+      this.locating.set(`${taskId}/${id}`, now);
+      for (const owner of owners) {
+        const found = await fs.promises
+          .stat(path.join(tmp, owner, project, session, 'tasks', `${id}.output`))
+          .then(() => true, () => false);
+        if (found) {
+          r.background = { ...r.background!, outputFile: `/tmp/${owner}/${project}/${session}/tasks/${id}.output` };
+          break;
+        }
+      }
+    }
+  }
+
+  private wslDistro(taskId: string): string | undefined {
+    const task = this.deps.getTask(taskId);
+    const env = task ? this.deps.settings.environments.find((e) => e.id === task.environmentId) : undefined;
+    return env?.kind === 'wsl' ? env.distro : undefined;
   }
 
   /** Translate the transcript path from the run target's form to the engine host's. */

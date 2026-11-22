@@ -25,7 +25,17 @@ Each value below names where it comes from:
 - **LG guide**: Apple's "Adopting Liquid Glass" technology overview.
 - **WWDC25**: the session "Meet Liquid Glass" (WWDC25 219), for how glass
   moves; **WWDC23**: "Animate with springs" (WWDC23 10158).
-- **SwiftUI**: the `Animation` reference (`default`, `smooth`, `snappy`).
+- **SwiftUI**: the reference page named after it: `Animation` (`default`,
+  `smooth`, `snappy`), `ToolbarItemPlacement` and its placements,
+  `ToolbarSpacer`, `sharedBackgroundVisibility`, `tabBarMinimizeBehavior`,
+  `tabViewBottomAccessory`, `searchToolbarBehavior`.
+- **UIKit**: the reference page named after it (`UIToolbar`,
+  `UIBarButtonItem` `sharesBackground` and `hidesSharedBackground`,
+  `UITabBarController` `bottomAccessory`, `inputAccessoryView`).
+- **WWDC25 284, 323, 356**: "Build a UIKit app with the new design", "Build a
+  SwiftUI app with the new design" and "Get to know the new design system",
+  for bars, toolbars, the tab bar and search. Copies of these pages and
+  transcripts, and of the HIG pages, are in `scratch/ios-toolbars/sources/`.
 - **unverified**: how iOS behaves, from use rather than a document. Keep it,
   but check it on a device before changing anything around it.
 
@@ -142,10 +152,129 @@ Sizes are points, which are CSS pixels.
   or Close (kit, HIG Toolbars).
 - The title is 17/22 semibold, centered. With a subtitle the title is 15/20
   semibold over a 12/16 medium subtitle in secondary label on glass (kit).
+  The bar's two sides take the wider one's width (`--ios-bar-side`, set by
+  `IosBarRow`), so the title stays centered on the screen whatever Back and the
+  buttons at the end hold, and is cut when it doesn't fit, never moved.
 - A large title is 34/41 bold, 16 from the leading edge, its subtitle 15/20
   medium (kit).
 - In a sheet the bar's buttons sit 16 below the sheet's top (kit), and on iPad
   10 in from its edges (kit log).
+- Where an item goes (SwiftUI, `ToolbarItemPlacement`): `navigation` and
+  `cancellationAction` at the leading edge; `primaryAction`,
+  `confirmationAction`, `destructiveAction` and `automatic` at the trailing
+  edge; `principal` "in the center of the navigation bar. This item takes
+  precedent over a title", for "key units of functionality", such as "the
+  location field for a web browser".
+- One key action (Done, Submit) is the prominent style: "This separates and
+  tints the action so there’s a clear focal point. Only specify one primary
+  action, and put it on the trailing side of the toolbar" (HIG Toolbars).
+- No bar background: "Remove any background customization from your
+  navigation and toolbars" (WWDC25 284).
+
+### Bottom toolbar
+
+- Commands that act on what the screen shows go in a toolbar at its bottom:
+  "If you need to provide controls that act on elements in the current view,
+  use a Toolbars instead" (HIG Tab bars). Never in the tab bar or its
+  accessory: "Avoid placing screen-specific actions here—a checkout button, for
+  example, belongs with the content it supports" (WWDC25 356).
+- It floats over the content as glass, with no background of its own: "Don’t
+  apply custom backgrounds or appearances to UIToolbar" (UIToolbar). The
+  content runs under it to the bottom edge, scrolls clear of it, and has a
+  scroll edge effect behind it: "All scroll views underneath navigation or
+  toolbars automatically apply a visual treatment" (WWDC25 284).
+- Grouping: "By default, bar button items using images share the background
+  with other image buttons ... Text buttons, the system “Done” and “Close”
+  buttons, and prominent style buttons have separate glass backgrounds"; a
+  fixed space splits a group; "each flexibleSpace item separates the
+  background between items" (WWDC25 284; UIToolbar, "Split the toolbar's
+  shared background"). `sharesBackground` false or `hidesSharedBackground`
+  puts an item in a group of its own (UIBarButtonItem).
+- "Be sure to not group symbols with text, like “Select” and the share icon"
+  (WWDC25 356); "Keep actions with text labels separate" (HIG Toolbars).
+- Group by function and frequency, and "aim for a maximum of three" groups
+  (HIG Toolbars).
+- A toggle that's on keeps its plain glass button and tints its symbol:
+  "Only the Flag symbol will get colored. To tint the button background, set
+  the style to prominent" (WWDC25 284). The tinted circle is only the
+  confirming action's (Navigation bar).
+- Status: informational text between the two ends. "Status items are
+  informational in nature, and don't represent an action ... In iOS and
+  iPadOS, the system places status items in the center of the bottom toolbar"
+  (SwiftUI `status`). No saved source gives its type: Looper uses Footnote
+  13/18 in secondary label (unverified).
+- With text outside the glass (a status) the edge behind it is the hard one:
+  the automatic style "provides a more opaque visual separation for top
+  toolbars that contain ... text that appears outside of Liquid Glass
+  controls" (HIG Scroll views, said of top toolbars; applied here to the
+  bottom one). Under
+  glass buttons alone it's the soft one (WWDC25 356: "Soft is the default").
+- Its buttons are the navigation bar's: 44 x 44 glass circles, several in one
+  capsule, 16 from the sides and 10 apart (kit: Toolbar - Top - iPhone; the
+  kit's bottom toolbar hasn't been measured). It sits 21 above an iPhone's
+  home indicator, where the tab bar sits (kit: Tab Bar - iPhone; unverified
+  for the toolbar).
+- Too many items: on iPhone "Create a More menu to include additional items"
+  (HIG Toolbars, iOS).
+- Material 3's counterpart is the floating toolbar (components.md,
+  BottomToolbar). Looper draws both with `BottomToolbar`.
+
+### iPad toolbar
+
+- Three areas: the leading edge (Back, the sidebar button, the title, a
+  document menu; not customizable), the center (common controls; people can
+  customize them, and they collapse into the overflow menu as the window
+  narrows), the trailing edge (items that must stay, inspectors, search, the
+  More menu and the primary action; "visible at all window sizes") (HIG
+  Toolbars, Item groupings).
+- Overflow is the system's: "The system automatically adds an overflow menu
+  in macOS or iPadOS when items no longer fit. Don’t add an overflow menu
+  manually" (HIG Toolbars).
+- Customization: "In iPadOS and macOS apps, consider letting people
+  customize the toolbar" (HIG Toolbars); "Only secondaryAction items support
+  customization in iPadOS" (SwiftUI `toolbar(id:content:)`); with
+  customization the system "places items in the center of the navigation bar"
+  (SwiftUI `automatic`).
+- "a toolbar and a Tab bars can coexist in the same horizontal space at the
+  top of the view" (HIG Toolbars, iPadOS).
+
+### Split view columns
+
+- Each column has its own bar and its own scroll edge effect: "In split view
+  layouts on iPad and Mac, each pane can have its own scroll edge effect; in
+  this case, keep them consistent in height to maintain alignment" (HIG
+  Scroll views).
+- Search for a split view is at the trailing edge of the navigation bar:
+  "This is ideal for split views" (WWDC25 284).
+- A bottom toolbar of one column: not covered by a saved source. Looper draws
+  it in the column whose content it acts on (the inspector's Now).
+
+### Floating controls
+
+- Controls that float over a scroll view's edge get the edge effect too:
+  "This new edge effect isn’t just for system bars ... two buttons overlaying
+  the bottom edge of the scroll view" (WWDC25 284,
+  `ScrollEdgeElementContainerInteraction`). "For denser UIs with a lot of
+  floating elements, opt in to a hard edge style" (WWDC25 284).
+- "Only use a scroll edge effect when a scroll view is behind floating
+  interface elements" (HIG Scroll views).
+
+### Keyboard accessory bar
+
+- Controls for the text being typed go above the keyboard: "keyboard items
+  are above the software keyboard when present, or at the bottom of the
+  screen when a hardware keyboard is attached" (SwiftUI `keyboard`;
+  UIKit `inputAccessoryView`).
+- "make sure they’re relevant to the current task ... If you use a standard
+  toolbar to contain your controls, it automatically adopts Liquid Glass"
+  (HIG Virtual keyboards).
+
+### Selection mode
+
+- Not covered: no saved source says what a toolbar holds while items are
+  selected. `EditButton` only says the Edit button "displays the title
+  “Done” while edit mode is active" (SwiftUI). Read Apple's pages before
+  building one.
 
 ### Tab bar
 
@@ -163,6 +292,21 @@ Sizes are points, which are CSS pixels.
   tint on a capsule (kit: Tab Bar - iPad).
 - The tab bar stays visible when a screen is pushed; only a modal covers it
   (HIG Tab bars).
+- It navigates and never acts: "Use a tab bar to support navigation, not to
+  provide actions" (HIG Tab bars); actions are the bottom toolbar's.
+- It can minimize on scroll: "set tabBarMinimizeBehavior to the desired
+  direction ... The tab bar re-expands when scrolling in the opposite
+  direction" (WWDC25 284), and "A person can exit the minimized state by
+  tapping a tab or scrolling to the top of the view" (HIG Tab bars). Looper
+  keeps it full size (Motion).
+- A bottom accessory sits above it for a persistent feature, "like the mini
+  player in the Music app ... When the tab bar is minimized, the accessory
+  view animates down to display inline with the tab bar" (WWDC25 284;
+  UITabBarController `bottomAccessory`, SwiftUI `tabViewBottomAccessory`).
+- A search tab sits at its trailing end (HIG Tab bars); selected, "a search
+  field takes the place of the tab bar" (WWDC25 323). The standard style
+  opens a search page with suggestions; the button style "brings focus to the
+  search field and displays the keyboard" (HIG Search fields).
 
 ### Lists
 
@@ -193,6 +337,21 @@ Sizes are points, which are CSS pixels.
   the bottom: the magnifier in label on glass, 17 pt medium text, the
   placeholder in placeholder on glass, the microphone in secondary label on
   glass; 11 in on the left, 10 on the right (kit: _Search).
+- Where search goes on iPhone: "As a tab in a tab bar; In a toolbar at the
+  bottom or top of the screen; Directly inline with content" (HIG Search
+  fields).
+- "Place search at the bottom if there’s room", in the bottom toolbar "either
+  as an expanded field or as a toolbar button, depending on how much space is
+  available"; tapped, "it animates into a search field above the keyboard"
+  (HIG Search fields; WWDC25 284). `searchToolbarBehavior(.minimized)` asks for
+  the button (SwiftUI).
+- At the top "when itʼs important to defer to content at the bottom of the
+  screen, or thereʼs no bottom toolbar", as a bar button (HIG Search fields).
+- Inline above the list it filters, when it searches only that list; "consider
+  pinning it to the top toolbar when scrolling" (HIG Search fields).
+- iPad: "at the trailing side of the toolbar for many common uses", or "at the
+  top of the sidebar when filtering content or navigation there" (HIG Search
+  fields).
 
 ### Segmented control
 
@@ -283,8 +442,28 @@ Sizes are points, which are CSS pixels.
   radius 38 at the top and 58 at the bottom (kit: Medium).
 - The grabber is 60 x 4, `#CCCCCC` (dark `#333333`), 6 below the sheet's top
   (kit).
+- Only a sheet that resizes has a grabber: "Include a grabber in a resizable
+  sheet. A grabber shows people that they can drag the sheet to resize it;
+  they can also tap it to cycle through the detents" (HIG Sheets), and
+  UIKit's `prefersGrabberVisible` is false unless set. A sheet with one
+  height (an editor, Preview, a file sheet) has none, still closes with a
+  swipe down, and keeps its bar's buttons 16 below its top. Looper's
+  grabber is a button: a tap, or VoiceOver's activation, moves the sheet to
+  its other height (`PhoneSheet`; `npm run ui-check`, grabber rules).
 - iPad: corner radius 32, the shadow above (kit: Sheet - iPad).
+- A large sheet's content runs to the screen's bottom edge, under the home
+  indicator, and its scroller pads its end by the safe area, so the last line
+  still scrolls above the indicator; nothing pads the sheet itself, which
+  showed the card's gray as a band under Preview's page (`--viewer-end` in
+  ios.css for the shell's own sheets, `--looper-safe-bottom` for a window's
+  page). A floating iPad sheet has no inset.
 - Swiping down dismisses it; with unsaved changes ask first (HIG Sheets).
+- Its top bar: "for sheets with a single view, the Cancel button belongs on
+  the leading edge of the top toolbar. When present, the Done button belongs
+  on the trailing edge" (HIG Sheets; SwiftUI `cancellationAction`,
+  `confirmationAction`). Done always comes with Cancel or Back, and "Avoid
+  showing all three buttons — Cancel, Done, and Back — together" (HIG
+  Sheets).
 
 ### Notifications
 
@@ -358,7 +537,10 @@ Springs, not eased curves, with no bounce unless the motion is small and quick
 - A tap on the status bar scrolls the screen's list to its top, on UIKit's
   animation. WebKit leaves the tap to UIKit, which moves only the top
   document's scroll view, so the shell keeps 1 px of it to scroll back
-  (`status-bar-tap.ts`).
+  (`status-bar-tap.ts`). It reaches the first item every time: a list that
+  draws its items in parts (a conversation's older messages) is scrolled
+  through what's drawn without adding older items, then draws its first items
+  at the top (`scroll-top.ts`), and a finger on the screen stops it.
 - Safari's own back swipe, in a tab and in the Home Screen app, wins whenever
   there's a history entry to go back to: from the edge, or across content that
   takes no sideways drag, and the page gets no touch until it fails (WebKit:

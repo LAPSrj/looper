@@ -538,7 +538,7 @@ function rootFor(
       const def = allTabs.addons.find((t) => t.id === tab);
       if (!def?.addon) return { title: '', actions: [], body: <div className="pg-scroll" /> };
       const { addon } = def;
-      if (!addon.tab) return { title: def.label, ...phoneNav(['addonPanes'], c), body: <PhoneAddonPanes m={m} c={c} addonId={addon.id} /> };
+      if (!addon.tab) return { title: def.label, ...phoneNav(['addonPanes'], c), body: <PhoneAddonPanes m={m} c={c} addonId={addon.id} title={def.label} /> };
       return {
         title: def.label,
         ...phoneNav(['addonScreen'], c),
@@ -651,7 +651,7 @@ function MoreView({ c, allTabs }: { c: CommandContext; allTabs: AllTabs }) {
  * top on Android (Material) and an iPad (the top of the list), at the bottom over the tab bar on an iPhone
  * (HIG: "Place search at the bottom if there's room").
  */
-function PhoneAddonPanes({ m, c, addonId }: { m: MainWindow; c: CommandContext; addonId: string }) {
+function PhoneAddonPanes({ m, c, addonId, title }: { m: MainWindow; c: CommandContext; addonId: string; title: string }) {
   const addon = m.addons.find((a) => a.id === addonId);
   if (!addon) return <div className="pg-scroll" />;
   // An addon that isn't running has no list: its state fills the screen, as on the desktop.
@@ -671,7 +671,17 @@ function PhoneAddonPanes({ m, c, addonId }: { m: MainWindow; c: CommandContext; 
           <SearchBox value={query} onChange={(q) => m.setAddonQuery(addon.id, q)} placeholder={search.prompt} />
         </div>
       )}
-      <div className={`pg-scroll${search ? ' has-search' : ''}`}>
+      <div
+        className={`pg-scroll${search ? ' has-search' : ''}`}
+        // A long press between the rows: the pane's menu, as it was on its title.
+        onContextMenu={(e) => {
+          const pane = addon.panes[0];
+          if (addon.panes.length !== 1 || (e.target as HTMLElement).closest('.pg-row, .pg-group-title')) return;
+          e.preventDefault();
+          showPaneMenu(c, addon.id, pane.id, m.addonPanes[addonPaneKey(addon.id, pane.id)]);
+        }}
+      >
+        <LargeTitle>{title}</LargeTitle>
         {addon.panes.map((pane) => {
           const key = addonPaneKey(addon.id, pane.id);
           const state = m.addonPanes[key];
@@ -679,25 +689,24 @@ function PhoneAddonPanes({ m, c, addonId }: { m: MainWindow; c: CommandContext; 
           const total = ready?.content.items.length ?? 0;
           const filtered = ready?.content.search && query.trim() ? shownItems(ready, query).length : null;
           return (
-            <Group
+            <AddonPaneList
               key={key}
-              title={`${pane.title}${ready ? ` (${filtered === null ? total : `${filtered} of ${total}`})` : ''}`}
-              onTitleMenu={() => showPaneMenu(c, addon.id, pane.id, state)}
-            >
-              <div className="pg-addon-pane">
-                <AddonPaneList
-                  addon={addon}
-                  pane={pane.id}
-                  state={state}
-                  selected={m.addonSel?.addonId === addon.id && m.addonSel.pane === pane.id ? m.addonSel.item : null}
-                  compact={false}
-                  query={query}
-                  onSelect={(item) => m.selectAddon({ addonId: addon.id, pane: pane.id, item: item.id })}
-                  onMenu={(item) => showPaneItemMenu(c, addon.id, pane.id, state, item)}
-                  onRetry={() => m.reloadAddon(addon.id)}
-                />
-              </div>
-            </Group>
+              addon={addon}
+              pane={pane.id}
+              state={state}
+              selected={m.addonSel?.addonId === addon.id && m.addonSel.pane === pane.id ? m.addonSel.item : null}
+              compact={false}
+              query={query}
+              onSelect={(item) => m.selectAddon({ addonId: addon.id, pane: pane.id, item: item.id })}
+              onMenu={(item) => showPaneItemMenu(c, addon.id, pane.id, state, item)}
+              onRetry={() => m.reloadAddon(addon.id)}
+              // The screen's title is the one pane's; with several, each pane's own title heads its sections.
+              head={
+                addon.panes.length > 1 && (
+                  <h2 className="pg-group-title">{`${pane.title}${ready ? ` (${filtered === null ? total : `${filtered} of ${total}`})` : ''}`}</h2>
+                )
+              }
+            />
           );
         })}
       </div>

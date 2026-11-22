@@ -94,9 +94,10 @@
 .android .pres-bottom-sheet .ph-frame {
   background: transparent;
 }
+/* A basic dialog is 280 to 560 dp wide (Material 3 Dialogs, Measurements: container width min 280dp, max 560dp). */
 .android .pres-dialog > .ph-card {
   margin: auto;
-  width: min(var(--win-w, 560px), calc(100% - 48px));
+  width: min(var(--win-w, 560px), 560px, calc(100% - 48px));
   height: min(calc(var(--win-h, 480px) + 64px), calc(100% - 48px));
   border-radius: 28px;
   background: var(--md-surface-container-high);
@@ -334,14 +335,25 @@
 .md-sheet-layer {
   z-index: 600;
 }
+/* Edge to edge: the dialog runs under the navigation bar, and what's at its bottom pads its end by the bar's inset:
+   a scroller by --viewer-end (its last line scrolls above the bar), the bottom actions by their own padding, their
+   divider and buttons above the bar. */
 .md-own-card {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
   background: var(--md-surface);
-  padding-bottom: env(safe-area-inset-bottom);
   animation: ph-up-in 0.4s cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+.md-own-dialog:not(.tablet) .md-own-card {
+  --viewer-end: env(safe-area-inset-bottom);
+}
+.md-own-dialog:not(.tablet) .md-own-card:has(> .md-bottom-actions) {
+  --viewer-end: 0px;
+}
+.md-own-dialog:not(.tablet) .md-own-card > .md-bottom-actions {
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
 }
 .md-own-dialog.tablet .md-own-card {
   margin: auto;
@@ -583,7 +595,7 @@ button.md-list-item {
   font-weight: 500;
 }
 .android .ph-files {
-  padding-bottom: 88px;
+  padding-bottom: calc(88px + var(--viewer-end, 0px));
 }
 .android .ph-file-row {
   min-height: 56px;

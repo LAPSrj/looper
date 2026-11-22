@@ -10,7 +10,7 @@ import { NavBar } from './NavBar';
 import { bindField, textOptions, type TextOptions } from './field-model';
 import { StatusGlyph, type StatusLevel } from './icons';
 import { Group, Row, Segmented } from './phone/PhoneList';
-import { Tabs } from './Tabs';
+import { Tabs, useCtrlTab } from './Tabs';
 import { WindowActions } from './WindowActions';
 
 export const onIos = isPhone && platform === 'ios';
@@ -531,10 +531,12 @@ export function InputRow({ className, children }: { className?: string; children
 }
 
 /**
- * A row of buttons that each turn one choice on or off (days of the week, effort levels); one always stays on.
- * `wrap`: many short buttons (days of the month) that wrap onto more lines.
+ * Several of a short list chosen at once (days of the week, effort levels), one always staying on: check boxes in a
+ * row on the desktop ("Don't use command buttons to set state. Use radio buttons or check boxes instead", Win32
+ * Command buttons), a switch row each on a phone (CheckboxField; ios.md Switch: only in a list row).
+ * `wrap`: many short choices (days of the month), seven to a line on the desktop.
  */
-export function ToggleButtons<T extends string | number>({
+export function CheckboxChoices<T extends string | number>({
   options,
   value,
   onChange,
@@ -549,21 +551,17 @@ export function ToggleButtons<T extends string | number>({
   wrap?: boolean;
 }) {
   return (
-    <div className={wrap ? 'dom-row' : 'day-row'} role="group" aria-label={label}>
+    <div className={`checkbox-choices${wrap ? ' checkbox-choices-wrap' : ''}`} role="group" aria-label={label}>
       {options.map(([v, text]) => {
         const on = value.includes(v);
         return (
-          <button
+          <CheckboxField
             key={v}
-            aria-pressed={on}
-            className={`btn small day-toggle${on ? ' selected' : ''}`}
-            onClick={() => {
-              const next = on ? value.filter((x) => x !== v) : [...value, v];
-              if (next.length > 0) onChange(next);
-            }}
-          >
-            {text}
-          </button>
+            label={text}
+            checked={on}
+            disabled={on && value.length === 1}
+            onChange={(checked) => onChange(checked ? [...value, v] : value.filter((x) => x !== v))}
+          />
         );
       })}
     </div>
@@ -581,7 +579,7 @@ export function NumberField({ label, ...rest }: { label: string } & NumberInputP
   );
 }
 
-/** Up to this many tabs, an iPhone draws them as a segmented control. */
+/** Up to this many tabs, a phone draws them as iOS's segmented control or Material's fixed tabs, while their labels fit (Segmented's onFit). */
 const SEGMENTS = 5;
 /** Up to this many tabs with `panels`, an iPhone shows them all on one page. */
 const ONE_PAGE = 3;
@@ -619,6 +617,16 @@ export function TabBar<T extends string>({
   children?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  // Whether the segments (iOS) or fixed tabs (Material) fit (Segmented's onFit); while they don't, the scrolling strip shows instead.
+  const [segmentsFit, setSegmentsFit] = useState(true);
+  // iOS has no tab strip: tabs a segmented control can't hold are a pop-up button (below), which Ctrl+Tab still cycles.
+  const popUp = onIos && !sections && (tabs.length > SEGMENTS || !segmentsFit);
+  useCtrlTab(
+    tabs.map(([id]) => id),
+    active,
+    onSelect as (id: string) => void,
+    ctrlTab && popUp,
+  );
   const rows = isPhone && !!sections;
   const close = () => setOpen(false);
   if (rows) {
@@ -660,12 +668,37 @@ export function TabBar<T extends string>({
       </div>
     );
   }
+  const segments = isPhone && !sections && tabs.length <= SEGMENTS;
   return (
     <>
-      {onIos && !sections && tabs.length <= SEGMENTS ? (
-        <Segmented items={tabs} value={active} onChange={onSelect} label={label} ctrlTab={ctrlTab} className={`pg-segmented tabs-segmented${className ? ` ${className}` : ''}`} />
+      {segments && (
+        <Segmented
+          items={tabs}
+          value={active}
+          onChange={onSelect}
+          label={label}
+          ctrlTab={ctrlTab}
+          className={`pg-segmented tabs-segmented${className ? ` ${className}` : ''}`}
+          onFit={setSegmentsFit}
+          probe={!segmentsFit}
+        />
+      )}
+      {popUp ? (
+        // HIG Segmented controls: about five segments at most on iPhone; HIG Pop-up buttons: "a flat list of mutually
+        // exclusive options", "when space is limited and you don't need to display all options all the time".
+        <div className={`tabs-popup${className ? ` ${className}` : ''}`}>
+          <SelectInput aria-label={label} value={active} onChange={(e) => onSelect(e.target.value as T)}>
+            {tabs.map(([id, text]) => (
+              <option key={id} value={id}>
+                {text}
+              </option>
+            ))}
+          </SelectInput>
+        </div>
       ) : (
-        <Tabs tabs={tabs.map(([id, text]) => ({ id, label: text }))} active={active} onSelect={(id) => onSelect(id as T)} label={label} ctrlTab={ctrlTab} className={className} />
+        (!segments || !segmentsFit) && (
+          <Tabs tabs={tabs.map(([id, text]) => ({ id, label: text }))} active={active} onSelect={(id) => onSelect(id as T)} label={label} ctrlTab={ctrlTab} className={className} />
+        )
       )}
       {panels ? <div className="editor-body">{panels(active)}</div> : children}
     </>

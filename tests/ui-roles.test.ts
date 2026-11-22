@@ -144,9 +144,10 @@ describe('how a window shows on a phone or tablet', () => {
   /** The table: what each role and modal flag gives, by OS and kind of device. */
   const expected = (os: 'ios' | 'android', tablet: boolean, role: WindowRole, modal: boolean): Presentation => {
     if (role === 'detail') return os === 'ios' ? 'page-sheet' : 'bottom-sheet';
+    if (role === 'editor') return os === 'ios' ? 'page-sheet' : tablet ? 'dialog' : 'full-dialog';
     if (tablet) {
       if (role === 'workspace') return 'push';
-      if (os === 'ios') return role === 'editor' ? 'page-sheet' : 'form-sheet';
+      if (os === 'ios') return 'form-sheet';
       return modal ? 'dialog' : 'push';
     }
     if (!modal) return 'push';
@@ -181,5 +182,184 @@ describe('where two columns start', () => {
     expect(splitLayout(839, pixel, 'android')).toBeNull();
     expect(splitLayout(840, pixel, 'android')).not.toBeNull();
     expect(splitLayout(900, { width: 900, height: 412 }, 'android')).toBeNull();
+  });
+});
+
+/**
+ * The `className`s a .tsx file writes: its string literals, outside comparisons (`x === 'a'`). A name built with an
+ * interpolation keeps only its literal parts, so `ios-group-${x}` gives `ios-group-`.
+ */
+function classNamesIn(source: string): string[] {
+  const src = source
+    .split('\n')
+    .map((l) => (/^\s*(\/\/|\*|\/\*)/.test(l) ? '' : l))
+    .join('\n');
+  const names: string[] = [];
+  const start = /\bclassName\s*[=:]\s*/g;
+  for (let m = start.exec(src); m; m = start.exec(src)) {
+    const i = start.lastIndex;
+    const c = src[i];
+    let body = '';
+    if (c === '"' || c === "'") {
+      const end = src.indexOf(c, i + 1);
+      if (end < 0) continue;
+      body = src.slice(i, end + 1);
+    } else if (c === '{') {
+      let depth = 0;
+      let j = i;
+      let inString: string | null = null;
+      const templates: number[] = [];
+      for (; j < src.length; j++) {
+        const ch = src[j];
+        if (inString) {
+          if (ch === '\\') j++;
+          else if (inString === '`' && ch === '$' && src[j + 1] === '{') {
+            templates.push(depth);
+            inString = null;
+            depth++;
+            j++;
+          } else if (ch === inString) inString = null;
+        } else if (ch === '"' || ch === "'" || ch === '`') inString = ch;
+        else if (ch === '{') depth++;
+        else if (ch === '}') {
+          depth--;
+          if (templates.length && templates[templates.length - 1] === depth) {
+            templates.pop();
+            inString = '`';
+          } else if (depth === 0) break;
+        }
+      }
+      body = src.slice(i, j + 1);
+    } else continue;
+    body = body.replace(/(?:===?|!==?)\s*(["'])[^"'\n]*\1/g, ' ');
+    for (const s of body.matchAll(/"([^"\n]*)"|'([^'\n]*)'|`([^`]*)`/g)) {
+      const text = (s[1] ?? s[2] ?? s[3]).replace(/\$\{[^}]*\}/g, ' ');
+      for (const name of text.split(/\s+/)) if (/^[a-z][\w-]*$/i.test(name)) names.push(name);
+    }
+  }
+  return names;
+}
+
+const tsxFiles = files.filter(([file]) => file.endsWith('.tsx'));
+const comment = (line: string): boolean => /^\s*(\/\/|\*|\/\*)/.test(line);
+
+describe('Back and a screen\'s title', () => {
+  /** The bar rows and the three frames draw the bars; nothing else may. */
+  const BAR = ['web/NavBarRow.tsx', 'web/IosFrame.tsx', 'web/AndroidFrame.tsx', 'web/DesktopFrame.tsx'];
+
+  it('draws Back only through NavBar: no back chevron, back arrow or *-back class outside the bar rows and the frames', () => {
+    /** A file that may keep one, and why. */
+    const ALLOWED: Record<string, string> = {
+      'web/MaterialMenu.tsx': "a submenu's own back arrow, inside a menu, not a screen's Back",
+      'components/WorkflowView.tsx': "the desktop's bar over a workflow agent's conversation; a phone returns before it and its agent view has its own bar",
+    };
+    const offenders: string[] = [];
+    for (const [file, text] of tsxFiles) {
+      if (BAR.includes(file) || file in ALLOWED) continue;
+      for (const name of new Set(classNamesIn(text))) if (/(^|-)back(-|$)/.test(name)) offenders.push(`${file}: class "${name}"`);
+      text.split('\n').forEach((line, i) => {
+        if (comment(line)) return;
+        if (/\b(ARROW_BACK|BACK_ICON)\b|ICONS\.(previous|back)\b|aria-label=["']Back["']|[‹←]|M6\.5 1\.5 1\.5 6\.5/.test(line)) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    expect(offenders, 'Back is drawn only by NavBar (web/NavBarRow.tsx): report it with <NavBar back={...} />').toEqual([]);
+  });
+
+  it('draws a screen\'s title only through NavBar', () => {
+    const TITLE = /^(ios|md)-bar-(titles?|subtitle)$|^(ios-large-title|md-headline|pg-large-title|ws-titlebar|ws-title)$/;
+    const owners = [...BAR, 'web/PathBar.tsx', 'web/ws-titlebar.tsx', 'web/PairPage.tsx', 'components/phone/PhoneList.tsx'];
+    const offenders: string[] = [];
+    for (const [file, text] of tsxFiles) {
+      if (owners.includes(file)) continue;
+      for (const name of new Set(classNamesIn(text))) if (TITLE.test(name)) offenders.push(`${file}: class "${name}"`);
+    }
+    // A heading element is a screen's title: only the bar, the large title, the pairing page and the pages before the shell draw one.
+    const headings = ['web/NavBarRow.tsx', 'components/phone/PhoneList.tsx', 'web/PairPage.tsx', 'web/Waiting.tsx', 'AboutApp.tsx'];
+    for (const [file, text] of tsxFiles) {
+      if (headings.includes(file)) continue;
+      text.split('\n').forEach((line, i) => {
+        if (!comment(line) && /<h1\b/.test(line)) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    expect(offenders, "a screen's title is NavBar's title (and the large title in RowList's LargeTitle)").toEqual([]);
+  });
+});
+
+describe('lists on a phone', () => {
+  const doc = fs.readFileSync(path.join(renderer, 'components', 'components.md'), 'utf8');
+  const listed = (/^- Phone list components: (.*)$/m.exec(doc)?.[1] ?? '').match(/`[^`]+`/g)?.map((f) => f.replace(/`/g, '')) ?? [];
+  const code = (text: string) => text.split('\n').filter((l) => !/^\s*(\/\/|\/?\*)/.test(l)).join('\n');
+  const inPhoneDir = (file: string) => file.startsWith('components/phone/');
+
+  it('draws a Row only inside the shared phone list components (components.md, "Phone list components")', () => {
+    expect(listed.length).toBeGreaterThanOrEqual(9);
+    for (const f of listed.filter((f) => f.endsWith('.tsx'))) expect(fs.existsSync(path.join(renderer, f)), f).toBe(true);
+    const offenders = files
+      .filter(([file, text]) => file.endsWith('.tsx') && !listed.includes(file) && !inPhoneDir(file) && /<Row[\s>/]/.test(code(text)))
+      .map(([file]) => file);
+    expect(offenders, 'a phone list goes through PhoneRows (RowList.tsx), or the component is registered under "Phone list components"').toEqual([]);
+  });
+
+  it('draws a group header for a phone only in the shared phone list (PhoneList.tsx)', () => {
+    for (const [file, text] of files) {
+      if (file === 'components/phone/PhoneList.tsx' || !file.endsWith('.tsx')) continue;
+      const own = /<GroupHeader\b[^>]*(isPhone|inTree=\{false\})/.test(code(text));
+      expect(own, `${file}: a phone's group header is a Group's title, never a GroupHeader row in a card: use PhoneRows`).toBe(false);
+    }
+  });
+});
+
+describe('the component registry (components/components.md)', () => {
+  const doc = fs.readFileSync(path.join(renderer, 'components', 'components.md'), 'utf8');
+  const [sharedPart, customPart = ''] = doc.split(/^## Custom components$/m);
+
+  interface Entry {
+    heading: string;
+    fields: Map<string, string>;
+  }
+  const entriesOf = (text: string): Entry[] =>
+    text
+      .split(/^#{3,4} /m)
+      .slice(1)
+      .map((block) => {
+        const [heading, ...lines] = block.split('\n');
+        const fields = new Map<string, string>();
+        for (const line of lines) {
+          const m = /^- ([A-Za-z0-9 ]+): (.*)$/.exec(line);
+          if (m && !fields.has(m[1])) fields.set(m[1], m[2]);
+          else if (m) fields.set(m[1], `${fields.get(m[1])}\n${m[2]}`);
+        }
+        return { heading, fields };
+      });
+  const shared = entriesOf(sharedPart).filter((e) => e.fields.has('File'));
+  const custom = entriesOf(customPart).filter((e) => e.fields.has('Source'));
+  const patterns = [...shared, ...custom].flatMap((e) => [...(e.fields.get('Classes') ?? '').matchAll(/`([^`]+)`/g)].map((m) => m[1]));
+  const registered = (name: string): boolean => patterns.some((p) => (p.endsWith('-*') ? name === p.slice(0, -2) || name.startsWith(p.slice(0, -1)) : name === p));
+  const exists = (list: string): boolean => list.split(',').every((f) => fs.existsSync(path.join(renderer, f.replace(/`/g, '').trim())));
+
+  it('registers every shared component with its file, what it follows on each platform and its guard', () => {
+    expect(shared.length).toBeGreaterThanOrEqual(35);
+    for (const e of shared) {
+      for (const key of ['Role', 'iOS 27', 'Material 3', 'Win32', 'Guard', 'Classes']) expect(e.fields.get(key), `${e.heading}: ${key}`).toBeTruthy();
+      expect(exists(e.fields.get('File')!), `${e.heading}: File`).toBe(true);
+    }
+  });
+
+  it('gives every custom component its source, its classes and a reason: the shared component it moves to or why it stays', () => {
+    expect(custom.length).toBeGreaterThanOrEqual(78);
+    for (const e of custom) {
+      expect(exists(e.fields.get('Source')!), `${e.heading}: Source`).toBe(true);
+      expect(e.fields.get('Role'), `${e.heading}: Role`).toBeTruthy();
+      expect(e.fields.get('Classes'), `${e.heading}: Classes`).toBeTruthy();
+      expect(e.fields.has('Moves to') !== e.fields.has('Stays custom'), `${e.heading}: exactly one of Moves to and Stays custom`).toBe(true);
+    }
+  });
+
+  it('knows every class name a .tsx file uses: a new custom component is registered, with a reason, before it passes', () => {
+    const unregistered: string[] = [];
+    for (const [file, text] of tsxFiles) {
+      for (const name of new Set(classNamesIn(text))) if (!registered(name)) unregistered.push(`${file}: ${name}`);
+    }
+    expect(unregistered, 'add the component to components/components.md: a shared one with its specs and guard, or a custom one with its reason').toEqual([]);
   });
 });

@@ -84,7 +84,6 @@ function ChangesView({ projectId, status, narrow, note, onDetail }: { projectId:
       open={sel !== null}
       onClose={() => setSel(null)}
       detailTitle={current && baseName(current.path)}
-      backLabel="Changes"
       onPushed={onDetail}
       empty="Select a file to see its changes."
       list={
@@ -104,7 +103,7 @@ function ChangesView({ projectId, status, narrow, note, onDetail }: { projectId:
           phoneRow={(c) => filePhoneRow(line(c))}
         />
       }
-      detail={current && <DiffPane title={current.path} subtitle={changeText(current)} diff={diff && diff.key === key ? diff.diff : null} />}
+      detail={current && <DiffPane bar title={current.path} subtitle={changeText(current)} diff={diff && diff.key === key ? diff.diff : null} />}
     />
   );
 }
@@ -213,7 +212,6 @@ function HistoryView({ projectId, root, refreshKey, narrow, note, onDetail }: { 
       open={sel !== null}
       onClose={() => setSel(null)}
       detailTitle={current?.subject}
-      backLabel="History"
       onPushed={onDetail}
       empty="Select a commit to see its changes."
       list={
@@ -252,7 +250,6 @@ function HistoryView({ projectId, root, refreshKey, narrow, note, onDetail }: { 
           open={filePath !== null}
           onClose={() => setFilePath(null)}
           detailTitle={file && baseName(file.path)}
-          backLabel="Commit"
           empty="Select a file to see its changes."
           list={
             detail ? (
@@ -288,6 +285,7 @@ function HistoryView({ projectId, root, refreshKey, narrow, note, onDetail }: { 
             ) : (
               file && (
                 <DiffPane
+                  bar
                   title={file.path}
                   subtitle={file.origPath ? `${CHANGE_LABELS[file.kind]} from ${file.origPath}` : CHANGE_LABELS[file.kind]}
                   diff={diff && diff.key === diffKey ? diff.diff : null}

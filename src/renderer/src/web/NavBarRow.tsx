@@ -125,11 +125,52 @@ export interface IosBarRowProps {
   titleAs?: 'h1' | 'h2';
 }
 
+/**
+ * The title is centered on the screen, as ios.md says: both side columns take the width of the wider side
+ * (`--ios-bar-side`, which ios-bar.css gives them as their least width). When the title can't fit centered between
+ * them, as UIKit does, the sides keep their own widths and the title takes all the room between the buttons, off
+ * center, whole when that holds it and cut only when nothing does.
+ */
+function useEqualSides() {
+  const row = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = row.current;
+    const lead = el?.querySelector<HTMLElement>(':scope > .ios-bar-lead');
+    const trail = el?.querySelector<HTMLElement>(':scope > .ios-bar-trail');
+    if (!el || !lead || !trail) return;
+    const measure = () => {
+      const side = Math.max(lead.offsetWidth, trail.offsetWidth);
+      const title = el.querySelector<HTMLElement>('.ios-bar-title');
+      let fits = true;
+      if (title) {
+        // The text's own width (the title is cut by its box, not by its text), and the title's side padding.
+        const range = document.createRange();
+        range.selectNodeContents(title);
+        const cs = getComputedStyle(title);
+        const need = range.getBoundingClientRect().width + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+        const rs = getComputedStyle(el);
+        const room = el.clientWidth - parseFloat(rs.paddingLeft) - parseFloat(rs.paddingRight) - 2 * side;
+        fits = need <= room + 0.5;
+      }
+      if (fits) el.style.setProperty('--ios-bar-side', `${side}px`);
+      else el.style.removeProperty('--ios-bar-side');
+    };
+    measure();
+    const watch = new ResizeObserver(measure);
+    watch.observe(el);
+    watch.observe(lead);
+    watch.observe(trail);
+    return () => watch.disconnect();
+  });
+  return row;
+}
+
 /** iOS's bar row: Back or the xmark at the leading edge, the title, then the actions, More and the Confirm checkmark. */
 export function IosBarRow({ model, onMore, onActionMenu, titleFaded, className, style, titleAs: Title = 'h1' }: IosBarRowProps) {
   const { lead, confirm } = model;
+  const row = useEqualSides();
   return (
-    <div className={`ios-bar-row${className ? ` ${className}` : ''}`} style={style}>
+    <div ref={row} className={`ios-bar-row${className ? ` ${className}` : ''}`} style={style}>
       <div className="ios-bar-lead">
         {lead &&
           (lead.kind === 'back' ? (

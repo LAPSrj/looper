@@ -32,6 +32,7 @@
     "register:notifications": "electron scripts/register-notifications.js",
     "screenshots": "node scripts/screenshots/driver.mjs",
     "perf": "node scripts/perf/check.mjs",
+    "ui-check": "node scripts/ui-check/check.mjs",
     "perf:bench": "node scripts/perf/bench.mjs"
   },
   "dependencies": {

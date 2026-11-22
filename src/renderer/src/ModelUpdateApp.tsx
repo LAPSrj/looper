@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import type { Environment, Harness, Task } from '@shared/types';
 import { DEFAULT_MODELS, harnessModels, resolveClassifierHarness, resolveHarness, sameModels } from '@shared/environments';
 import { capFirst, plural } from '@shared/format';
@@ -62,6 +62,14 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
   const { live: settings } = useLiveSettings();
   const [groups, setGroups] = useState<Group[]>([]);
   const saver = useSave();
+  // The first harness has the focus once the list shows (Win32 dialog boxes: initial focus on the first control).
+  const list = useRef<HTMLDivElement>(null);
+  const focused = useRef(false);
+  useEffect(() => {
+    if (focused.current || !groups.length) return;
+    focused.current = true;
+    list.current?.querySelector<HTMLElement>('[role=treeitem]')?.focus();
+  }, [groups.length]);
 
   useEffect(() => {
     document.title = 'Update Models';
@@ -134,7 +142,7 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
   return (
     <div className="editor">
       <div className="editor-body">
-        <div className="mu-list" role="tree" aria-label="Harnesses">
+        <div ref={list} className="mu-list" role="tree" aria-label="Harnesses">
           {groups.map((g) => {
             const expandable = g.status === 'ready' && g.rows.length > 0;
             const open = expandable && g.open;
@@ -189,6 +197,7 @@ export function ModelUpdateApp({ envId, harnessId }: { envId?: string; harnessId
         </div>
       </div>
       <WindowActions
+        draft={groups.some((g) => g.status === 'loading') ? null : groups.map((g) => g.actions)}
         confirm={{
           label: 'Update',
           run: () => saver.save(doUpdate),

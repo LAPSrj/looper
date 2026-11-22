@@ -1,11 +1,11 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { useThumbnail } from './hooks';
 import { onUi } from '../events';
 import { sizeText, type CommandOutput, type SavedOutput } from '@shared/bash-mode';
 import type { Attachment } from '@shared/chat';
 import { handbackText, scriptCallsPage, type MessageRow, type ScriptCalls, type SentFile, type SentFileInfo, type SentFiles } from '@shared/messages';
 import { fmtSize } from '../format';
 import { toolGroupLabel } from './chat-groups';
+import { attachmentThumbKey, loadAttachmentThumb, loadSentFile, sentThumbKey, sentThumbSrc, useShown, type Shown, type ShownThumb } from './thumb-sizes';
 import { MessageBody, PromptBody } from './Markdown';
 import { atEnd, useStayAtEnd } from './newest-first';
 import { ToolInputView, ToolResultView } from './ToolContent';
@@ -49,19 +49,19 @@ export function showRowContextMenu(base: { chatId: string; taskId: string; quote
 const openAttachment = (a: Attachment) =>
   void window.looper.attachment.open(a.path).catch(reportError);
 
-/** An image as a thumbnail button; `src` is null until it has loaded (the name shows meanwhile). */
-function ThumbButton({ name, src, onOpen, onContextMenu }: { name: string; src: string | null; onOpen: () => void; onContextMenu?: (e: React.MouseEvent) => void }) {
+/** An image as a thumbnail button, at its size from its first frame (thumb-sizes.ts); `thumb` is null until it has loaded (the name shows meanwhile). */
+function ThumbButton({ name, thumb, onOpen, onContextMenu }: { name: string; thumb: ShownThumb | null; onOpen: () => void; onContextMenu?: (e: React.MouseEvent) => void }) {
   return (
     <button className="chat-thumb" title={`Open ${name}`} onClick={onOpen} onContextMenu={onContextMenu}>
-      {src ? <img src={src} alt={name} /> : <span>{name}</span>}
+      {thumb ? <img src={thumb.src} alt={name} width={thumb.width} height={thumb.height} /> : <span>{name}</span>}
     </button>
   );
 }
 
 /** An image attachment as a thumbnail; clicking it opens the file in the default viewer. */
 function Thumbnail({ a }: { a: Attachment }) {
-  const src = useThumbnail(() => window.looper.attachment.thumbnail(a.path), [a.path]);
-  return <ThumbButton name={a.name} src={src ?? null}onOpen={() => openAttachment(a)} />;
+  const shown = useShown(attachmentThumbKey(a.path), loadAttachmentThumb(a.path), (s: string) => s);
+  return <ThumbButton name={a.name} thumb={shown?.thumb ?? null} onOpen={() => openAttachment(a)} />;
 }
 
 /** xterm loads with the first command that runs. */
@@ -224,9 +224,9 @@ export function AttachmentList({
   );
 }
 
-/** What the computer knows about a file the agent sent: undefined while it loads, null when the file is gone. */
-function useSentFile(taskId: string, path: string): SentFileInfo | null | undefined {
-  return useThumbnail<SentFileInfo>(() => window.looper.sessions.sentFile(taskId, path), [taskId, path]);
+/** What the computer knows about a file the agent sent, with its thumbnail: undefined while it loads, null when the file is gone. */
+function useSentFile(taskId: string, path: string): Shown<SentFileInfo> | null | undefined {
+  return useShown(sentThumbKey(taskId, path), loadSentFile(taskId, path), sentThumbSrc);
 }
 
 /**
@@ -235,7 +235,8 @@ function useSentFile(taskId: string, path: string): SentFileInfo | null | undefi
  * Preview shows (its default app otherwise), or a device's file viewer.
  */
 function SentFileItem({ f, ctx, images }: { f: SentFile; ctx: RowCtx; images?: string[] }) {
-  const info = useSentFile(ctx.taskId, f.path);
+  const shown = useSentFile(ctx.taskId, f.path);
+  const info = shown === undefined || shown === null ? shown : shown.value;
   // Right-click: Open File, Save As… and Copy Path for this file, not the message's own menu.
   const menu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -253,7 +254,7 @@ function SentFileItem({ f, ctx, images }: { f: SentFile; ctx: RowCtx; images?: s
   const open = (image: boolean) =>
     void window.looper.sessions.openFile(ctx.taskId, ctx.runId, f.path, image, image ? images : undefined).catch(reportError);
   if (f.inline && (info === undefined || info.thumbnail)) {
-    return <ThumbButton name={f.name} src={info?.thumbnail ?? null} onOpen={() => open(true)} onContextMenu={menu} />;
+    return <ThumbButton name={f.name} thumb={shown?.thumb ?? null} onOpen={() => open(true)} onContextMenu={menu} />;
   }
   const size = info?.size ?? f.size;
   return (

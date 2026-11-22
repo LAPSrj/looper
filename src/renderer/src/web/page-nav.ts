@@ -46,8 +46,18 @@ export interface PageNav {
   cancel?: NavCommand;
   /** An editor's Save or Create: the bar's trailing button. */
   confirm?: NavCommand;
-  /** The page shows a sheet of its own over the screen: the frame's bar can't be used meanwhile. */
+  /**
+   * An editor has changes it hasn't saved: the frame's swipe down, Back and scrim close it through `cancel`, which asks
+   * before discarding them (HIG Sheets; Material 3 Dialogs).
+   */
+  unsaved?: boolean;
+  /**
+   * The page shows a sheet of its own over the screen (PhoneSheet): the frame lifts the page over its bar, so the
+   * sheet can reach the status bar and its backdrop dims the bar, which can't be used meanwhile.
+   */
   modal?: boolean;
+  /** iPad: what the inspector column's own screens put in its bar (a pushed detail's Back and title), over `split.inspector`'s title. */
+  inspectorBar?: PanelBarNav;
   /**
    * iPad: the page shows a list column (`width` px) beside its screen. The bar
    * splits to match: this part over the list, the rest of the nav (title, back,
@@ -68,6 +78,13 @@ export interface PageNavSplit {
   inspector?: { width: number; title: string };
 }
 
+/** The part of a bar a panel's screens fill: its title, the line under it, and Back from a pushed detail. */
+export interface PanelBarNav {
+  title?: string;
+  subtitle?: string | readonly string[];
+  back?: () => void;
+}
+
 export interface PageNavTabs {
   /** Each tab's id and its label. */
   items: readonly (readonly [string, string])[];
@@ -80,6 +97,8 @@ export interface PageNavHost {
   setNav(windowId: string, nav: PageNav | null): void;
   /** This Device's sheet, which the frame draws. */
   openDevice?(): void;
+  /** Asks whether to discard a window's unsaved changes (the frame's own message box); true to discard. */
+  askDiscard?(windowId: string): Promise<boolean>;
 }
 
 declare global {
@@ -97,10 +116,17 @@ function windowId(): string | null {
   return new URLSearchParams(window.location.search).get('w');
 }
 
+/** Asks the phone frame whether to discard this window's unsaved changes: true to discard, and true where no frame asks. */
+export function askDiscard(): Promise<boolean> {
+  const w = windowId();
+  const host = window.top?.__looperFrame;
+  return w && host?.askDiscard ? host.askDiscard(w) : Promise.resolve(true);
+}
+
 // ---------- the parts a page's components report ----------
 
 /** One component's report; `latest` holds its current callbacks. */
-interface Part {
+export interface Part {
   order: number;
   seq: number;
   latest: { current: PageNav | null };
@@ -108,6 +134,12 @@ interface Part {
 
 const parts = new Map<number, Part>();
 let nextSeq = 0;
+
+/** Where a NavBar's part goes: the phone frame, or a panel of the page that draws its own bar (PhoneSheet, the iPad's inspector column). */
+export interface NavTarget {
+  parts: Map<number, Part>;
+  publish(): void;
+}
 
 /** The parts' reports as one: later orders override fields, toolbars add up. Callbacks run the part's current ones. */
 export function mergeNavs(list: { order: number; seq: number; nav: PageNav | null; latest: { current: PageNav | null } }[]): PageNav | null {
@@ -130,8 +162,10 @@ export function mergeNavs(list: { order: number; seq: number; nav: PageNav | nul
     if (n.ownsBottom !== undefined) out.ownsBottom = n.ownsBottom;
     if (n.largeTitle !== undefined) out.largeTitle = n.largeTitle;
     if (n.modal !== undefined) out.modal = n.modal;
+    if (n.inspectorBar) out.inspectorBar = { ...n.inspectorBar, back: n.inspectorBar.back && (() => latest.current?.inspectorBar?.back?.()) };
     if (n.cancel) out.cancel = { ...n.cancel, run: () => latest.current?.cancel?.run() };
     if (n.confirm) out.confirm = { ...n.confirm, run: () => latest.current?.confirm?.run() };
+    if (n.unsaved) out.unsaved = true;
     if (n.toolbar) out.toolbar = [...(out.toolbar ?? []), ...wrapToolbar(n.toolbar, () => latest.current?.toolbar)];
     if (n.more) out.more = { items: n.more.items, toolbar: n.more.toolbar, run: (id) => latest.current?.more?.run(id) };
   }
@@ -172,11 +206,21 @@ function wrapToolbar(groups: ToolbarGroup[], current: () => ToolbarGroup[] | und
   }));
 }
 
+const merged = (from: Map<number, Part>) => mergeNavs([...from.values()].map((p) => ({ ...p, nav: p.latest.current })));
+
 function publish(): void {
   const w = windowId();
   const host = window.top?.__looperFrame;
   if (!w || !host) return;
-  host.setNav(w, mergeNavs([...parts.values()].map((p) => ({ ...p, nav: p.latest.current }))));
+  host.setNav(w, merged(parts));
+}
+
+const frameTarget: NavTarget = { parts, publish };
+
+/** A panel's target: the reports of the NavBars inside it, merged as the frame merges a page's, go to `onNav`. */
+export function panelNavTarget(onNav: (nav: PageNav | null) => void): NavTarget {
+  const own = new Map<number, Part>();
+  return { parts: own, publish: () => onNav(merged(own)) };
 }
 
 /** A nav's JSON key: what it shows, without its callbacks. */
@@ -190,9 +234,10 @@ function navKey(nav: PageNav | null): string {
  * Tell the phone frame what this page's screen is; cleared when the component
  * unmounts. Several components of a page may report (the page, its toolbar,
  * an editor's footer): their reports merge, a higher `order` overriding a
- * lower one's fields and adding its toolbar after the lower one's.
+ * lower one's fields and adding its toolbar after the lower one's. Inside a
+ * panel with a bar of its own, `target` is that panel's (panelNavTarget).
  */
-export function usePageNav(nav: PageNav | null, order = 0): void {
+export function usePageNav(nav: PageNav | null, order = 0, target: NavTarget = frameTarget): void {
   const part = useRef<Part | null>(null);
   if (!part.current) part.current = { order, seq: nextSeq++, latest: { current: nav } };
   part.current.latest.current = nav;
@@ -200,15 +245,15 @@ export function usePageNav(nav: PageNav | null, order = 0): void {
   useEffect(() => {
     if (!phone) return;
     const p = part.current!;
-    parts.set(p.seq, p);
+    target.parts.set(p.seq, p);
     return () => {
-      parts.delete(p.seq);
-      publish();
+      target.parts.delete(p.seq);
+      target.publish();
     };
-  }, []);
+  }, [target]);
   useEffect(() => {
-    if (phone) publish();
-  }, [key]);
+    if (phone) target.publish();
+  }, [key, target]);
 }
 
 export const isPhone = phone;

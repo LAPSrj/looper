@@ -1,8 +1,6 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { SplitLayout } from '../web/nav-stack';
 import { isPhone } from '../web/page-nav';
-import { ARROW_BACK } from '../web/NavBarRow';
-import { platform } from '../platform';
 import { EmptyState } from './EmptyState';
 import { NavBar } from './NavBar';
 import { SplitView, useContainerSplit } from './phone/PhoneSplit';
@@ -34,8 +32,6 @@ export interface ListDetailProps {
   onClose?: () => void;
   /** The bar's title on that screen. */
   detailTitle?: string;
-  /** What the list is called, for Back inside a panel, where the bar is out of reach. */
-  backLabel?: string;
   /** The detail column with no row open (an Overview, or a sentence): a phone's or tablet's while `open` is off, the desktop's while `detail` is null. */
   empty?: ReactNode;
   /** The detail is only a preview of what a row opens: on a phone or tablet a tap opens that, so there's only the list. */
@@ -74,8 +70,11 @@ export interface ListSummary {
 
 /** How many pushed details this one is inside: a deeper one's bar goes over the shallower one's. */
 const Depth = createContext(0);
-/** Inside a sheet or an inspector the frame's bar isn't this content's, so Back is drawn in place. */
-export const InPanel = createContext(false);
+/**
+ * The detail is a screen of its own with Back, title and subtitle in a bar (a phone's pushed detail, in the frame's
+ * bar or a sheet's): what it would head itself with (a console's name and state) goes in the bar with NavBar instead.
+ */
+export const DetailInBar = createContext(false);
 /** What the ListDetail around an Inspector tells it: its columns on a phone or tablet, its splitter on the desktop. */
 export const InspectorHost = createContext<{ split?: SplitLayout | null; splitter?: SideSplitter }>({});
 
@@ -90,7 +89,7 @@ export function ListDetail(props: ListDetailProps) {
   return isPhone ? <Mobile {...props} /> : <Desktop {...props} />;
 }
 
-function Mobile({ list: rows, detail, open = false, onClose, detailTitle, backLabel, empty, preview, split: given, inspector, onPushed, summary, stacked = false }: ListDetailProps) {
+function Mobile({ list: rows, detail, open = false, onClose, detailTitle, empty, preview, split: given, inspector, onPushed, summary, stacked = false }: ListDetailProps) {
   const list = summary ? (
     <div className="list-summary">
       <div className="pg-segmented-wrap">
@@ -110,15 +109,14 @@ function Mobile({ list: rows, detail, open = false, onClose, detailTitle, backLa
   const measured = useContainerSplit(ref, given === undefined && !preview);
   const split = given !== undefined ? given : measured;
   const depth = useContext(Depth);
-  const inPanel = useContext(InPanel);
   const pushed = !split && open && !preview && !stacked;
   useEffect(() => onPushed?.(pushed), [pushed, onPushed]);
   if (preview) return <div className="list-detail">{list}</div>;
   const column = open ? (
     <Depth.Provider value={depth + 1}>
-      {pushed && !inPanel && <NavBar title={detailTitle} back={onClose} order={20 + depth} />}
-      {pushed && inPanel && onClose && <InlineBack label={backLabel ?? 'Back'} onBack={onClose} />}
-      {detail}
+      {/* In a sheet or the iPad's inspector column, NavBar goes to that panel's bar (PanelNavContext). */}
+      {pushed && <NavBar title={detailTitle} back={onClose} order={20 + depth} />}
+      <DetailInBar.Provider value={pushed}>{detail}</DetailInBar.Provider>
     </Depth.Provider>
   ) : empty === undefined || typeof empty === 'string' ? (
     <EmptyState at="detail">{empty}</EmptyState>
@@ -131,22 +129,6 @@ function Mobile({ list: rows, detail, open = false, onClose, detailTitle, backLa
         <SplitView split={split} shows={open ? 'detail' : 'lead'} lead={list} detail={split || open || stacked ? column : null} inspector={inspector} stacked={stacked} />
       </InspectorHost.Provider>
     </div>
-  );
-}
-
-/** Back in place: iOS's chevron and the list's name as a link; on Android, Material's back arrow before it. */
-function InlineBack({ label, onBack }: { label: string; onBack: () => void }) {
-  return (
-    <button className="pg-inline-back" onClick={onBack}>
-      {platform === 'android' ? (
-        ARROW_BACK
-      ) : (
-        <svg width="8" height="13" viewBox="0 0 8 13" aria-hidden="true">
-          <path d="M6.5 1.5 1.5 6.5l5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      )}
-      {label}
-    </button>
   );
 }
 

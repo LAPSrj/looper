@@ -183,6 +183,7 @@ export function AddonEditApp({ addonId }: { addonId: string }) {
         </div>
       </div>
       <WindowActions
+        draft={draft}
         confirm={{ label: 'Save', run: () => saver.save(doSave) }}
         apply={{ run: () => void saver.apply(doSave) }}
         extras={[{ id: 'restore-defaults', label: 'Restore Defaults', disabled: isDefault, run: () => setDraft(defaults) }]}

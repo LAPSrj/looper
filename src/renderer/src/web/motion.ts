@@ -35,7 +35,6 @@ const GLASS = '.ios-back, .ios-text-btn, .ios-icon-btn, .ios-bar-group, .phone-p
 const LIST_ROWS: [list: string, row: string][] = [
   ['.pg-list', '.pg-row, .pg-swipe'],
   ['.pg-sessions', '.session-row, .session-group'],
-  ['.pg-addon-pane', '.pg-row, .task-folder'],
 ];
 const isListRow = (n: Element, parent: Node | null): boolean => parent instanceof Element && LIST_ROWS.some(([list, row]) => n.matches(row) && !!parent.closest(list));
 const SCREEN = 'phone-screen';
@@ -259,6 +258,21 @@ function copyOf(n: HTMLElement): { copy: HTMLElement; rescroll: () => void } {
   return { copy, rescroll };
 }
 
+/**
+ * An inert copy of a column about to be emptied (PhoneSplit's pop, taken before React changes it), with each scroller's
+ * position read now, while it's still laid out, to set once the copy is placed.
+ */
+export function columnCopy(n: HTMLElement): { copy: HTMLElement; rescroll: () => void } {
+  const { copy } = copyOf(n);
+  const at = [n, ...n.querySelectorAll('*')].map((el) => [el.scrollLeft, el.scrollTop] as const);
+  const rescroll = () =>
+    [copy, ...copy.querySelectorAll('*')].forEach((el, i) => {
+      const s = at[i];
+      if (s && (s[0] || s[1])) [el.scrollLeft, el.scrollTop] = s;
+    });
+  return { copy, rescroll };
+}
+
 /** A removed element comes back as an inert copy where it was, to animate away. */
 function ghost(r: MutationRecord, n: HTMLElement, after: Map<Node, Node>): HTMLElement | null {
   const parent = r.target;
@@ -329,6 +343,49 @@ function swapScreens(old: HTMLElement, fresh: HTMLElement): void {
     fresh.style.background = '';
   };
   copy.animate(keys, { duration: spring.ms, easing: ease(spring, 'cubic-bezier(0.2, 0.85, 0.25, 1)'), fill: 'forwards' }).finished.then(done, done);
+}
+
+/**
+ * A list-detail's one column going from the list to a row's detail or back (PhoneSplit.tsx, the same inside a
+ * sheet): the push and pop a screen pushed inside the main window makes (swapScreens; swapScreensAndroid's shared
+ * axis on Android), played on the two columns themselves, which PhoneSplit draws one over the other until `done`.
+ * `cancel` takes the motion's styles off once PhoneSplit has hidden the old column.
+ */
+export function swapColumns(old: HTMLElement, fresh: HTMLElement, pop: boolean): { done: Promise<void>; cancel: () => void } {
+  const root = old.ownerDocument.documentElement;
+  const nothing = () => undefined;
+  // A back the browser already played (Safari's swipe, Chrome's predictive back) shows at once.
+  if (pop && root.dataset.instantBack !== undefined) return { done: Promise.resolve(), cancel: nothing };
+  const moving: Animation[] = [];
+  const bg = backdropOf(fresh.parentElement ?? fresh);
+  for (const el of [old, fresh]) el.style.background = bg;
+  const cancel = () => {
+    for (const a of moving) a.cancel();
+    for (const el of [old, fresh]) Object.assign(el.style, { background: '', zIndex: '' });
+  };
+  const settled = (a: Animation) => a.finished.then(nothing, nothing);
+  if (root.dataset.platform === 'android') {
+    const system = pop && root.dataset.systemBack !== undefined;
+    delete root.dataset.systemBack;
+    const out = axis('leave', pop, system);
+    const into = axis('enter', pop, system);
+    moving.push(fresh.animate(into.keys, { ...into.timing, fill: 'backwards' }), old.animate(out.keys, { ...out.timing, fill: 'forwards' }));
+    return { done: settled(moving[1]), cancel };
+  }
+  const spring = pop ? SMOOTH : DEFAULT_SPRING;
+  const timing = { duration: spring.ms, easing: ease(spring, 'cubic-bezier(0.2, 0.85, 0.25, 1)') };
+  if (reduced()) {
+    moving.push(fresh.animate([{ opacity: 0 }, { opacity: 1 }], timing), old.animate([{ opacity: 1 }, { opacity: 0 }], { ...timing, fill: 'forwards' }));
+    return { done: settled(moving[1]), cancel };
+  }
+  // A push slides the detail in over the list, which moves a third of the way out under it; a pop the other way.
+  const edge = '-4px 0 16px rgba(0, 0, 0, 0.12)';
+  (pop ? old : fresh).style.zIndex = '1';
+  moving.push(
+    fresh.animate(pop ? [{ transform: 'translateX(-30%)' }, { transform: 'none' }] : [{ transform: 'translateX(100%)', boxShadow: edge }, { transform: 'none', boxShadow: edge }], timing),
+    old.animate(pop ? [{ transform: 'none', boxShadow: edge }, { transform: 'translateX(100%)', boxShadow: edge }] : [{ transform: 'none' }, { transform: 'translateX(-30%)' }], { ...timing, fill: 'forwards' }),
+  );
+  return { done: settled(moving[1]), cancel };
 }
 
 // ---------- Android: Material's navigation between screens ----------

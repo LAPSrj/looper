@@ -51,9 +51,16 @@ export function presentation(os: PhoneOs, win: Pick<RemoteWindowSpec, 'modal' | 
   if (isMain) return 'root';
   // A row looked at closely: a sheet over its list, which stays in view behind it (HIG: Sheets; Material: bottom sheets).
   if (win.role === 'detail') return os === 'ios' ? 'page-sheet' : 'bottom-sheet';
+  // An editor (Cancel and a Confirm) is a page sheet on every iPhone and iPad, modal or not: "for sheets with a single
+  // view, the Cancel button belongs on the leading edge of the top toolbar", a Back "isn't intended to dismiss a sheet",
+  // and "Prefer using the page or form sheet presentation styles in an iPadOS app" (HIG Sheets). On Android it is a
+  // full-screen dialog on a phone and a basic dialog on a tablet: "Full-screen dialogs may be used for ... form fields
+  // ... When changes aren't saved instantly", and "are for compact breakpoints only ... For medium and expanded
+  // breakpoints, use a basic dialog" (Material 3, Dialogs).
+  if (win.role === 'editor') return os === 'ios' ? 'page-sheet' : isTablet(screen) ? 'dialog' : 'full-dialog';
   if (isTablet(screen)) {
     if (win.role === 'workspace') return 'push';
-    if (os === 'ios') return win.role === 'editor' ? 'page-sheet' : 'form-sheet';
+    if (os === 'ios') return 'form-sheet';
     return win.modal ? 'dialog' : 'push';
   }
   if (!win.modal) return 'push';

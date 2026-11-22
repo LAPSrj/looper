@@ -224,7 +224,7 @@ export function HarnessEditorApp({ envId, harnessId, isNew }: { envId: string; h
           </div>
         )}
       />
-      <WindowActions confirm={{ label: 'Save', run: () => saver.save(doSave) }} apply={{ run: () => void saver.apply(doSave) }} busy={saver.busy} />
+      <WindowActions draft={[draft, argsText, envText]} confirm={{ label: 'Save', run: () => saver.save(doSave) }} apply={{ run: () => void saver.apply(doSave) }} busy={saver.busy} />
     </div>
   );
 }

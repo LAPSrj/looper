@@ -155,7 +155,7 @@ export function GuidanceForm({
           </FormGroup>
         </div>
       </div>
-      <WindowActions confirm={{ label: 'Save', run: onSave }} busy={saving} />
+      <WindowActions draft={[text, runsLeft]} confirm={{ label: 'Save', run: onSave }} busy={saving} />
     </div>
   );
 }

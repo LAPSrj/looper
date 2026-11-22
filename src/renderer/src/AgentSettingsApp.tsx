@@ -33,7 +33,7 @@ import {
   type McpTool,
 } from '@shared/agent-config';
 import { EmptyWindow, Field, FieldRow, FormGroup, InfoBar, SelectInput, TabBar, TextArea } from './components/ui';
-import { WindowActions } from './components/WindowActions';
+import { confirmDiscard, WindowActions } from './components/WindowActions';
 import { EmptyState } from './components/EmptyState';
 import { ListActions, SelectList } from './components/SelectList';
 import { GroupHeader } from './components/GroupHeader';
@@ -154,7 +154,7 @@ export function AgentSettingsApp() {
 
   /** Another environment, harness or project: changes made so far are given up, once the user agrees. */
   const changeScope = async (next: AgentSettingsScope) => {
-    if (dirty && !(await window.looper.confirm('Discard your changes to the agent settings files?'))) return;
+    if (dirty && !(await confirmDiscard())) return;
     setScope(next);
   };
 
@@ -328,6 +328,7 @@ export function AgentSettingsApp() {
           <FieldRow>
             <Field label="Project">
               <SelectInput
+                autoFocus
                 value={scope.projectId ?? ''}
                 onChange={(e) => {
                   const p = envProjects.find((x) => x.id === e.target.value);
@@ -522,6 +523,7 @@ export function AgentSettingsApp() {
         )}
       </div>
       <WindowActions
+        unsaved={dirty}
         confirm={{ label: 'Save', disabled: !data, run: () => saver.save(doSave) }}
         apply={{ disabled: !data || !dirty, run: () => void saver.apply(doSave) }}
         busy={saver.busy}

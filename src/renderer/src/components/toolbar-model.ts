@@ -66,6 +66,40 @@ export function toolbarFor(groups: ToolbarGroup[], here: UiPlatform): ToolbarGro
   });
 }
 
+/**
+ * Where a bottom toolbar's items sit on a phone, around its status in the middle: the groups at the leading edge and
+ * the groups at the trailing edge, each a list of item ids that share one background (iOS: one glass capsule, groups
+ * split by a fixed space; HIG Toolbars, UIToolbar "Split the toolbar's shared background").
+ */
+export interface BottomBarPlaces {
+  leading: string[][];
+  trailing: string[][];
+}
+
+/** Items that share a background: a run of symbols; a text item is always alone ("be sure to not group symbols with text", WWDC25 356). */
+function sharedRuns(items: ToolbarItem[]): ToolbarItem[][] {
+  const runs: ToolbarItem[][] = [];
+  for (const it of items) {
+    const last = runs[runs.length - 1];
+    if (it.icon && last?.[0].icon) last.push(it);
+    else runs.push([it]);
+  }
+  return runs;
+}
+
+/**
+ * A bottom toolbar's groups on a phone, from the same toolbar data the desktop draws and the places it's given: the
+ * items that show on `here`, grouped as `places` says and cut where text meets a symbol, and the items `places`
+ * doesn't name after the trailing groups, so nothing the desktop shows is left out.
+ */
+export function bottomBarGroups(groups: ToolbarGroup[], places: BottomBarPlaces, here: UiPlatform): { leading: ToolbarItem[][]; trailing: ToolbarItem[][] } {
+  const items = new Map(toolbarFor(groups, here).flatMap((g) => g.items.map((it) => [it.id, it] as const)));
+  const named = new Set([...places.leading, ...places.trailing].flat());
+  const side = (list: string[][]) => list.flatMap((ids) => sharedRuns(ids.flatMap((id) => items.get(id) ?? [])));
+  const rest = [...items.values()].filter((it) => !named.has(it.id));
+  return { leading: side(places.leading), trailing: [...side(places.trailing), ...sharedRuns(rest)] };
+}
+
 /** A toolbar item by id, and a split button's entry by "<item>/<entry>". */
 export function findToolbarItem(groups: ToolbarGroup[] | undefined, id: string): ToolbarItem | ToolbarMenuEntry | undefined {
   const slash = id.indexOf('/');

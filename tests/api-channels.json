@@ -2305,14 +2305,15 @@
   }
  },
  "sessions.previewPage": {
-  "arity": 2,
+  "arity": 3,
   "calls": [
    [
     "invoke",
     "sessions:previewPage",
     [
      "a0",
-     "a1"
+     "a1",
+     "a2"
     ]
    ]
   ],

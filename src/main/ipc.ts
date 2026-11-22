@@ -19,7 +19,7 @@ import { SENT_IMAGE_RE, fileImageId, fileImageKey, type MessageImage, type SentF
 import { languageOf } from '../renderer/src/components/code-languages';
 import { VIEWER_MAX_BYTES, viewerKind } from '../renderer/src/web/dialog-flows';
 import type { PreviewNetwork } from '../shared/preview';
-import { addPreviewFrame, inPreviewPage } from './preview-frames';
+import { addPreviewFrame, inPreviewPage, previewFolderOf } from './preview-frames';
 
 /** The most of a Code Mode script's tool calls one runs:scriptCalls hands over. */
 const SCRIPT_CALLS_MAX = 200;
@@ -868,13 +868,19 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('sessions:openFileDefault', (_e, taskId: string, p: string) => openSentFile(String(taskId), String(p)));
   /**
    * An HTML file for Preview's frame, served as a page of its own: looper-preview://<token>/ on the computer,
-   * /preview-frame/<token> on the device that asked. `load`: the Ask setting's Load was chosen for it.
+   * /preview-frame/<token>/ on the device that asked. `load`: the Ask setting's Load was chosen for it. `file`:
+   * where the page was read from (PreviewSource), found as readSentFile or a device's file viewer finds it, so the
+   * page loads the files in its folder; without it, or when it isn't a file, the page loads only itself.
    */
-  ipc.handle('sessions:previewPage', (_e, html: string, load: boolean): { url: string; network: PreviewNetwork } => {
+  ipc.handle('sessions:previewPage', async (_e, html: string, load: boolean, file?: unknown): Promise<{ url: string; network: PreviewNetwork }> => {
     const network = engine.settings.previewNetwork;
     const device = !!caller();
-    const token = addPreviewFrame(String(html ?? ''), network === 'ask' && load ? 'allow' : network, device);
-    return { url: device ? `/preview-frame/${token}` : `looper-preview://${token}/`, network };
+    const source = file && typeof file === 'object' ? (file as { taskId?: unknown; path?: unknown }) : {};
+    const p = typeof source.path === 'string' ? source.path : '';
+    const hostPath = p && typeof source.taskId === 'string' && source.taskId ? await sentFileHostPath(source.taskId, p) : p;
+    const folder = hostPath ? await previewFolderOf(hostPath) : undefined;
+    const token = addPreviewFrame(String(html ?? ''), network === 'ask' && load ? 'allow' : network, device, folder);
+    return { url: device ? `/preview-frame/${token}/` : `looper-preview://${token}/`, network };
   });
   /**
    * Looper's preload in a frame of a window asks whether it's a previewed page or a frame inside one, and then sends
