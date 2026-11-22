@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createEngine, type Engine } from '../src/engine/engine';
 import { FOLDER_TASK_PREFIX, folderEnvironment, projectTaskId } from '../src/shared/projects';
-import { canStop, dashboardOrder, liveCards, placeCard, showsConversation, watchedSessions, type SessionSummary } from '../src/shared/sessions';
-import { EnvironmentSchema } from '../src/shared/types';
+import { canStop, compactedView, dashboardOrder, liveCards, placeCard, showsConversation, watchedSessions, type SessionSummary } from '../src/shared/sessions';
+import { EnvironmentSchema, ViewSchema } from '../src/shared/types';
 
 const harness = { id: 'claude', name: 'Claude Code', kind: 'claude-code', command: 'claude', args: [], env: {} };
 const env = (id: string, kind: 'local' | 'wsl', distro?: string) => EnvironmentSchema.parse({ id, name: id, kind, ...(distro ? { distro } : {}), harnesses: [harness] });
@@ -83,6 +83,14 @@ describe("the dashboard's card order", () => {
     expect(ids(dashboardOrder(list, [], true))).toEqual(['d', 'b', 'a', 'c']);
     expect(ids(dashboardOrder(list, ['c', 'a'], true))).toEqual(['d', 'b', 'c', 'a']);
     expect(ids(dashboardOrder(list, [], false))).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it("gives a compacted chat's size, place, Hide from Dashboard and Focus to the chat it went on in", () => {
+    const shown = { ...ViewSchema.parse({}).sessions, bigCards: ['x', 'a'], hiddenCards: ['a'], cardOrder: ['b', 'a', 'c'], focusCard: 'a' };
+    expect(compactedView(shown, 'a', 'n')).toEqual({ ...shown, bigCards: ['x', 'n'], hiddenCards: ['n'], cardOrder: ['b', 'n', 'c'], focusCard: 'n' });
+    expect(compactedView({ ...shown, focusCard: 'b' }, 'a', 'n')?.focusCard).toBe('b');
+    // Nothing names it: the settings stay as they are.
+    expect(compactedView(shown, 'z', 'n')).toBeUndefined();
   });
 
   it('drops a card before or after another', () => {

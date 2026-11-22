@@ -87,6 +87,10 @@ describe('contextOfLine', () => {
   it('claude: a compaction gives its size after, or unknown without one', () => {
     expect(contextOfLine(claudeCompaction(42_000), 'claude')).toBe(42_000);
     expect(contextOfLine(claudeCompaction(null), 'claude')).toBe('unknown');
+    // claude -p's stream writes it in snake case (Claude Code 2.1.330), post_tokens optional.
+    const streamed = (meta: Record<string, unknown>) => JSON.stringify({ type: 'system', subtype: 'compact_boundary', compact_metadata: meta });
+    expect(contextOfLine(streamed({ trigger: 'manual', pre_tokens: 150_000, post_tokens: 30_000 }), 'claude')).toBe(30_000);
+    expect(contextOfLine(streamed({ trigger: 'manual', pre_tokens: 150_000 }), 'claude')).toBe('unknown');
   });
 
   it('codex: the last response input counts, cached tokens included', () => {

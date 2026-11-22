@@ -405,10 +405,114 @@ code,
   margin: 0 5px;
 }
 
+/* The main window's toolbars: a Win32 rebar's rows of bands, each a grip, a toolbar and an edge that sizes it. */
+.rebar {
+  position: relative;
+  background: var(--bg-2);
+  padding: 2px 8px 2px 2px;
+}
+.rebar-row {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+.rebar-band {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 64px;
+}
+.rebar-band.sized {
+  flex-grow: 0;
+}
+.rebar-band.moving {
+  position: relative;
+  z-index: 2;
+  background: var(--bg-2);
+  opacity: 0.85;
+}
+/* A column of dots, as Windows' toolbars draw their grips. */
+.rebar-grip {
+  flex: none;
+  align-self: stretch;
+  width: 7px;
+  margin: 4px 3px 4px 0;
+  background-image: radial-gradient(circle, var(--fg-muted) 1px, transparent 1.3px);
+  background-size: 4px 4px;
+  background-position: center top;
+  background-repeat: repeat-y;
+  touch-action: none;
+}
+.toolbar.rebar-toolbar {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  background: none;
+}
+/* Buttons keep their size: the ones that don't fit go behind the chevron instead of squeezing together. */
+.rebar-toolbar > * {
+  flex-shrink: 0;
+}
+.rebar-toolbar [data-clipped] {
+  visibility: hidden;
+}
+.rebar-chevron {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--fg);
+}
+@media (hover: hover) and (pointer: fine) {
+  .rebar-chevron:hover {
+    background: var(--bg-3);
+  }
+}
+.rebar-edge {
+  flex: none;
+  align-self: stretch;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.rebar-marker {
+  position: absolute;
+  background: var(--accent);
+  pointer-events: none;
+}
+.rebar-marker.down {
+  width: 2px;
+}
+.rebar-marker.across {
+  height: 2px;
+}
+@media (forced-colors: active) {
+  .rebar-marker {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+}
+/* It gets narrower before any toolbar does. */
+.rebar-row .search-box {
+  flex: 0 100000000 240px;
+  min-width: 120px;
+  margin-left: auto;
+}
+
 .statusbar {
   display: flex;
   align-items: center;
   gap: 14px;
+  /* A line's height even with nothing to say (the Chats overview with no chat selected), as a Win32 status bar keeps. */
+  min-height: calc(1lh + 7px);
   padding: 3px 12px;
   border-top: 1px solid var(--border);
   background: var(--bg-2);
@@ -530,7 +634,8 @@ code,
 .detail-row,
 .git-commit,
 .file-item,
-.bg-item {
+.bg-item,
+.now-call {
   border-radius: var(--radius-control);
 }
 .task-item,
@@ -539,7 +644,8 @@ code,
 .subagent-item,
 .detail-row,
 .git-commit,
-.file-item {
+.file-item,
+.now-call {
   border: 1px solid transparent;
 }
 @media (hover: hover) and (pointer: fine) {
@@ -549,7 +655,8 @@ code,
   .subagent-item:hover,
   .detail-row:hover,
   .git-commit:hover,
-  .file-item:hover {
+  .file-item:hover,
+  .now-call:hover {
     background: var(--bg-3);
   }
 }
@@ -570,7 +677,8 @@ code,
 .subagent-item.selected,
 .detail-row.selected,
 .git-commit.selected,
-.file-item.selected {
+.file-item.selected,
+.now-call.selected {
   border-color: var(--border);
 }
 /* A row's name and the line under it, each on one line. */
@@ -665,18 +773,22 @@ html:not(.phone-window) .session-group ~ .session-row {
 .task-item.drop-before,
 .env-item.drop-before,
 .task-folder.drop-before,
+.session-row.drop-before,
 .task-item.drop-after,
 .env-item.drop-after,
 .task-folder.drop-after,
+.session-row.drop-after,
 .task-item.drop-after-out {
   position: relative;
 }
 .task-item.drop-before::before,
 .env-item.drop-before::before,
 .task-folder.drop-before::before,
+.session-row.drop-before::before,
 .task-item.drop-after::after,
 .env-item.drop-after::after,
 .task-folder.drop-after::after,
+.session-row.drop-after::after,
 .task-item.drop-after-out::after {
   content: '';
   position: absolute;
@@ -688,12 +800,14 @@ html:not(.phone-window) .session-group ~ .session-row {
 }
 .task-item.drop-before::before,
 .env-item.drop-before::before,
-.task-folder.drop-before::before {
+.task-folder.drop-before::before,
+.session-row.drop-before::before {
   top: -2px;
 }
 .task-item.drop-after::after,
 .env-item.drop-after::after,
 .task-folder.drop-after::after,
+.session-row.drop-after::after,
 .task-item.drop-after-out::after {
   bottom: -2px;
 }
@@ -1472,6 +1586,29 @@ html.phone-window .pg-row.tone-muted .pg-row-title {
 .chat-permission-actions {
   display: flex;
   gap: 8px;
+}
+/* What a "!" command asks (sudo's password), above the message box. */
+.command-prompt-card {
+  margin-bottom: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg-2);
+}
+.command-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.command-prompt-text {
+  font-weight: 600;
+}
+.command-prompt-actions {
+  display: flex;
+  gap: 8px;
+}
+.pg-sheet-body .command-prompt {
+  padding: 12px 16px;
 }
 /* Files waiting to be sent, between the message box's icon row and the box. */
 .chat-pending {
@@ -3014,16 +3151,66 @@ button:focus-visible,
 
 /* ---------- Image window ---------- */
 
-.image-app {
+.preview-app {
   height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-.image-app .toolbar {
+.preview-app .toolbar {
   border-bottom: 1px solid var(--border);
   flex: none;
+}
+
+/* A file in the Preview window: the page scrolls, or a kind that fills it scrolls itself (.fill). */
+.preview-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px;
+  outline: none;
+  user-select: text;
+}
+
+.preview-body.fill,
+.ws-viewer-body.fill {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.preview-body.pdf {
+  display: flex;
+  padding: 0;
+}
+
+.preview-body.code {
+  padding: 0;
+}
+
+.preview-body.code .code-text {
+  flex: none;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.preview-note {
+  padding: 20px 14px;
+}
+
+.preview-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* A Word document's pages on a gray desk, as docx-preview lays them out. */
+.preview-body.docx {
+  padding: 0;
 }
 
 .image-zoom {
@@ -3061,10 +3248,13 @@ button:focus-visible,
 }
 
 /* Addon screens and panes (components/AddonScreen, AddonPane). */
-/* Every row is as tall as one with buttons, so rows with and without them line up evenly. */
+/* Every row is as tall as one with buttons, so rows with and without them line up evenly. Each label is on its
+   value's baseline: centered, a label sat 2 px below a monospace value and a box's text. */
 .addon-screen .props {
   row-gap: 8px;
-  align-items: center;
+  align-items: baseline;
+  /* One label column for every list on the screen (SharedLabels). */
+  grid-template-columns: var(--props-label, max-content) 1fr;
 }
 
 .addon-screen .props dd {
@@ -3287,7 +3477,8 @@ button:focus-visible,
   min-width: 0;
   flex: 1;
 }
-.session-row.unread .session-title {
+.session-row.unread .session-title,
+.runlog-table tr.unread td {
   font-weight: 600;
 }
 .session-sub.error-text {
@@ -3481,6 +3672,41 @@ button:focus-visible,
 }
 .sessions-dashboard .overview-card.drop-after {
   box-shadow: 8px 0 0 -5px var(--accent);
+}
+/* Focus: no gaps, and the cards meet at a 1 px border: the side column's cards have one on their left and below. */
+.sessions-dashboard.layout-focus {
+  padding: 0;
+}
+.sessions-dashboard.layout-focus > .overview-card {
+  border-width: 0;
+  border-radius: 0;
+}
+.sessions-dashboard.layout-focus > .overview-card:not(.focus-main) {
+  border-width: 0 0 1px 1px;
+}
+.sessions-dashboard.layout-focus .overview-card.drop-before {
+  box-shadow: inset 0 3px 0 var(--accent);
+}
+.sessions-dashboard.layout-focus .overview-card.drop-after {
+  box-shadow: inset 0 -3px 0 var(--accent);
+}
+/* The splitter on the border between the large conversation and the side column: the column's cells let clicks through. */
+.card-split-cell {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+.card-split {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 5px;
+  cursor: col-resize;
+  pointer-events: auto;
+}
+.card-split:focus-visible {
+  outline: 2px solid var(--accent);
 }
 .toolbar.overview-tools {
   margin: -4px -6px -4px auto;
@@ -3879,10 +4105,43 @@ button:focus-visible,
   white-space: pre-wrap;
   font-family: var(--font-mono);
 }
-/* A message between agents on Now, as an email: its header rows, a rule, then the message. */
+/* A message between agents on Now, as Gmail shows one: the subject, the sender, "to" the recipient with a details toggle, a rule, then the message. */
+.now-mail-subject {
+  margin: 0 0 8px;
+  font-size: calc(var(--font-body) * 1.4);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.now-mail-from {
+  font-weight: 600;
+}
+.now-mail-to {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--font-caption);
+}
+.now-mail-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+}
+.now-mail-toggle svg {
+  transform: none;
+}
+.now-mail-toggle.open svg {
+  transform: rotate(180deg);
+}
 .now-mail-head {
+  margin-top: 6px;
   border-collapse: collapse;
-  font-size: var(--font-body);
+  font-size: var(--font-caption);
 }
 .now-mail-head th,
 .now-mail-head td {
@@ -3898,8 +4157,14 @@ button:focus-visible,
 }
 .now-mail-body {
   margin-top: 8px;
-  padding-top: 8px;
+  padding-top: 12px;
   border-top: 1px solid var(--border);
+}
+/* The message lines up with the subject and the sender, as Gmail's does. */
+.now-mail-body .markdown {
+  height: auto;
+  overflow: visible;
+  padding: 0;
 }
 /* Now as a list of every tool call. */
 .now-calls {
@@ -3911,6 +4176,8 @@ button:focus-visible,
 }
 .now-call {
   display: flex;
+  /* The tool's name and the monospace subject share a baseline. */
+  align-items: baseline;
   gap: 8px;
   padding: 3px 12px;
   cursor: default;
@@ -4003,14 +4270,25 @@ html:not(.phone-window) .now-console {
    and the focus frame only the line. */
 .now-call:has(> .now-script-sub) {
   flex-direction: column;
+  align-items: stretch;
   gap: 0;
   padding: 0;
 }
 .now-call.selected:has(> .now-script-sub) {
   background: none;
+  border-color: transparent;
+}
+@media (hover: hover) and (pointer: fine) {
+  .now-call:has(> .now-script-sub):hover {
+    background: none;
+  }
+  .now-call:has(> .now-script-sub):hover > .now-call-head {
+    background: var(--bg-3);
+  }
 }
 .now-call-head {
   display: flex;
+  align-items: baseline;
   gap: 8px;
   min-width: 0;
   padding: 3px 12px;
@@ -4045,6 +4323,7 @@ html:not(.phone-window) .now-console {
 }
 .now-call-toggle {
   flex: none;
+  align-self: center;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4141,10 +4420,36 @@ html:not(.phone-window) .now-console {
 .bg-summary {
   font-size: var(--font-caption);
 }
-.bg-output {
-  max-height: 200px;
-  overflow: auto;
-  margin: 4px 0 0;
+/* The Background and Subagents tabs: the list over the selected item's output or conversation (ListDetail). */
+.activity-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.bg-screen-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bg-screen-status {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--font-caption);
+}
+.bg-console {
+  min-height: 0;
+  overflow-y: auto;
+}
+.activity-agent {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.activity-agent .chat-scroll {
+  padding: 10px 12px;
 }
 
 /* The chat's queue, above the message box. */

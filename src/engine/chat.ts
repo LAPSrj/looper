@@ -6,6 +6,7 @@ import { stripAnsi } from '../shared/ansi';
 import { agentArgs } from '../shared/projects';
 import { fileAttachments, withCommands, withFileList, type CommandOutput } from '../shared/bash-mode';
 import { UserCommands } from './command-output';
+import type { SudoAskpass } from './sudo-askpass';
 import { spawnOffThread, type OffThreadChild } from './exec-worker';
 import {
   CONTINUE_TEXT,
@@ -28,6 +29,8 @@ import {
   type TitleBy,
   type UsageLimitHit,
   type WatchableTask,
+  autoCompactPercent,
+  contextPast,
 } from '../shared/chat';
 import { limitsKey, type SlashCommand, type UsageLimits } from '../shared/sessions';
 import {
@@ -39,7 +42,7 @@ import {
   resolveEnvironment,
   resolveHarness,
 } from '../shared/environments';
-import { compactRows, compactedText, layered, proseRows } from '../shared/compact';
+import { compactRows, compactedText, contextFullResend, contextFullRetry, layered, proseRows } from '../shared/compact';
 import type { MessageRow } from '../shared/messages';
 import type { EngineEvent, Harness, RunRecord, Settings, Task } from '../shared/types';
 import { CHAT_MESSAGE_FILE, chatMessageWaiting, queueGuidance, readPendingGuidance, takeChatMessage, takePendingGuidance, writeChatMessage } from './guidance';
@@ -48,7 +51,8 @@ import { ClaudeStreamAccumulator, CodexExecAccumulator } from './builder/stream'
 import { contextOfLine, readCodexContextWindow, readContextTokens } from './context';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
-import { COMPACTED_FILE, compactedFile, findCodexRollout, LiveRows, TranscriptReader, transcriptHostPath, withLooperInstructions } from './messages';
+import { COMPACTED_FILE, compactedFile, findCodexRollout, LiveRows, readCompactedReplNames, TranscriptReader, transcriptHostPath, withLooperInstructions } from './messages';
+import { REPL_FILES, replDataFiles, replDefinitions, replNames, replPrelude, replStateNote } from './repl-state';
 import { claudeModelWindows, modelWindows as sharedWindows } from './model-windows';
 import { AGENT_WATCH, childEnv, SOCKET_FILE, WATCH_DIR, writeLauncher, type RunContext } from './steps/common';
 import { parseWatchArgs, tasksText, WATCH_FOOTER, WATCH_USAGE, watchedLines, watchText, withWatch, type WatchTarget } from './task-watch';
@@ -379,6 +383,8 @@ export function needsNewProcess(launched: Launched, next: ChatSettings, nextEffo
 export interface ChatDeps {
   dataDir: string;
   host: HostKind;
+  /** Asks the user for sudo's password in the "!" commands of the chats (UserCommands). */
+  askpass?: SudoAskpass;
   settings: Settings;
   log: Logger;
   emit: (e: EngineEvent) => void;
@@ -388,6 +394,8 @@ export interface ChatDeps {
   readHistory: (taskId: string, runId: string) => Promise<MessageRow[]>;
   /** The same conversation whole, as a compacted one keeps it (compactRows): what Compact starts from. */
   readCompactable: (taskId: string, runId: string) => Promise<MessageRow[]>;
+  /** The newest rows of a run's conversation, when its transcript is long: they show while the whole of it is read (none for a short one). */
+  readNewest?: (taskId: string, runId: string) => Promise<MessageRow[]>;
   /** A conversation from outside Looper, read from its transcript (a host path): its rows, and the whole of it as compaction keeps it. */
   readTranscript?: (hostPath: string, format: 'claude' | 'codex') => Promise<{ rows: MessageRow[]; compact: MessageRow[]; name?: string }>;
   /** The name a run's conversation has (the user's for a terminal session, else the harness's): Continue in Chat starts with it. */
@@ -413,8 +421,16 @@ export interface ChatDeps {
   onRemote?: (chat: { id: string; taskId: string; name: string; cwd: string; dir: string; link: string }) => void;
   /** The chat closed (Close Conversation, or a move to another harness); quitting Looper keeps it for the next start. */
   onClose?: (chatId: string) => void;
+  /**
+   * A started conversation (`sessionId`) moves to another harness of the
+   * task's environment: its transcript is copied to that harness's folder
+   * when it keeps its conversations elsewhere (copyConversation).
+   */
+  moveConversation?: (task: Task, fromHarnessId: string, toHarnessId: string, sessionId: string) => Promise<void>;
   /** A chat that goes on with a run (Continue in Chat) opened, at Looper's start too. */
   onOpen?: (chat: { id: string; taskId: string; fromRunId: string }) => void;
+  /** A chat compacted into `to` (by hand or by itself): the task's run it held goes on there, and what's kept by its id moves. */
+  onCompacted?: (chat: { taskId: string; from: string; to: string }) => void;
   /** A message for the chat's agent: the user's, or Looper's (related events). */
   onTalk?: (chat: { id: string; taskId: string }) => void;
   /** The tasks a chat on the task (`chatTaskId`) can watch: every task, in the Tasks list's order. */
@@ -443,6 +459,11 @@ export function renameSessionRequest(requestId: string, title: string, sessionId
     request_id: requestId,
     request: { subtype: 'rename_session', title, source: 'host', ...(sessionId ? { session_id: sessionId } : {}) },
   });
+}
+
+/** Claude's stream-json control request that stops one background task (its task id), as its own task list's stop does. */
+export function stopTaskRequest(requestId: string, taskId: string): string {
+  return JSON.stringify({ type: 'control_request', request_id: requestId, request: { subtype: 'stop_task', task_id: taskId } });
 }
 
 /** Most of the first message Claude Code gets to name a chat from. */
@@ -493,6 +514,9 @@ export function historyRows(rows: MessageRow[]): MessageRow[] {
  */
 const LIVE_POLL_MS = 100;
 
+/** Fork and Compact while the chat's earlier conversation is still being read. */
+const HISTORY_READING = 'The conversation is still being read. Try again in a moment.';
+
 /** How long Stop waits for Claude to end its turn by itself before ending the process. */
 const INTERRUPT_GRACE_MS = 5000;
 /** How long a message the mod handed over still shows as queued after a turn it could have started ended without it. */
@@ -536,7 +560,7 @@ export type ChatOpening =
   /** Open Project in Chat: a new conversation. */
   | { kind: 'new' }
   /** Continue in Chat on a run that isn't a chat: a new chat that goes on with the run's conversation (and its name, read with readName). */
-  | { kind: 'continue'; runId: string; sessionId: string }
+  | { kind: 'continue'; runId: string; sessionId: string; harnessId?: string }
   /** Continue in Chat on a chat's run, or a chat Looper opens again at its start: the chat again, in its own run. */
   | { kind: 'reopen'; runId: string; info: ChatInfo; sessionId?: string }
   /** Fork from Here. */
@@ -562,7 +586,26 @@ export type ChatOpening =
       history: MessageRow[];
       harnessId?: string;
       settings?: ChatSettings;
+      /** Claude: the context window the earlier conversation's model had, which the chat shows until its first result names it. */
+      window?: number;
       draft?: ChatState['draft'];
+      /** The chat compacted by itself: past its auto-compact share of the context (`threshold`), or on a context too full for the model (`full`). */
+      auto?: 'threshold' | 'full';
+      /** A chat compacted: what it watched (Watch Task Events) and its Continue When Limit Resets, which move to the new chat. */
+      watches?: TaskWatch[];
+      autoContinue?: boolean;
+      /** Mute Notifications, which moves to the new chat too. */
+      muted?: boolean;
+      /** A chat that compacted while it held a task's run (Continue in Chat): the new chat holds it. */
+      fromRunId?: string;
+      /** A chat compacted: its name and whose it is, which the new chat keeps. */
+      title?: string;
+      titleBy?: TitleBy;
+      /** A chat compacted: when it started and its last turn ended, so the new chat keeps its place in the list and its finished turn. */
+      startedAt?: number;
+      turnEndedAt?: number;
+      /** Code Mode: what the earlier session's REPL held (ChatSession.replCarry), for this conversation's first session. */
+      repl?: CompactRepl;
     }
   /**
    * Continue in Chat on a conversation from outside Looper (the History
@@ -572,6 +615,9 @@ export type ChatOpening =
    * on with; unset: the project's.
    */
   | { kind: 'resume'; sessionId: string; harnessKind: 'claude-code' | 'codex'; transcript: string; harnessId?: string };
+
+/** Where a chat's earlier conversation is: a run's, or a transcript's (a host path). */
+export type ChatHistorySource = { runId: string } | { transcript: string; format: 'claude' | 'codex' };
 
 /** Why a conversation on one kind of harness can't go on with the project's, which is another kind. */
 export function kindMismatchText(conversation: Harness['kind'], project: Harness['kind']): string {
@@ -584,6 +630,22 @@ export type SavedChat = Extract<OpenConversation, { kind: 'chat' }>;
 /** A chat's folder holds how it opened until its first message makes it a run (chat.json then says). */
 const OPENING_FILE = 'opening.json';
 
+/**
+ * Code Mode, compacted: the names the new session's REPL gets back from the
+ * earlier one's, what the agent is told about them (replStateNote), and the
+ * script that brings them back (replPrelude), unset when nothing could be kept.
+ */
+export interface CompactRepl {
+  names: string[];
+  note: string;
+  prelude?: string;
+  /** The snapshot's data files in the earlier chat's run folder, in order, which the new one's prelude takes. */
+  data?: string[];
+}
+
+/** How long after a compaction's REPL snapshot its wake-up turn's start and end are still taken as its, not the agent's. */
+const REPL_WAKE_MS = 5000;
+
 class ChatSession {
   readonly id: string;
   readonly taskId: string;
@@ -591,7 +653,9 @@ class ChatSession {
   private readonly environmentId: string;
   private readonly harness: Harness;
   /** The environment's Claude Code and Codex harnesses. */
-  private readonly harnesses: { id: string; name: string }[];
+  private readonly harnesses: ChatState['harnesses'];
+  /** Harness menu while the agent works: the harness the chat moves to once the turn ends (`go`), which it shows meanwhile. */
+  private moveTo?: { id: string; name: string; go: () => void };
   /** The task's extra arguments: only a harness of the task's own kind gets them, since they're flags for that CLI. */
   private readonly extraArgs: string[];
   /** Claude: the harness's and the chat's arguments without their --settings, which join the chat's settings file. */
@@ -608,12 +672,24 @@ class ChatSession {
   private readonly forkedFrom?: string;
   /** A compacted chat: the run it was compacted from. */
   private readonly compactedFrom?: string;
+  /** A chat an auto compact or a full context opened (ChatOpening's `auto`). */
+  private readonly autoCompacted?: 'threshold' | 'full';
+  /** A chat compacted in this window: its context at the end of its first turn, which says how large the conversation is compacted. */
+  private compactBaseline?: ChatState['context'];
+  /** The messages the agent took since its turn began, and those the turn that ended last took: a turn that stops on a full context sends them again. */
+  private turnSent: Pending[] = [];
+  private lastTurnSent: Pending[] = [];
+  /** The manager's: the chat compacts into a new one by itself (auto compact, a full context), which then gets `resend`. */
+  onCompact?: (opening: Extract<ChatOpening, { kind: 'compact' }>, resend: Pending[]) => void;
   /** A conversation from outside Looper this chat went on with: its session (thread) id. */
   private readonly resumedSession?: string;
   /** A compacted chat that hasn't sent its first message: the conversation that message takes to the agent. */
   private compacted?: MessageRow[];
   /** The history as compaction keeps it, whole: the rows it shows are only the transcript's last ones. */
   private historyCompact?: MessageRow[];
+  /** The history is being read: Fork and Compact wait for it. `newest`: its newest rows (readNewest), shown until it all has been. */
+  private historyReading = false;
+  private newest?: MessageRow[];
   private readonly historyLabel?: string;
   /** Opened again: the run's conversation is read from its transcript. */
   private readonly reopened: boolean;
@@ -626,6 +702,12 @@ class ChatSession {
   private titleBy?: TitleBy;
   /** Claude: a Rename… its process hasn't been told yet (it wasn't running). */
   private pendingRename?: string;
+  /** Code Mode, compacted: the earlier session's REPL state for this conversation (ChatOpening's `repl`). */
+  private readonly repl?: CompactRepl;
+  /** A compaction's REPL snapshot woke the session for a turn that asks the model nothing: until then, a turn isn't the agent's. */
+  private quietTurnsUntil = 0;
+  /** A compacted chat kept the harness's name for the conversation: Claude Code's AI name for the new one doesn't replace it, a rename does. */
+  private titleKept = false;
   /** Claude Code was asked to name the chat (askTitle). */
   private titleAsked = false;
   /** The last turn failed on the usage limit. */
@@ -634,6 +716,8 @@ class ChatSession {
   private turnLimit?: { resetsAt?: number };
   /** Continue When Limit Resets. */
   private autoContinue: boolean;
+  /** Mute Notifications: no device gets a push for this chat. */
+  private muted: boolean;
   /** Continue Anyway: this limit's continue ignores the cache rule of Settings → Chats. */
   private continueAnyway = false;
   private continueTimer: NodeJS.Timeout | null = null;
@@ -644,6 +728,11 @@ class ChatSession {
   private settings: ChatSettings;
   private activeModel?: string;
   private context?: ChatContext;
+  /**
+   * Claude: the running model's context window. A compaction leaves the
+   * context's size unknown until the next reply, and its window as it was.
+   */
+  private contextWindow?: number;
   /** Claude: each model's context window its result records named (ChatState.modelWindows). */
   private modelWindows: Record<string, number> = {};
   /** Claude: what the running process was started with. */
@@ -751,7 +840,7 @@ class ChatSession {
 
   constructor(
     private readonly d: ChatDeps,
-    private readonly task: Task,
+    readonly task: Task,
     opening: ChatOpening,
     choice?: HarnessChoice,
     saved?: SavedChat,
@@ -759,12 +848,12 @@ class ChatSession {
     this.taskId = task.id;
     this.opening = opening;
     this.restored = !!saved;
-    this.startedAt = saved?.startedAt ?? Date.now();
+    this.startedAt = saved?.startedAt ?? (opening.kind === 'compact' ? opening.startedAt : undefined) ?? Date.now();
     const env = resolveEnvironment(task, d.settings);
     const own = resolveHarness(task, env);
     const info = opening.kind === 'reopen' ? opening.info : undefined;
     const wanted =
-      saved?.harnessId ?? choice?.harnessId ?? info?.harnessId ?? (opening.kind === 'fork' || opening.kind === 'compact' || opening.kind === 'resume' ? opening.harnessId : undefined);
+      saved?.harnessId ?? choice?.harnessId ?? info?.harnessId ?? (opening.kind === 'fork' || opening.kind === 'compact' || opening.kind === 'resume' || opening.kind === 'continue' ? opening.harnessId : undefined);
     const harness = wanted ? env.harnesses.find((h) => h.id === wanted) : own;
     if (!harness) throw new Error(`The environment "${env.name}" no longer has the harness this chat ran on.`);
     if (harness.kind === 'custom') throw new Error('A chat needs a Claude Code or Codex harness.');
@@ -774,7 +863,7 @@ class ChatSession {
     if (opening.kind === 'resume' && opening.harnessKind !== harness.kind) throw new Error(kindMismatchText(opening.harnessKind, harness.kind));
     this.environmentId = env.id;
     this.harness = harness.id === own.id && task.agent.command ? { ...harness, command: task.agent.command } : harness;
-    this.harnesses = env.harnesses.filter((h) => h.kind !== 'custom').map((h) => ({ id: h.id, name: h.name }));
+    this.harnesses = env.harnesses.flatMap((h) => (h.kind === 'custom' ? [] : [{ id: h.id, name: h.name, kind: h.kind }]));
     this.extraArgs = harness.kind === own.kind ? agentArgs(task) : [];
     this.claude = harness.kind === 'claude-code';
     const accOpts = { attachment: attachmentAt(path.join(d.dataDir, 'tasks')) };
@@ -784,7 +873,12 @@ class ChatSession {
     this.recorded = this.reopened;
     this.title = info?.title ?? '';
     this.titleBy = info?.titleBy;
-    this.autoContinue = info ? !!info.autoContinue : d.settings.chats.continueAfterLimit;
+    this.autoContinue = info
+      ? !!info.autoContinue
+      : opening.kind === 'compact' && opening.autoContinue !== undefined
+        ? opening.autoContinue
+        : d.settings.chats.continueAfterLimit;
+    this.muted = info ? !!info.muted : opening.kind === 'compact' && !!opening.muted;
     // Quitting while it waited for the reset: Looper's next start goes on waiting.
     if (saved) {
       this.limit = info?.limit;
@@ -799,9 +893,10 @@ class ChatSession {
     // Codex runs headless; a Claude chat without a session type of its own takes the task's.
     this.settings = { ...this.settings, mode: this.claude ? (this.settings.mode ?? task.agent.mode) : 'headless' };
     this.codeMode = !!info?.codeMode;
-    this.watches = info?.watches ?? [];
+    this.watches = info?.watches ?? (opening.kind === 'compact' ? opening.watches : undefined) ?? [];
     this.codexInstructed = !!info?.codexInstructed;
     this.context = info?.context;
+    this.contextWindow = info?.context?.window ?? (opening.kind === 'compact' ? opening.window : undefined);
     if (opening.kind === 'continue') {
       this.fromRunId = opening.runId;
       this.historyLabel = `Earlier in run ${opening.runId}`;
@@ -824,6 +919,8 @@ class ChatSession {
       this.draft = opening.draft;
     } else if (opening.kind === 'compact') {
       this.compactedFrom = opening.from;
+      this.fromRunId = opening.fromRunId;
+      this.autoCompacted = opening.auto;
       this.historyLabel = opening.label ?? `Compacted from run ${opening.from}`;
       // The newest session's rows get their layer here, once, so a conversation continued in a chat stays one session.
       const rows = layered(opening.history);
@@ -833,6 +930,15 @@ class ChatSession {
       this.historyCompact = rows;
       this.compacted = rows;
       this.draft = opening.draft;
+      this.turnEndedAt = opening.turnEndedAt;
+      this.repl = opening.repl;
+      if (opening.titleBy && opening.title) {
+        this.title = opening.title;
+        this.titleBy = opening.titleBy;
+        this.titleKept = opening.titleBy === 'harness';
+        // Claude Code's session gets the name too (rename_session), so its transcript and the Claude app have it.
+        if (this.claude) this.pendingRename = opening.title;
+      }
     }
     if (saved) {
       this.sessionId ??= saved.sessionId;
@@ -864,7 +970,20 @@ class ChatSession {
       onOutput: (id, data) => {
         if (!this.closed) this.d.emit({ type: 'chat:command', chatId: this.id, id, data });
       },
+      onPrompt: (id, prompt) => this.d.emit({ type: 'chat:command-prompt', chatId: this.id, id, prompt }),
+      askpass: d.askpass,
     });
+  }
+
+  /**
+   * Where the conversation this chat went on with was read from, for what
+   * the chat's own session hasn't written yet: a run's (Continue in Chat on a
+   * run), or a transcript from outside Looper (History's Continue in Chat).
+   */
+  historySource(): ChatHistorySource | undefined {
+    if (this.opening.kind === 'resume') return { transcript: this.opening.transcript, format: this.claude ? 'claude' : 'codex' };
+    // A compacted chat holding a run starts from its compacted rows, not the run's conversation.
+    return this.fromRunId && !this.compactedFrom ? { runId: this.fromRunId } : undefined;
   }
 
   // ---------- lifecycle ----------
@@ -872,23 +991,44 @@ class ChatSession {
   start(): void {
     fs.mkdirSync(path.join(this.dir, 'bin'), { recursive: true });
     fs.mkdirSync(path.join(this.dir, 'permissions'), { recursive: true });
+    // Code Mode, compacted: the REPL's first script brings back the earlier session's names (the mod runs it).
+    if (this.repl?.prelude && !this.recorded) {
+      void fs.promises.writeFile(path.join(this.dir, REPL_FILES.prelude), this.repl.prelude).catch((err: unknown) => this.d.log.warn(`chat ${this.id}: cannot write the REPL prelude: ${errMsg(err)}`));
+      for (const part of this.repl.data ?? []) {
+        void fs.promises.copyFile(part, path.join(this.dir, path.basename(part))).catch((err: unknown) => this.d.log.warn(`chat ${this.id}: cannot copy the REPL data: ${errMsg(err)}`));
+      }
+    }
     // A looper-watch request an earlier start left behind has nobody waiting on it.
     fs.rmSync(path.join(this.dir, WATCH_DIR), { recursive: true, force: true });
     this.timers.push(setInterval(() => void this.pollWatchRequests(), this.d.settings.signalPollMs));
     // Until its first message, how it opened is what Looper's next start opens it again with.
     if (!this.recorded) writeJsonAtomic(path.join(this.dir, OPENING_FILE), this.opening);
     // Continue in Chat shows the run's conversation; a chat opened again, its own.
-    const historyRun = this.reopened ? this.id : this.historyLabel && this.fromRunId ? this.fromRunId : undefined;
+    const historyRun = this.reopened ? this.id : this.historyLabel && this.fromRunId && !this.compactedFrom ? this.fromRunId : undefined;
     if (historyRun) {
-      void Promise.all([this.d.readHistory(this.taskId, historyRun), this.d.readCompactable(this.taskId, historyRun)])
+      this.historyReading = true;
+      // A long transcript's newest rows show first, and the whole of it is read after them.
+      const newest = this.d.readNewest?.(this.taskId, historyRun).then((rows) => {
+        if (!this.historyReading || !rows.length) return;
+        this.newest = historyRows(rows);
+        this.scheduleEmit();
+      });
+      void (newest ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(() => Promise.all([this.d.readHistory(this.taskId, historyRun), this.d.readCompactable(this.taskId, historyRun)]))
         .then(([rows, compact]) => {
           this.history = historyRows(rows);
           this.historyCompact = compact;
-          this.scheduleEmit();
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          this.historyReading = false;
+          this.newest = undefined;
+          this.scheduleEmit();
+        });
     } else if (this.opening.kind === 'resume' && this.d.readTranscript) {
       // A conversation from outside Looper has no run: its history is its transcript's.
+      this.historyReading = true;
       void this.d
         .readTranscript(this.opening.transcript, this.claude ? 'claude' : 'codex')
         .then(({ rows, compact, name }) => {
@@ -897,7 +1037,10 @@ class ChatSession {
           if (name) this.nameFromHarness(name);
           this.scheduleEmit();
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          this.historyReading = false;
+        });
     }
     // Continue in Chat on a conversation that has a name: the chat starts with it.
     if (this.opening.kind === 'continue' && this.d.readName) {
@@ -1024,11 +1167,8 @@ class ChatSession {
     await Promise.all([this.kill(), this.stopCommands()]);
     // A chat nobody wrote in leaves nothing behind; a run keeps its folder, minus the permission requests.
     const gone = this.recorded || keep ? path.join(this.dir, 'permissions') : this.dir;
-    try {
-      fs.rmSync(gone, { recursive: true, force: true });
-    } catch (err) {
-      this.d.log.warn(`chat ${this.id}: cannot delete ${gone}: ${errMsg(err)}`);
-    }
+    // Not rmSync: on Windows the delete held the main process 10 ms and more (the perf journey's "close a chat").
+    await fs.promises.rm(gone, { recursive: true, force: true }).catch((err: unknown) => this.d.log.warn(`chat ${this.id}: cannot delete ${gone}: ${errMsg(err)}`));
   }
 
   private async kill(): Promise<void> {
@@ -1126,8 +1266,57 @@ class ChatSession {
       clearTimeout(this.stopTimer);
       this.stopTimer = null;
     }
+    this.lastTurnSent = this.turnSent;
+    this.turnSent = [];
     this.turnEndedAt = Date.now();
     this.setStatus('ready');
+    this.moveIfIdle();
+  }
+
+  /**
+   * Harness menu while the agent works (the conversation has started): the
+   * chat shows the harness it moves to, and moves once the turn ends (`go`),
+   * with the messages sent meanwhile. Undefined: it stays on its own.
+   */
+  setMoveTo(harnessId: string | undefined, go?: () => void): void {
+    const h = harnessId && go ? this.harnesses.find((x) => x.id === harnessId) : undefined;
+    this.moveTo = h && go ? { id: h.id, name: h.name, go } : undefined;
+    this.scheduleEmit();
+    // Nothing to wait for: a message waiting in the queue goes now.
+    if (!this.moveTo) this.drainQueue();
+  }
+
+  /** The move to another harness failed: the chat stays on its own, and what waited for the move goes to its agent. */
+  moveFailed(err: unknown): void {
+    if (this.closed) return;
+    this.acc.addNote(`Couldn't move to ${this.moveTo?.name ?? 'the other harness'}: ${errMsg(err)}`);
+    this.setMoveTo(undefined);
+  }
+
+  /** A pending move goes once the agent is idle; after the caller is done with its own turn bookkeeping. */
+  private moveIfIdle(): void {
+    if (!this.moveTo || this.closed) return;
+    queueMicrotask(() => {
+      if (this.moveTo && !this.closed && !this.busy() && !this.killing) this.moveTo.go();
+    });
+  }
+
+  /** The messages that haven't reached the agent: they go to the session that takes the chat over. */
+  waiting(): Pending[] {
+    return this.queued.map((q) => ({ text: q.text, attachments: q.attachments }));
+  }
+
+  /** Messages sent while a move to another harness was being prepared, back when the move failed: queued, and sent once no move waits. */
+  takeBack(messages: Pending[]): void {
+    if (messages.length === 0 || this.closed || this.status === 'ended') return;
+    for (const m of messages) this.queued.push({ id: `q${++this.queueSeq}`, text: m.text, attachments: m.attachments });
+    this.scheduleEmit();
+    this.drainQueue();
+  }
+
+  /** The conversation the harness resumes (its session or thread), or the one a fork that hasn't sent anything starts from. */
+  conversationId(): string | undefined {
+    return this.sessionId ?? this.fork?.sessionId;
   }
 
   // ---------- the queue ----------
@@ -1135,6 +1324,11 @@ class ChatSession {
   /** Send Now: the queued messages go at once, ending the agent's turn if it's working. */
   async sendNow(): Promise<void> {
     if (this.queued.length === 0) return;
+    // Moving to another harness: the turn ends, and the messages go to the new one.
+    if (this.moveTo) {
+      if (this.status === 'working') await this.stopTurn();
+      return;
+    }
     if (this.interactive) {
       // The mod starts the next turn with them once this one has ended.
       if (this.status === 'working') await this.stopTurn();
@@ -1332,6 +1526,8 @@ class ChatSession {
         effort,
         permissionMode: s.permissionMode || undefined,
         session,
+        // Code Mode, compacted: only a session that takes the compacted conversation starts with the earlier REPL's names.
+        ...(this.compacted && this.repl?.prelude ? { replPrelude: REPL_FILES.prelude, replDataParts: this.repl.data?.length ?? 1 } : {}),
         // As headless: a question form needs answers Looper can't collect, so the agent asks in the conversation.
         extraArgs: [
           ...(fork ? ['--resume', fork.sessionId, '--fork-session', '--resume-session-at', fork.claudeAt] : []),
@@ -1451,15 +1647,19 @@ class ChatSession {
     // A new conversation's transcript appears with its first message.
     const grew = this.transcript ? await this.transcript.reader.read().catch((err: NodeJS.ErrnoException) => (err.code === 'ENOENT' ? false : Promise.reject(err))) : false;
     if (grew) {
-      if (this.acc.sessionName) this.nameFromHarness(this.acc.sessionName);
+      const name = this.titleKept && this.acc instanceof ClaudeStreamAccumulator ? this.acc.customTitle : this.acc.sessionName;
+      if (name) this.nameFromHarness(name);
       this.scheduleEmit();
     }
     if (this.inboxWritten && !chatMessageWaiting(this.dir)) this.inboxTaken();
     if (this.deliveredUntil !== null && Date.now() >= this.deliveredUntil) this.showDelivered();
     if (!running) return;
+    let turnOver = false;
     // The mod records each turn's start and end.
     const [turnStart, turnEnd] = await Promise.all([mtime('turn.json'), mtime(MOD_FILES.turnEnd)]);
-    if (turnStart >= this.sessionStartedAt - 1000 && turnStart > turnEnd && this.status === 'ready') this.setStatus('working');
+    // The turn a compaction's REPL snapshot woke the session for asks the model nothing: it isn't one of the agent's.
+    if (Date.now() < this.quietTurnsUntil) this.seen.turnEnd = Math.max(this.seen.turnEnd, turnEnd);
+    else if (turnStart >= this.sessionStartedAt - 1000 && turnStart > turnEnd && this.status === 'ready') this.setStatus('working');
     else if (turnEnd > this.seen.turnEnd && turnEnd >= turnStart) {
       this.seen.turnEnd = turnEnd;
       // A turn that started after the mod could have handed the messages over ended without them: they go, after a
@@ -1471,6 +1671,7 @@ class ChatSession {
         this.turnEnded();
         this.takeLimit();
         this.save();
+        turnOver = true;
       }
     }
     // The mod's record of the session's usage: the context and its window, and the account's limits.
@@ -1482,7 +1683,8 @@ class ChatSession {
       if (typeof context?.tokens === 'number') {
         const tokens = context.tokens;
         const window = typeof context.window === 'number' && context.window > 0 ? context.window : this.activeModel ? sharedWindows.pick(this.activeModel, tokens) : undefined;
-        this.context = { tokens, window: window ?? this.context?.window };
+        if (window) this.contextWindow = window;
+        this.context = { tokens, window: this.contextWindow };
       }
       const limits = usage ? modUsageLimits(usage) : null;
       if (limits) this.d.onLimits(limitsKey(this.environmentId, this.harness.id), limits);
@@ -1490,6 +1692,8 @@ class ChatSession {
     }
     // Remote Control turned off during a turn, or while the session started.
     this.dropRemote();
+    // After the usage record, which says how full the context is.
+    if (turnOver && !this.compactIfFull()) this.autoCompactIfDue();
   }
 
   /** Read the session's transcript (a target path) into the conversation, from its end as it is now: the rows before are already shown. */
@@ -1561,7 +1765,7 @@ class ChatSession {
       .map((m) => withFileList(withCommands(m.text, m.attachments), fileAttachments(m.attachments).map((a) => this.target.toTargetPath(a.path))))
       .join('\n\n');
     // A compacted chat's first message takes the earlier conversation to the agent, once; the rows leave it out.
-    const compacted = this.compacted ? compactedText(this.compacted, { ...this.d.settings.chats.compaction, path: (x) => this.target.toTargetPath(x) }) : undefined;
+    const compacted = this.compacted ? compactedText(this.compacted, { ...this.d.settings.chats.compaction, path: (x) => this.target.toTargetPath(x), replNote: this.repl?.note }) : undefined;
     writeChatMessage(this.dir, compacted ? `${compacted}\n\n${text}` : text);
     this.inboxWritten = true;
     this.inboxIds = this.queued.map((m) => m.id);
@@ -1578,6 +1782,7 @@ class ChatSession {
       this.delivered.push(...this.queued.filter((q) => taken.has(q.id)).map((q) => ({ ...q, delivered: true })));
       this.deliveredSince = this.inboxAt;
     }
+    this.turnSent.push(...this.queued.filter((q) => taken.has(q.id)).map((q) => ({ text: q.text, attachments: q.attachments })));
     this.queued = this.queued.filter((q) => !taken.has(q.id));
     this.inboxIds = [];
     this.inboxWritten = false;
@@ -1698,6 +1903,14 @@ class ChatSession {
   }
 
   // ---------- the usage limit ----------
+
+  /** Mute Notifications, on or off. */
+  setMuted(on: boolean): void {
+    if (this.closed || this.muted === on) return;
+    this.muted = on;
+    this.save();
+    this.scheduleEmit();
+  }
 
   /** Continue When Limit Resets, on or off. */
   setAutoContinue(on: boolean): void {
@@ -1955,8 +2168,9 @@ class ChatSession {
       // The one process is the whole conversation: once it is gone, so is the chat.
       this.end(exitText('The session ended.', stderr));
     });
-    // The command list, before any message: Claude answers it without calling the model.
-    this.proc?.stdin?.write(JSON.stringify({ type: 'control_request', request_id: `init-${++this.controlSeq}`, request: { subtype: 'initialize' } }) + '\n');
+    // The command list, before any message: Claude answers it without calling the model. perTaskStopAffordance (Claude
+    // Code 2.1.330): Stop ends only the turn; background subagents and workflows keep running, and each one has its own Stop.
+    this.proc?.stdin?.write(JSON.stringify({ type: 'control_request', request_id: `init-${++this.controlSeq}`, request: { subtype: 'initialize', perTaskStopAffordance: true } }) + '\n');
     // Each process connects anew, under a new claude.ai address.
     if (this.remoteName) this.proc?.stdin?.write(remoteControlRequest(`rc-${++this.controlSeq}`, this.remoteName) + '\n');
     if (this.pendingRename) {
@@ -2012,7 +2226,12 @@ class ChatSession {
       else this.codexInstructed = true;
       this.turnEnded();
       this.takeLimit();
-      void this.readCodexContext().finally(() => this.save());
+      if (this.compactIfFull()) return;
+      // Auto compact waits for the context, which the rollout says.
+      void this.readCodexContext().finally(() => {
+        this.save();
+        this.autoCompactIfDue();
+      });
       this.drainQueue();
     });
   }
@@ -2066,7 +2285,7 @@ class ChatSession {
 
   /** Send what waited, all of it as one message, once the agent isn't working. */
   private drainQueue(): void {
-    if (this.queued.length === 0 || this.killing || this.reporting || this.status === 'ended' || this.closed) return;
+    if (this.queued.length === 0 || this.killing || this.reporting || this.status === 'ended' || this.closed || this.moveTo) return;
     if (this.interactive) {
       // The mod takes the messages in whenever the agent can read them.
       if (!this.agentRunning()) this.startAgent();
@@ -2149,6 +2368,9 @@ class ChatSession {
     if (rec.type === 'system' && rec.subtype === 'init') {
       if (typeof rec.session_id === 'string') this.setSession(rec.session_id);
       if (typeof rec.model === 'string') this.activeModel = rec.model;
+      // Each turn starts with one, and an idle process prints none (claude 2.1.330): Claude Code started a turn by itself
+      // (another session's message, a background task's end, a wake-up), which works until its result as Looper's own do.
+      if (this.status === 'ready' && !this.killing) this.setStatus('working');
     } else if (rec.type === 'system' && rec.subtype === 'commands_changed') {
       this.commands = slashCommandsOf(rec.commands);
     } else if (rec.type === 'system' && rec.subtype === 'session_title_changed') {
@@ -2163,7 +2385,7 @@ class ChatSession {
     } else if ((rec.type === 'assistant' && rec.parent_tool_use_id == null) || (rec.type === 'system' && rec.subtype === 'compact_boundary')) {
       // A subagent's messages (parent_tool_use_id set) fill its own context, not the chat's.
       const tokens = contextOfLine(line, 'claude');
-      if (typeof tokens === 'number') this.context = { tokens, window: this.context?.window };
+      if (typeof tokens === 'number') this.context = { tokens, window: this.contextWindow };
       else if (tokens === 'unknown') this.context = undefined;
       const calls = rec.type === 'assistant' ? toolUseIds(rec, 'tool_use') : [];
       for (const id of calls) this.toolsRunning.add(id);
@@ -2180,13 +2402,14 @@ class ChatSession {
           this.markOpened();
           this.setStatus('working');
         }
-      } else if (rec.isReplay === true) {
-        // Claude read a message: a queued one joins the conversation here.
+      } else if (rec.isReplay === true && rec.isSynthetic !== true) {
+        // Claude read a message: a queued one joins the conversation here. A synthetic one is Claude Code's own delivery.
         const id = this.unreplayed.shift();
         const m = typeof id === 'string' ? this.queued.find((q) => q.id === id) : undefined;
         if (m) {
           this.queued = this.queued.filter((q) => q !== m);
           this.acc.addPrompt(m.text, m.attachments);
+          this.turnSent.push({ text: m.text, attachments: m.attachments });
         }
       }
     } else if (rec.type === 'control_response') {
@@ -2222,6 +2445,7 @@ class ChatSession {
       }
     } else if (rec.type === 'result') {
       const window = claudeContextWindow(rec, this.activeModel);
+      if (window) this.contextWindow = window;
       if (this.context && window) this.context = { ...this.context, window };
       const windows = claudeModelWindows(rec);
       this.modelWindows = { ...this.modelWindows, ...windows };
@@ -2238,9 +2462,11 @@ class ChatSession {
       }
       this.turnEnded();
       this.takeLimit();
+      if (this.compactIfFull()) return;
       this.askTitle();
       this.save();
       this.drainQueue();
+      this.autoCompactIfDue();
     }
   }
 
@@ -2284,6 +2510,13 @@ class ChatSession {
     const t = text.trim();
     if (this.closed || this.status === 'ended' || (!t && attachments.length === 0)) return false;
     this.d.onTalk?.({ id: this.id, taskId: this.taskId });
+    // Moving to another harness once the turn ends: the message waits for it.
+    if (this.moveTo) {
+      this.queued.push({ id: `q${++this.queueSeq}`, text: t, attachments });
+      this.scheduleEmit();
+      this.moveIfIdle();
+      return true;
+    }
     if (this.killing || this.reporting || (this.status === 'working' && !this.interactive)) {
       this.queued.push({ id: `q${++this.queueSeq}`, text: t, attachments });
       // A tool is running: the agent reads it with that tool's result.
@@ -2308,11 +2541,12 @@ class ChatSession {
       this.scheduleEmit();
       return;
     }
+    this.turnSent.push(p);
     const row = this.acc.addPrompt(p.text, p.attachments);
     this.markOpened();
     // A compacted chat's first message takes the earlier conversation to the agent, once.
     const compacted = this.compacted
-      ? compactedText(this.compacted, { ...this.d.settings.chats.compaction, path: (x) => this.target.toTargetPath(x) })
+      ? compactedText(this.compacted, { ...this.d.settings.chats.compaction, path: (x) => this.target.toTargetPath(x), replNote: this.repl?.note })
       : undefined;
     this.compacted = undefined;
     if (this.claude) this.writeClaude(p, row, compacted);
@@ -2373,6 +2607,23 @@ class ChatSession {
     queueGuidance(dir, t);
     this.subagentWaiting.set(agentId, readPendingGuidance(dir) ?? t);
     this.scheduleEmit();
+  }
+
+  /**
+   * Stop on a background command, Monitor, subagent or workflow (Claude's task id): an interactive chat's mod stops it
+   * with Claude Code's own TaskStop, and a headless chat's Claude Code gets the stop_task control request. Either way
+   * the conversation then says how it ended. Throws with the reason it can't.
+   */
+  stopBackground(taskId: string): void {
+    if (!this.claude) throw new Error(`${this.harness.name} has no background work Looper can stop.`);
+    if (this.closed || this.status === 'ended') throw new Error('This chat has ended.');
+    if (this.interactive) {
+      if (!this.session) throw new Error('The agent isn’t running.');
+      this.session.stopBackground(taskId);
+      return;
+    }
+    if (!this.proc?.stdin) throw new Error('The agent isn’t running.');
+    this.proc.stdin.write(stopTaskRequest(`stop-task-${++this.controlSeq}`, taskId) + '\n');
   }
 
   /** Take back what waits for the subagent; undefined when the subagent has already read it. */
@@ -2454,6 +2705,7 @@ class ChatSession {
     this.d.log.warn(`chat ${this.id} ended: ${error}`);
     this.save();
     this.scheduleEmit();
+    this.moveIfIdle();
   }
 
   /**
@@ -2468,7 +2720,7 @@ class ChatSession {
       this.recorded = true;
       if (!this.titleBy) this.title = chatTitle(this.acc.rows);
       // The transcript holds the compacted conversation only as text inside the first message: the run keeps its rows.
-      if (this.opening.kind === 'compact') writeJsonAtomic(path.join(this.dir, COMPACTED_FILE), compactedFile(this.opening.history));
+      if (this.opening.kind === 'compact') writeJsonAtomic(path.join(this.dir, COMPACTED_FILE), compactedFile(this.opening.history, this.repl?.names));
       // chat.json says how it opens again from now on.
       fs.rmSync(path.join(this.dir, OPENING_FILE), { force: true });
       if (this.sessionId) this.d.onSession?.({ taskId: this.taskId, runId: this.id, sessionId: this.sessionId });
@@ -2499,34 +2751,43 @@ class ChatSession {
   }
 
   /** The chat's chat.json: what Continue in Chat opens it again with. */
-  private save(): void {
-    if (this.closed || !this.recorded) return;
+  save(): void {
+    const info = this.closed ? undefined : this.info();
+    if (!info) return;
     try {
-      this.d.writeInfo(this.taskId, this.id, {
-        harnessId: this.harness.id,
-        harnessKind: this.claude ? 'claude-code' : 'codex',
-        title: this.title,
-        ...(this.titleBy ? { titleBy: this.titleBy } : {}),
-        ...(this.autoContinue ? { autoContinue: true } : {}),
-        ...(this.continueAnyway ? { continueAnyway: true } : {}),
-        ...(this.limit ? { limit: this.limit } : {}),
-        settings: this.settings,
-        ...(this.context ? { context: this.context } : {}),
-        ...(this.fromRunId ? { fromRunId: this.fromRunId } : {}),
-        ...(this.forkedFrom ? { forkedFrom: this.forkedFrom } : {}),
-        ...(this.compactedFrom ? { compactedFrom: this.compactedFrom } : {}),
-        ...(this.resumedSession ? { resumedSession: this.resumedSession } : {}),
-        ...(this.codeMode ? { codeMode: true } : {}),
-        ...(this.watches.length ? { watches: this.watches } : {}),
-        ...(this.codexInstructed ? { codexInstructed: true } : {}),
-      });
+      this.d.writeInfo(this.taskId, this.id, info);
     } catch (err) {
       this.d.log.warn(`chat ${this.id}: cannot save: ${errMsg(err)}`);
     }
   }
 
+  /** What chat.json says: undefined until the chat is a run. */
+  info(): ChatInfo | undefined {
+    if (!this.recorded) return undefined;
+    return {
+      harnessId: this.harness.id,
+      harnessKind: this.claude ? 'claude-code' : 'codex',
+      title: this.title,
+      ...(this.titleBy ? { titleBy: this.titleBy } : {}),
+      ...(this.autoContinue ? { autoContinue: true } : {}),
+      ...(this.muted ? { muted: true } : {}),
+      ...(this.continueAnyway ? { continueAnyway: true } : {}),
+      ...(this.limit ? { limit: this.limit } : {}),
+      settings: this.settings,
+      ...(this.context ? { context: this.context } : {}),
+      ...(this.fromRunId ? { fromRunId: this.fromRunId } : {}),
+      ...(this.forkedFrom ? { forkedFrom: this.forkedFrom } : {}),
+      ...(this.compactedFrom ? { compactedFrom: this.compactedFrom } : {}),
+      ...(this.resumedSession ? { resumedSession: this.resumedSession } : {}),
+      ...(this.codeMode ? { codeMode: true } : {}),
+      ...(this.watches.length ? { watches: this.watches } : {}),
+      ...(this.codexInstructed ? { codexInstructed: true } : {}),
+    };
+  }
+
   /** Fork from Here on the row at `index` of the history and rows: how the new chat starts. Throws with the reason. */
   forkAt(index: number): Extract<ChatOpening, { kind: 'fork' }> {
+    if (this.historyReading) throw new Error(HISTORY_READING);
     const rows = [...this.history, ...this.acc.rows];
     const point = forkPoint(rows, index, this.claude ? 'claude-code' : 'codex', this.status === 'working');
     if (!point) throw new Error("The chat can't be forked from this message.");
@@ -2572,15 +2833,149 @@ class ChatSession {
     return !this.recorded && !this.sessionId && !this.fork && history && this.queued.length === 0 && this.status !== 'working';
   }
 
-  /** Compact into New Chat: the conversation as a compacted chat starts from. Throws with the reason it can't. */
-  compactOpening(): Extract<ChatOpening, { kind: 'compact' }> {
+  /**
+   * Compact into New Chat: the conversation as a compacted chat starts from.
+   * `auto`: the chat compacts by itself, from `rows` as its rows here when
+   * given, and the new chat keeps the message box's text. Throws with the reason it can't.
+   */
+  compactOpening(auto?: { why: 'threshold' | 'full'; rows?: MessageRow[] }): Extract<ChatOpening, { kind: 'compact' }> {
     if (this.busy()) throw new Error('The agent is still working. Compact the chat once its turn has ended.');
+    // Before it has all been read, the history would be compacted without its start.
+    if (this.historyReading) throw new Error(HISTORY_READING);
     const history = this.historyCompact ?? compactRows(this.history);
-    const rows = compactRows([...history, ...this.acc.rows]);
+    const rows = compactRows([...history, ...(auto?.rows ?? this.acc.rows)]);
     if (!rows.some((r) => r.kind === 'agent')) throw new Error('The chat has no reply to compact yet.');
     // A chat that hasn't sent a message isn't a run yet: its conversation is the run it went on with.
-    const from = this.recorded ? this.id : (this.fromRunId ?? this.compactedFrom ?? this.forkedFrom ?? this.id);
-    return { kind: 'compact', from, history: rows, harnessId: this.harness.id, settings: this.settings };
+    const from = this.recorded ? this.id : (this.compactedFrom ?? this.fromRunId ?? this.forkedFrom ?? this.id);
+    const opening = {
+      kind: 'compact' as const,
+      from,
+      history: rows,
+      harnessId: this.harness.id,
+      settings: this.settings,
+      window: this.contextWindow,
+      // It goes on with the same work: what it watches and Continue When Limit Resets move to the new chat (handOver).
+      ...(this.watches.length ? { watches: this.watches } : {}),
+      autoContinue: this.autoContinue,
+      ...(this.muted ? { muted: true } : {}),
+      // As if the conversation went on: the same name, place in the list, finished turn and message box.
+      ...(this.titleBy ? { title: this.title, titleBy: this.titleBy } : {}),
+      startedAt: this.startedAt,
+      ...(this.turnEndedAt !== undefined ? { turnEndedAt: this.turnEndedAt } : {}),
+      ...(this.draft ? { draft: this.draft } : {}),
+      // The task's run this chat holds goes on in the new chat (ChatManager.compactInto), whose end writes its report.
+      ...(this.fromRunId ? { fromRunId: this.fromRunId } : {}),
+    };
+    if (!auto) return opening;
+    const label = auto.why === 'full' ? `Compacted from run ${from} when its context was full` : `Compacted automatically from run ${from}`;
+    return { ...opening, auto: auto.why, label };
+  }
+
+  /**
+   * The turn stopped because the conversation no longer fits the model's
+   * context (CONTEXT_FULL_RE): the chat compacts into a new one, which sends
+   * the turn's messages again, then those queued meanwhile. A chat a full
+   * context opened doesn't again until its agent has replied, so a
+   * conversation too large even compacted doesn't go round. True when it compacts.
+   */
+  private compactIfFull(): boolean {
+    if (!this.onCompact || this.closed || this.killing || this.moveTo || this.status !== 'ready') return false;
+    const rows = contextFullRetry(this.acc.rows);
+    if (!rows) return false;
+    if (this.autoCompacted === 'full' && !rows.some((r) => r.kind === 'agent' && !r.note)) return false;
+    let opening: Extract<ChatOpening, { kind: 'compact' }>;
+    try {
+      opening = this.compactOpening({ why: 'full', rows });
+    } catch (err) {
+      this.d.log.info(`[${this.taskId}] chat ${this.id}: the context is full, and the chat can't be compacted: ${errMsg(err)}`);
+      return false;
+    }
+    const resend = [...contextFullResend(this.acc.rows, rows, this.lastTurnSent), ...this.queued.map((q) => ({ text: q.text, attachments: q.attachments }))];
+    this.d.log.info(`[${this.taskId}] chat ${this.id}: the context is full: compacting, and sending ${resend.length} message(s) again`);
+    this.onCompact(opening, resend);
+    return true;
+  }
+
+  /**
+   * Auto compact: at the end of a turn whose context is past the chat's share
+   * of its window (Settings → Chats, or the chat's own setting), the chat
+   * compacts into a new one. Not while something waits to go to the agent or
+   * for the user, nor after a turn that failed. A chat compacted here whose
+   * first turn already ends past the share doesn't, since it would every turn.
+   */
+  private autoCompactIfDue(): void {
+    if (!this.onCompact || this.closed || this.killing || this.moveTo || this.status !== 'ready') return;
+    if (this.opening.kind === 'compact' && !this.compactBaseline && this.context) this.compactBaseline = this.context;
+    if (this.queued.length || this.permissions.length || this.limit || endingError(this.acc.rows)) return;
+    const percent = autoCompactPercent(this.settings, this.d.settings.chats.autoCompact);
+    if (percent === undefined || !contextPast(this.context, percent) || contextPast(this.compactBaseline, percent)) return;
+    let opening: Extract<ChatOpening, { kind: 'compact' }>;
+    try {
+      opening = this.compactOpening({ why: 'threshold' });
+    } catch {
+      return;
+    }
+    this.d.log.info(`[${this.taskId}] chat ${this.id}: the context is past ${percent}% of its window: compacting`);
+    this.onCompact(opening, []);
+  }
+
+  /**
+   * Code Mode, compacting: what the REPL holds, for the new session (its
+   * snapshot through the mod, SessionHandle.snapshotRepl), between turns
+   * only: the names its scripts defined, after those its own compaction
+   * brought back. Undefined when there's nothing to carry or the snapshot
+   * failed, and compaction goes on without it.
+   */
+  async replCarry(): Promise<CompactRepl | undefined> {
+    const session = this.session;
+    if (!this.codeMode || !session || this.busy() || this.closed) return undefined;
+    // The newest session's scripts: an earlier session's rows have a layer (compacted.json).
+    const scripts = [...this.history, ...this.acc.rows].flatMap((r) => {
+      const code = r.kind === 'tool' && r.tool === 'REPL' && r.layer === undefined ? (r.input as { code?: unknown } | undefined)?.code : undefined;
+      return typeof code === 'string' ? [code] : [];
+    });
+    const before = this.repl?.names ?? (this.compactedFrom ? readCompactedReplNames(this.dir) : []);
+    const order = new Set<string>();
+    for (const name of [...before, ...(await replNames(scripts))]) {
+      order.delete(name);
+      order.add(name);
+    }
+    if (!order.size) return undefined;
+    this.quietTurnsUntil = Infinity;
+    try {
+      const snapshot = await session.snapshotRepl([...order]);
+      if ('error' in snapshot) {
+        this.d.log.info(`[${this.taskId}] chat ${this.id}: compacting without the REPL's state: ${snapshot.error}`);
+        return undefined;
+      }
+      const p = await replPrelude(snapshot);
+      if (!p) return undefined;
+      // What didn't come back as it was gets the statement that made it, so the agent can run it again.
+      const made = await replDefinitions(scripts, [...p.lost, ...p.changed].map((s) => s.name.split(/[.[]/)[0]));
+      const data = replDataFiles(snapshot.parts).map((n) => path.join(this.dir, n));
+      return { names: p.names, note: replStateNote(p, made), ...(p.names.length ? { prelude: p.script, data } : {}) };
+    } catch (err) {
+      this.d.log.info(`[${this.taskId}] chat ${this.id}: compacting without the REPL's state: ${errMsg(err)}`);
+      return undefined;
+    } finally {
+      this.quietTurnsUntil = Date.now() + REPL_WAKE_MS;
+    }
+  }
+
+  /** Compacted: the new chat watches its tasks and continues after the limit now, so this one, and its run reopened later, don't. */
+  handOver(): void {
+    if (this.closed) return;
+    this.watches = [];
+    this.autoContinue = false;
+    this.continueAnyway = false;
+    this.save();
+  }
+
+  /** The new chat couldn't start: this one goes on, with a note why. */
+  compactFailed(err: unknown): void {
+    this.acc.addNote(`Couldn't compact the chat: ${errMsg(err)}`);
+    this.scheduleEmit();
+    this.drainQueue();
   }
 
   /** What a chat on another harness needs from this one. */
@@ -2590,6 +2985,11 @@ class ChatSession {
 
   get harnessId(): string {
     return this.harness.id;
+  }
+
+  /** Interactive: the size the window showed the terminal at, which a chat compacted from this one starts with. */
+  terminalSize(): { cols: number; rows: number } | undefined {
+    return this.termSize;
   }
 
   /** The message box's unsent message, as the window reported it. */
@@ -2625,21 +3025,22 @@ class ChatSession {
       taskId: this.taskId,
       taskName: this.task.name,
       environmentId: this.environmentId,
-      harnessId: this.harness.id,
-      harnessName: this.harness.name,
+      harnessId: this.moveTo?.id ?? this.harness.id,
+      harnessName: this.moveTo?.name ?? this.harness.name,
       harnessKind: this.claude ? 'claude-code' : 'codex',
       harnesses: this.harnesses,
       harnessLocked: !this.harnessFree(),
       ...(this.historyLabel ? { historyLabel: this.historyLabel } : {}),
       ...(this.draft ? { draft: this.draft } : {}),
       settings: this.settings,
+      autoCompactDefault: { enabled: this.d.settings.chats.autoCompact.enabled, percent: this.d.settings.chats.autoCompact.percent },
       models: harnessModels(this.harness),
       ...(this.activeModel ? { activeModel: this.activeModel } : {}),
       ...(this.context ? { context: this.context } : {}),
       ...(Object.keys(this.modelWindows).length ? { modelWindows: this.modelWindows } : {}),
       status: this.status,
       ...(this.error ? { error: this.error } : {}),
-      history: this.history,
+      history: this.newest ?? this.history,
       rows: this.acc.rows,
       permissions: this.permissions,
       queued: this.delivered.length ? [...this.delivered, ...this.queued] : this.queued,
@@ -2653,6 +3054,7 @@ class ChatSession {
       ...(this.titleBy ? { title: this.title } : {}),
       ...(this.limit ? { limit: this.limit } : {}),
       autoContinue: this.autoContinue,
+      ...(this.muted ? { muted: true } : {}),
       ...(this.continueAnyway ? { continueAnyway: true } : {}),
       ...(this.codeMode ? { codeMode: true } : {}),
       ...(this.d.watchTargets ? { watchTasks: this.watchableTasks() } : {}),
@@ -2678,6 +3080,10 @@ function exitText(fallback: string, stderr: string): string {
 /** The open task chats, one per chat window. */
 export class ChatManager {
   private readonly sessions = new Map<string, ChatSession>();
+  /** Each compacted chat's id, and the chat it compacted into: what addresses the old id finds the new chat (following). */
+  private readonly compactedTo = new Map<string, string>();
+  /** The chats moving to another harness, with the messages sent to them meanwhile: the new session gets them. */
+  private readonly moving = new Map<string, Pending[]>();
 
   constructor(private readonly d: ChatDeps) {}
 
@@ -2737,31 +3143,159 @@ export class ChatManager {
   async compact(task: Task, chatId: string, started?: (next: ChatState) => void): Promise<ChatState> {
     const source = this.sessions.get(chatId);
     if (!source) throw new Error('This chat is closed.');
-    const next = this.start(task, source.compactOpening());
-    started?.(next);
-    await this.close(chatId);
-    return next;
+    if (this.moving.has(chatId)) throw new Error('The chat is already moving to a new session. Try again once it has.');
+    return this.compactInto(source, source.compactOpening(), [], started);
+  }
+
+  /** A chat compacts by itself (auto compact, a full context): as Compact into New Chat, then the new chat gets `resend`. */
+  private async compactAuto(source: ChatSession, opening: Extract<ChatOpening, { kind: 'compact' }>, resend: Pending[]): Promise<void> {
+    if (this.sessions.get(source.id) !== source || this.moving.has(source.id)) return;
+    try {
+      await this.compactInto(source, opening, resend);
+    } catch (err) {
+      this.d.log.warn(`chat ${source.id}: cannot compact: ${errMsg(err)}`);
+      source.compactFailed(err);
+    }
   }
 
   /**
-   * Harness menu: a chat nothing has been said in moves to another harness of
-   * the task's environment. It's a new session under the same id, opened the
-   * same way; the old one ends and leaves nothing behind.
+   * Every compaction, by hand or by itself: the new chat goes on as if the
+   * conversation had (what compactOpening carries over), takes the old one's
+   * place everywhere that addresses it by id (onCompacted, chat:compacted,
+   * `following`), then the old one closes and the new one gets `resend`.
+   * Throws, with the old chat still open, when the new one can't start.
+   */
+  private async compactInto(
+    source: ChatSession,
+    opening: Extract<ChatOpening, { kind: 'compact' }>,
+    resend: Pending[],
+    started?: (next: ChatState) => void,
+  ): Promise<ChatState> {
+    // Messages sent while it compacts wait, and go to the new chat (or back to this one when the new one can't start).
+    const held: Pending[] = [];
+    this.moving.set(source.id, held);
+    let handed = false;
+    try {
+      // Code Mode: the old session's REPL state, taken while it still runs, comes back in the new one's first turn.
+      const repl = await source.replCarry();
+      if (this.sessions.get(source.id) !== source) throw new Error('This chat is closed.');
+      const next = this.start(source.task, repl ? { ...opening, repl } : opening);
+      handed = true;
+      const size = source.terminalSize();
+      if (size) this.resizeTerminal(next.id, size.cols, size.rows);
+      // `started` runs before the old chat closes, so a window can show the new one first.
+      started?.(next);
+      source.handOver();
+      this.compactedTo.set(source.id, next.id);
+      // The task's run the chat held goes on in the new one, so the old one's close doesn't end it; the list, the
+      // dashboard and the devices move what they keep by the chat's id.
+      this.d.onCompacted?.({ taskId: source.taskId, from: source.id, to: next.id });
+      this.d.emit({ type: 'chat:compacted', from: source.id, to: next.id });
+      await this.close(source.id);
+      this.moving.delete(source.id);
+      for (const p of [...resend, ...held]) this.send(next.id, p.text, p.attachments);
+      return next;
+    } finally {
+      this.moving.delete(source.id);
+      if (!handed) this.sessions.get(source.id)?.takeBack(held);
+    }
+  }
+
+  /** The open chat a compacted chat's id goes on in, through each compaction since; undefined when none is open. */
+  following(id: string): string | undefined {
+    const seen = new Set<string>();
+    let at = id;
+    while (!this.sessions.has(at)) {
+      const next = this.compactedTo.get(at);
+      if (!next || seen.has(next)) return undefined;
+      seen.add(next);
+      at = next;
+    }
+    return at;
+  }
+
+  /**
+   * Harness menu. A chat nothing has been said in moves to any harness of the
+   * task's environment: a new session under the same id, opened the same way;
+   * the old one ends and leaves nothing behind. Once the conversation has
+   * started it moves only to a harness of the same kind, which resumes it
+   * with the next message: at once while the agent is idle, else once its
+   * turn ends, and the messages sent meanwhile wait for it.
    */
   async setHarness(task: Task, chatId: string, harnessId: string): Promise<void> {
     const old = this.sessions.get(chatId);
-    if (!old || old.harnessId === harnessId) return;
-    if (!old.harnessFree()) throw new Error('The conversation has started, so it stays on its harness.');
-    const next = new ChatSession(this.d, task, old.opening, { id: chatId, harnessId, from: old.harnessFrom() });
-    await old.close();
-    if (this.sessions.get(chatId) !== old) return;
-    this.sessions.delete(chatId);
-    this.d.onClose?.(chatId);
-    this.open(next);
+    if (!old || this.moving.has(chatId)) return;
+    // Its own harness again: a move waiting for the turn to end is off.
+    if (old.harnessId === harnessId) return old.setMoveTo(undefined);
+    if (old.harnessFree()) {
+      const next = new ChatSession(this.d, task, old.opening, { id: chatId, harnessId, from: old.harnessFrom() });
+      return this.replace(old, () => next, false);
+    }
+    const harness = resolveEnvironment(task, this.d.settings).harnesses.find((h) => h.id === harnessId);
+    if (!harness) throw new Error('The environment no longer has that harness.');
+    const kind = old.state().harnessKind;
+    if (harness.kind !== kind) throw new Error(`The conversation has started on ${harnessKindLabel(kind)}, so it goes on only with a ${harnessKindLabel(kind)} harness.`);
+    if (old.busy()) {
+      old.setMoveTo(harnessId, () => void this.moveStarted(task, old, harnessId).catch((err: unknown) => old.moveFailed(err)));
+      return;
+    }
+    await this.moveStarted(task, old, harnessId);
+  }
+
+  /** A started conversation goes on with another harness of its kind: opened again on it, as Looper's start opens a chat, and its agent starts with the next message. */
+  private async moveStarted(task: Task, old: ChatSession, harnessId: string): Promise<void> {
+    const conversation = old.conversationId();
+    const info = old.info();
+    await this.replace(
+      old,
+      () => {
+        const { queued: _queued, working: _working, ...saved } = old.saved();
+        const opening: ChatOpening = info
+          ? { kind: 'reopen', runId: old.id, info: { ...info, harnessId }, ...(old.sessionId ? { sessionId: old.sessionId } : {}) }
+          : old.opening;
+        return new ChatSession(this.d, task, opening, undefined, { ...saved, harnessId });
+      },
+      !!info,
+      // Its transcript goes where the new harness looks for it.
+      conversation ? () => this.d.moveConversation?.(task, old.harnessId, harnessId, conversation) : undefined,
+    );
+  }
+
+  /**
+   * Put a new session in the chat's place: `prepare` first, then the old one
+   * ends (`keep`: its folder stays), and the new one starts with the messages
+   * that hadn't reached the old one's agent, and those sent meanwhile.
+   */
+  private async replace(old: ChatSession, make: () => ChatSession, keep: boolean, prepare?: () => Promise<void> | undefined): Promise<void> {
+    const id = old.id;
+    // A move already being prepared keeps the messages sent meanwhile.
+    if (this.sessions.get(id) !== old || this.moving.has(id)) return;
+    const held: Pending[] = [];
+    this.moving.set(id, held);
+    let handed = false;
+    try {
+      await prepare?.();
+      if (this.sessions.get(id) !== old) return;
+      const next = make();
+      await old.close(keep);
+      if (this.sessions.get(id) !== old) return;
+      this.sessions.delete(id);
+      this.d.onClose?.(id);
+      this.open(next);
+      // A run's chat.json names its new harness at once.
+      next.save();
+      handed = true;
+      for (const m of [...old.waiting(), ...held]) next.send(m.text, m.attachments);
+    } finally {
+      this.moving.delete(id);
+      // No new session took over (the copy failed, or the chat closed or moved some other way): what was sent meanwhile goes to the chat's session.
+      if (!handed) this.sessions.get(id)?.takeBack(held);
+    }
   }
 
   private open(session: ChatSession): ChatState {
     this.sessions.set(session.id, session);
+    session.onCompact = (opening, resend) => void this.compactAuto(session, opening, resend);
     try {
       session.start();
     } catch (err) {
@@ -2775,6 +3309,11 @@ export class ChatManager {
 
   get(id: string): ChatState | undefined {
     return this.sessions.get(id)?.state();
+  }
+
+  /** Where an open chat's earlier conversation was read from (ChatSession.historySource). */
+  historySource(id: string): ChatHistorySource | undefined {
+    return this.sessions.get(id)?.historySource();
   }
 
   /** Every open chat, oldest first. */
@@ -2818,6 +3357,12 @@ export class ChatManager {
   }
 
   send(id: string, text: string, attachments: Attachment[]): boolean {
+    const held = this.moving.get(id);
+    if (held && this.sessions.has(id)) {
+      if (!text.trim() && attachments.length === 0) return false;
+      held.push({ text: text.trim(), attachments });
+      return true;
+    }
     return this.sessions.get(id)?.send(text, attachments) ?? false;
   }
 
@@ -2831,6 +3376,13 @@ export class ChatManager {
 
   async stop(id: string): Promise<void> {
     await this.sessions.get(id)?.stop();
+  }
+
+  /** Stop one of the agent's background tasks (ChatSession.stopBackground); throws with the reason it can't. */
+  stopBackground(id: string, taskId: string): void {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error('This chat is closed.');
+    s.stopBackground(taskId);
   }
 
   /** A command the user ran from the message box ("!"), named `commandId` by its window: its output once it ends, or once Stop ends it. */
@@ -2896,6 +3448,11 @@ export class ChatManager {
   /** Continue When Limit Resets, on or off. */
   setAutoContinue(id: string, on: boolean): void {
     this.sessions.get(id)?.setAutoContinue(on);
+  }
+
+  /** Mute Notifications, on or off. */
+  setMuted(id: string, on: boolean): void {
+    this.sessions.get(id)?.setMuted(on);
   }
 
   /** Continue Anyway, past Settings → Chats' cache rule. */

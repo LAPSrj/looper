@@ -33,6 +33,33 @@ export function firstDrawn(total: number, first: number, startAt?: number): { st
   return { start, end: start + first < total ? start + first : null };
 }
 
+/** What a conversation draws: its items [start, end) (a null end follows the newest) for `key`, with `lead` items ahead of its last part; `empty`: it had none when this was worked out. */
+export interface Drawn {
+  key: string;
+  start: number;
+  end: number | null;
+  lead: number;
+  empty: boolean;
+}
+
+/**
+ * What a conversation draws after it changed (`drawn` itself when that stays). Another conversation starts over. One
+ * that had no items yet (a chat whose history was still being read) draws as it would have opened with the items
+ * that came. Items added or taken ahead of its last part (the history read in whole after its newest rows) move the
+ * drawn ones with them, so the same items stay drawn instead of all those that came. Once the newest item is drawn,
+ * what arrives after it is drawn too.
+ */
+export function nextDrawn(drawn: Drawn, key: string, total: number, lead: number, first: number, startAt?: number): Drawn {
+  if (drawn.key !== key) return { key, lead, empty: total === 0, ...firstDrawn(total, first) };
+  if (drawn.empty && total > 0) return { key, lead, empty: false, ...firstDrawn(total, first, startAt) };
+  if (drawn.lead !== lead) {
+    const by = lead - drawn.lead;
+    return { ...drawn, lead, start: Math.max(0, drawn.start + by), end: drawn.end === null ? null : Math.max(0, drawn.end + by) };
+  }
+  if (drawn.end !== null && drawn.end >= total) return { ...drawn, end: null };
+  return drawn;
+}
+
 /** The first of `count` items in order whose bottom is below `y`, or the last one. */
 export function firstBelow(count: number, bottomOf: (i: number) => number, y: number): number {
   let lo = 0;

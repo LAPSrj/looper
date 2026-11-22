@@ -4,6 +4,7 @@ import type { ChatState } from '../../../shared/chat';
 import { applyChatWire, type ChatWire } from '../../../shared/chat-delta';
 import type { EngineEvent } from '../../../shared/types';
 import { encodeBytes } from './session';
+import { mergeOutput, type OutputRead } from '../../../shared/output-tail';
 
 /**
  * The read-only invoke channels whose answers the phone keeps and shows while the computer is out of reach.
@@ -133,6 +134,25 @@ const emptyMeta = (version: string): OfflineMeta => ({ version, deviceId: null, 
 
 // Channels whose first argument is a chat or session id.
 const SESSION_KEYED = new Set(['chat:get', 'sessions:activity', 'sessions:backgroundOutput', 'terminalSession:output']);
+
+/**
+ * A background command's output comes a piece at a time (its third argument is the size the reader has): one entry
+ * per command, keyed without that size, holds all of it the phone has read, and grows with each piece.
+ */
+const OUTPUT_CHANNEL = 'sessions:backgroundOutput';
+// A subagent's rows are read with the version the reader holds (a fifth argument): the entry is the same for every one, and an "unchanged" answer has no rows to keep.
+const MESSAGES_CHANNEL = 'runs:messages';
+const storedArgs = (channel: string, args: unknown[]): unknown[] => (channel === OUTPUT_CHANNEL ? args.slice(0, 2) : channel === MESSAGES_CHANNEL ? args.slice(0, 4) : args);
+const isUnchanged = (v: unknown): boolean => !!v && typeof v === 'object' && (v as { unchanged?: unknown }).unchanged === true;
+const isOutput = (v: unknown): v is OutputRead => !!v && typeof v === 'object' && typeof (v as OutputRead).end === 'number' && typeof (v as OutputRead).from === 'number';
+const utf8Length = (s: string): number => new TextEncoder().encode(s).length;
+
+/** The kept output with a new piece added (or in its place, when it doesn't follow on). */
+function withPiece(kept: unknown, piece: OutputRead): OutputRead {
+  const prev = isOutput(kept) ? { end: kept.end, text: kept.text ?? '', cut: kept.from > 0 } : null;
+  const next = mergeOutput(prev, piece);
+  return { end: next.end, from: next.end - utf8Length(next.text), text: next.text };
+}
 // Channels whose first argument is a task id.
 const TASK_KEYED = new Set(['runs:list', 'versions:list', 'versions:detail', 'runs:output', 'runs:messages', 'runs:messageImage', 'runs:scriptCalls', 'run:canGuide']);
 // Channels whose second argument is a run id (a session's id for its subagents' transcripts).
@@ -218,7 +238,7 @@ export class OfflineStore {
 
   /** The stored answer; reading it counts as using it in this connection. */
   get(channel: string, args: unknown[], w?: string): { value: unknown } | undefined {
-    const key = entryKey(channel, args);
+    const key = entryKey(channel, storedArgs(channel, args));
     const e = this.entries.get(key);
     if (!e) return undefined;
     if (e.gen !== this.gen) {
@@ -226,10 +246,22 @@ export class OfflineStore {
       this.touch(e);
     }
     if (w) this.lastWindow.set(key, w);
+    // A reader that has all of the kept output gets nothing new; any other gets all of it.
+    if (channel === OUTPUT_CHANNEL && isOutput(e.value) && args[2] === e.value.end) return { value: { end: e.value.end, from: e.value.end } };
     return { value: e.value };
   }
 
   put(channel: string, args: unknown[], value: unknown, w?: string): void {
+    if (channel === MESSAGES_CHANNEL) {
+      if (isUnchanged(value)) return;
+      args = storedArgs(channel, args);
+    }
+    if (channel === OUTPUT_CHANNEL) {
+      // Unreadable now: what was kept stays.
+      if (!isOutput(value)) return;
+      args = storedArgs(channel, args);
+      value = withPiece(this.entries.get(entryKey(channel, args))?.value, value);
+    }
     const key = entryKey(channel, args);
     const e: OfflineEntry = { key, channel, args, value, gen: this.gen, at: Date.now() };
     this.index(e);

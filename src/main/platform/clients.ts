@@ -65,9 +65,9 @@ export class RemoteClients {
     return this.list().flatMap((c) => c.windowList());
   }
 
-  /** To every connected client. */
-  broadcast(msg: ServerMessage): void {
-    for (const c of this.clients.values()) c.send(msg);
+  /** To every connected client, or those of the devices `to` takes. */
+  broadcast(msg: ServerMessage, to?: (deviceId: string) => boolean): void {
+    for (const c of this.clients.values()) if (!to || to(c.device.id)) c.send(msg);
   }
 
   /** A connection, just after its hello. */

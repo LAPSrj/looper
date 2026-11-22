@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { SplitLayout } from '../web/nav-stack';
 import { isPhone } from '../web/page-nav';
+import { ARROW_BACK } from '../web/NavBarRow';
+import { platform } from '../platform';
 import { EmptyState } from './EmptyState';
 import { NavBar } from './NavBar';
 import { SplitView, useContainerSplit } from './phone/PhoneSplit';
@@ -41,6 +43,8 @@ export interface ListDetailProps {
   /** The desktop's panes. */
   panes?: PaneSize;
   tabs?: ListDetailTabs;
+  /** A phone's or tablet's detail under the list on one screen, where the desktop's `panes.axis` 'y' does that; unset: beside it where there's room, else pushed over it. */
+  stacked?: boolean;
   /** A window whose bar splits over its columns: the window's own layout (useSplit), in place of measuring. */
   split?: SplitLayout | null;
   /** The window's inspector (Inspector), at the trailing edge of the columns. */
@@ -86,7 +90,7 @@ export function ListDetail(props: ListDetailProps) {
   return isPhone ? <Mobile {...props} /> : <Desktop {...props} />;
 }
 
-function Mobile({ list: rows, detail, open = false, onClose, detailTitle, backLabel, empty, preview, split: given, inspector, onPushed, summary }: ListDetailProps) {
+function Mobile({ list: rows, detail, open = false, onClose, detailTitle, backLabel, empty, preview, split: given, inspector, onPushed, summary, stacked = false }: ListDetailProps) {
   const list = summary ? (
     <div className="list-summary">
       <div className="pg-segmented-wrap">
@@ -107,7 +111,7 @@ function Mobile({ list: rows, detail, open = false, onClose, detailTitle, backLa
   const split = given !== undefined ? given : measured;
   const depth = useContext(Depth);
   const inPanel = useContext(InPanel);
-  const pushed = !split && open && !preview;
+  const pushed = !split && open && !preview && !stacked;
   useEffect(() => onPushed?.(pushed), [pushed, onPushed]);
   if (preview) return <div className="list-detail">{list}</div>;
   const column = open ? (
@@ -124,18 +128,23 @@ function Mobile({ list: rows, detail, open = false, onClose, detailTitle, backLa
   return (
     <div className="list-detail" ref={ref}>
       <InspectorHost.Provider value={{ split }}>
-        <SplitView split={split} shows={open ? 'detail' : 'lead'} lead={list} detail={split || open ? column : null} inspector={inspector} />
+        <SplitView split={split} shows={open ? 'detail' : 'lead'} lead={list} detail={split || open || stacked ? column : null} inspector={inspector} stacked={stacked} />
       </InspectorHost.Provider>
     </div>
   );
 }
 
+/** Back in place: iOS's chevron and the list's name as a link; on Android, Material's back arrow before it. */
 function InlineBack({ label, onBack }: { label: string; onBack: () => void }) {
   return (
     <button className="pg-inline-back" onClick={onBack}>
-      <svg width="8" height="13" viewBox="0 0 8 13" aria-hidden="true">
-        <path d="M6.5 1.5 1.5 6.5l5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+      {platform === 'android' ? (
+        ARROW_BACK
+      ) : (
+        <svg width="8" height="13" viewBox="0 0 8 13" aria-hidden="true">
+          <path d="M6.5 1.5 1.5 6.5l5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )}
       {label}
     </button>
   );
@@ -156,13 +165,32 @@ function Desktop(props: ListDetailProps) {
   return p.sides ? <DesktopSides {...p} sides={p.sides} /> : <DesktopPanes {...p} />;
 }
 
-/** The list, the detail and the inspector as one window's body. */
+/** A splitter's width: the grid's gap column between two panes. */
+const SPLITTER_PX = 5;
+
+/**
+ * The list, the detail and the inspector as one window's body. Each keeps its least width. When the three
+ * don't fit, the inspector (View → Activity Pane) takes the detail's place over the whole center column, as a view
+ * the command switches to and back; once the window has room for all three it sits beside the detail again.
+ */
 function DesktopSides({ list, detail, inspector, inspectorOpen, sides }: ListDetailProps & { sides: NonNullable<ListDetailProps['sides']> }) {
   const ref = useRef<HTMLDivElement>(null);
   const { widths, left, right } = useSideWidths(sides.storageKey, sides.left, sides.right, ref);
+  const [width, setWidth] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const read = () => setWidth(el.clientWidth);
+    read();
+    const observer = new ResizeObserver(read);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const beside = width === null || width >= (list ? sides.left.min + SPLITTER_PX : 0) + sides.minDetail + SPLITTER_PX + sides.right.min;
+  const over = !!inspectorOpen && !beside;
   // The list and the inspector shrink to their smallest widths before the detail drops under its least.
-  const listTrack = list ? `minmax(${sides.left.min}px, ${widths.left}px) 5px ` : '';
-  const columns = inspectorOpen ? `${listTrack}minmax(${sides.minDetail}px, 1fr) 5px minmax(${sides.right.min}px, ${widths.right}px)` : `${listTrack}1fr`;
+  const listTrack = list ? `minmax(${sides.left.min}px, ${widths.left}px) ${SPLITTER_PX}px ` : '';
+  const columns = inspectorOpen && beside ? `${listTrack}minmax(${sides.minDetail}px, 1fr) ${SPLITTER_PX}px minmax(${sides.right.min}px, ${widths.right}px)` : `${listTrack}1fr`;
   return (
     <div className="sessions-body" ref={ref} style={{ gridTemplateColumns: columns }}>
       {list && (
@@ -171,8 +199,8 @@ function DesktopSides({ list, detail, inspector, inspectorOpen, sides }: ListDet
           <Splitter className="sidebar-divider" axis="x" {...left} />
         </>
       )}
-      {detail}
-      <InspectorHost.Provider value={{ splitter: right }}>{inspector}</InspectorHost.Provider>
+      {!over && detail}
+      {inspectorOpen && <InspectorHost.Provider value={{ splitter: over ? undefined : right }}>{inspector}</InspectorHost.Provider>}
     </div>
   );
 }

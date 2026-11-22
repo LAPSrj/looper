@@ -32,6 +32,8 @@ export interface HistoryItem {
   runId?: string;
   /** A task run's task. */
   taskName?: string;
+  /** A task run's result (resultLabel names it), as its run summary has it. */
+  result?: string;
 }
 
 /** The History window's View menu, kept with the settings. */
@@ -98,13 +100,22 @@ export const HISTORY_PAGE = 100;
 /** View → Folder: every folder (''), one project's (`project:<id>`), or the folders outside every project ('other'). */
 export type HistoryFolderFilter = '' | 'other' | `project:${string}`;
 
+/** Task History's filters: one task's runs ('' every task), one result ('' every result), and the View menu's Show Skipped Runs and Show Runs with No Action. */
+export interface HistoryRunFilter {
+  taskId: string;
+  result: string;
+  hideSkipped: boolean;
+  hideNoAction: boolean;
+}
+
 /** What the engine lists: the newest `limit` conversations that pass the View menu's filters. */
 export interface HistoryListOptions {
   /** Read the folders again (slow across WSL); else the files found last, or the cached ones. */
   fresh: boolean;
   limit: number;
-  showRuns: boolean;
   folder: HistoryFolderFilter;
+  /** Task History: the task runs that pass these filters, and no conversation from outside them. Unset: the conversations. */
+  runs?: HistoryRunFilter;
   /** The window's own number for the call: the list so far comes as history-progress events with it, while it's read. */
   request?: number;
 }

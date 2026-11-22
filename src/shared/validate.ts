@@ -84,6 +84,7 @@ const FIELD_LABELS: Record<string, string> = {
   'agent.maxRuntimeMin': 'Max runtime',
   'agent.idleGraceMin': 'Idle grace',
   'agent.onIdleTimeout': 'When idle too long',
+  'agent.waitAfterDoneMin': 'Wait before completing',
   'agent.ask': 'Allow the agent to ask questions',
   'agent.ask.allowed': 'Allow the agent to ask questions',
   'agent.ask.waitMin': 'Wait for an answer',

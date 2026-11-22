@@ -17,10 +17,29 @@ export function loadSettings(dataDir: string, host?: string): Settings {
     writeJsonAtomic(file, settings);
     return settings;
   }
-  const raw = readJson<unknown>(file, {});
+  const read = readJson<unknown>(file, {});
+  const migrated = migrateSettings(read);
+  if (migrated) writeJsonAtomic(file, migrated);
+  const raw = migrated ?? read;
   const parsed = SettingsSchema.safeParse(raw);
   return parsed.success ? parsed.data : fresh();
 }
+
+/**
+ * A settings file in an older shape, rewritten in the current one; null when it's current.
+ *
+ * - `view.toolbar`: one check for the main window's whole toolbar, before it
+ *   became four toolbars (`view.toolbars`), which each take its value.
+ */
+export function migrateSettings(raw: unknown): Record<string, unknown> | null {
+  if (!isObject(raw) || !isObject(raw.view) || !('toolbar' in raw.view)) return null;
+  const { toolbar, ...view } = raw.view;
+  const shown = toolbar !== false;
+  const toolbars = isObject(view.toolbars) ? view.toolbars : {};
+  return { ...raw, view: { ...view, toolbars: { new: shown, projects: shown, tasks: shown, chats: shown, ...toolbars } } };
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 export function saveSettings(dataDir: string, settings: Settings): Settings {
   const parsed = SettingsSchema.parse(settings);

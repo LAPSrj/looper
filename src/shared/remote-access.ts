@@ -6,10 +6,14 @@
  * A browser tab is one connection. Each Looper window it shows (the main
  * window, Settings, a task editor…) is a "remote window": the main process
  * treats it like a BrowserWindow, and the tab shows it in an iframe that loads
- * the same renderer route (`index.html#<hash>`) a desktop window would.
+ * the same renderer route (`index.html#<hash>`) a desktop window would, from FRAME_PAGE.
  */
 
+import type { NotifyKind } from './types';
 import type { UiPlatform } from './ui-platform';
+
+/** The page a remote window's iframe loads: index.html without the tags only the tab's own page reads (pwa.ts). */
+export const FRAME_PAGE = '/frame.html';
 
 // ---------- providers ----------
 
@@ -65,6 +69,7 @@ export interface PairedDevice {
   lastSeenAt?: string;
   /** Open connections right now. */
   connected: number;
+  notify: DeviceNotifications;
 }
 
 /**
@@ -158,6 +163,7 @@ export const REQUEST_HEADER_VALUE = '1';
  *   POST /api/pair              PairRequest → 200 MeResponse + cookie | 401 wrong or expired code | 429 too many tries
  *   POST /api/unpair            → 204 + the cookie cleared: this device unpairs itself (its push subscriptions go too)
  *   POST /api/rename            RenameRequest → 200 MeResponse | 400 no name: this device renames itself
+ *   POST /api/notifications     DeviceNotifications → 200 MeResponse | 400: what this device is notified of
  *   POST /api/upload?name=<n>   raw bytes → UploadResponse (a file on the computer, for open dialogs and attachments)
  *   GET  /api/download/<token>  a file the computer offered with a `download` message (works once)
  *   GET  /api/push/key          → PushKeyResponse
@@ -174,7 +180,7 @@ export const REQUEST_HEADER_VALUE = '1';
  */
 export interface MeResponse {
   paired: boolean;
-  device?: { id: string; name: string };
+  device?: { id: string; name: string; notify: DeviceNotifications };
   /** Paired: the computer's name (Remote Access's Name setting, or the OS computer name). */
   computer?: string;
 }
@@ -209,6 +215,50 @@ export interface PushSubscribeRequest {
 
 export interface PushUnsubscribeRequest {
   endpoint: string;
+}
+
+/** What a paired device is notified of, each its own switch in the device's settings (push and the in-page toasts alike). */
+export interface DeviceNotifications {
+  /** A chat or terminal session finished its turn. */
+  turns: boolean;
+  /** A chat asks for permission, a task run asks a question or holds for the user. */
+  questions: boolean;
+  /** A task run's notifications; the task's own Notifications settings choose which. */
+  runs: boolean;
+  /** A login needs the user, a run stopped on the usage limit. */
+  warnings: boolean;
+}
+
+export type NotifyTopic = keyof DeviceNotifications;
+
+/** The switches in the order the settings list them, with their labels. */
+export const NOTIFY_TOPICS: readonly { id: NotifyTopic; label: string }[] = [
+  { id: 'turns', label: 'Chat turn ends' },
+  { id: 'questions', label: 'Questions and permission requests' },
+  { id: 'runs', label: 'Task runs' },
+  { id: 'warnings', label: 'Login and usage warnings' },
+];
+
+/** A newly paired device is notified of everything. */
+export const ALL_NOTIFICATIONS: Readonly<DeviceNotifications> = { turns: true, questions: true, runs: true, warnings: true };
+
+/** Every switch, each a boolean; null when `v` isn't that. */
+export function parseDeviceNotifications(v: unknown): DeviceNotifications | null {
+  const o = v as Record<string, unknown> | null;
+  if (!o || typeof o !== 'object') return null;
+  const out = {} as DeviceNotifications;
+  for (const { id } of NOTIFY_TOPICS) {
+    if (typeof o[id] !== 'boolean') return null;
+    out[id] = o[id];
+  }
+  return out;
+}
+
+/** The switch a task's notification falls under. */
+export function notifyTopicOf(kind: NotifyKind): NotifyTopic {
+  if (kind === 'question' || kind === 'held') return 'questions';
+  if (kind === 'usage-limit') return 'warnings';
+  return 'runs';
 }
 
 /** What a notification click opens on the device: a task's toast target, or a session waiting for the user. */
@@ -424,6 +474,8 @@ export type ServerMessage =
   | { t: 'window-menu'; w: string; menu: MenuItemSpec[] | null }
   /** The window's page moves to another route (the setup window becoming its builder): load index.html#<hash> afresh; a window-ready follows. */
   | { t: 'window-load'; w: string; hash: string }
+  /** The window's page now shows another route by itself (a chat that compacted into another): it's kept for the next load, without one now. */
+  | { t: 'window-hash'; w: string; hash: string }
   /** webContents.send to that window. `seq` numbers it with the client's reloads. */
   | { t: 'event'; seq: number; w: string; channel: string; args: unknown[] }
   | { t: 'menu'; menuId: string; w: string; items: MenuItemSpec[]; x?: number; y?: number; button?: PopupButton }

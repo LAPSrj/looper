@@ -333,6 +333,13 @@ classifier step on or off. When on, it runs after a check that returned
   going instead of being skipped, up to the cap. Incompatible with the
   agent's "Continue one conversation across runs" — the editor refuses to save that
   combination.
+- **Wait before completing** — Claude Code and Codex. Minutes (default 0, no
+  wait) the run stays open after the agent signals `looper-done`. What
+  comes for the run meanwhile goes to the same agent as a new turn: guidance
+  you send, and the task's trigger events (with **Send new related events to
+  the running agent** on, only the events with the run's `looper_related_id`).
+  The wait starts again after that turn, and the run completes when it passes
+  with nothing new.
 - **Restart the agent when its context passes a limit** — Claude Code and
   Codex, off by default. Once the agent's conversation passes **Context
   limit** (default 400k tokens), Looper asks the agent to restart, and the run

@@ -1,4 +1,4 @@
-import { contextMenu, runCommand } from '@shared/commands/build';
+import { contextMenu, entriesMenu, runCommand, viewOptions } from '@shared/commands/build';
 import type { CommandContext } from '@shared/commands/context';
 import { listOptionEntries } from '@shared/commands/list';
 import type { Entry } from '@shared/commands/command';
@@ -51,23 +51,40 @@ export function showProjectsListMenu(): void {
   if (current) popupCommands({ ...current, tab: 'projects' }, contextMenu('projects', { ...current, tab: 'projects' }));
 }
 
-/** The task list's own menu. */
-export function showTasksListMenu(): void {
-  if (current) popupCommands({ ...current, tab: 'tasks' }, contextMenu('tasks', { ...current, tab: 'tasks' }));
+/** A task list's own menu (a right-click on its empty space): that pane's options, or the single list's, then the Tasks tab's commands. */
+export function showTasksListMenu(pane?: PaneId): void {
+  const c = current;
+  if (!c) return;
+  const tc: CommandContext = { ...c, tab: 'tasks' };
+  const options = paneOptions(c, pane);
+  const own = options.length ? entriesMenu('pane', options) : null;
+  const rest = contextMenu('tasks', tc);
+  const items = own ? [...own.items, ...(rest.length ? [{ id: '-pane', type: 'separator' as const, enabled: true }] : []), ...rest] : rest;
+  if (items.length) void c.looper.commands.popup(items).then((id) => id && (own && id.startsWith('pane/') ? own.pick(id) : runCommand(id, tc)));
 }
 
-/** A task list's header: that pane's options, or the single list's, then New Folder. */
-export function showPaneMenu(pane?: PaneId): void {
-  const c = current;
-  const view = c?.settings?.view;
-  if (!c || !view) return;
+/** The Dashboard's Recent runs and a task's Runs list: View → Task Runs (what they leave out), in a popup. */
+export function showRunListMenu(): void {
+  if (current) popupCommands(current, viewOptions('dashboard', ['task-list'], current));
+}
+
+/** A pane's options, or the single list's: Show Pane (a pane's), then what the list shows. */
+function paneOptions(c: CommandContext, pane?: PaneId): Entry[] {
+  const view = c.settings?.view;
+  if (!view) return [];
   const def = PANES.find((p) => p.id === pane);
-  const options: Entry[] = def
+  return def
     ? [
         { id: 'show', label: 'Show &Pane', checked: view.panes[def.id].visible, run: () => c.setView({ panes: { ...view.panes, [def.id]: { ...view.panes[def.id], visible: !view.panes[def.id].visible } } }) },
         { separator: true },
         ...listOptionEntries(view.panes[def.id], def.filters, (patch) => c.setView({ panes: { ...view.panes, [def.id]: { ...view.panes[def.id], ...patch } } })),
       ]
     : listOptionEntries(view.single, ALL_FILTERS, (patch) => c.setView({ single: { ...view.single, ...patch } }));
-  popupEntries(c, 'pane', [...options, { separator: true }, { id: 'new-folder', label: 'New Folder…', run: () => c.host('new-folder', 'task') }]);
+}
+
+/** A task list's header: that pane's options, or the single list's, then New Folder. */
+export function showPaneMenu(pane?: PaneId): void {
+  const c = current;
+  if (!c?.settings?.view) return;
+  popupEntries(c, 'pane', [...paneOptions(c, pane), { separator: true }, { id: 'new-folder', label: 'New Folder…', run: () => c.host('new-folder', 'task') }]);
 }

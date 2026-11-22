@@ -17,6 +17,7 @@ import {
   permissionAnswer,
   permissionModeRequest,
   remoteControlRequest,
+  stopTaskRequest,
   userRecordText,
 } from '../src/engine/chat';
 import { withFileList } from '../src/shared/bash-mode';
@@ -103,6 +104,10 @@ describe('chat settings', () => {
       request: { subtype: 'remote_control', enabled: true, name: 'Website' },
     });
     expect(JSON.parse(remoteControlRequest('rc-2', undefined)).request).toEqual({ subtype: 'remote_control', enabled: false });
+  });
+
+  it("stops one background task with a control request, as Claude Code 2.1.330 answers it", () => {
+    expect(JSON.parse(stopTaskRequest('stop-task-1', 'b7'))).toEqual({ type: 'control_request', request_id: 'stop-task-1', request: { subtype: 'stop_task', task_id: 'b7' } });
   });
 
   it("reads the text of a user record, whether its content is a string or blocks", () => {

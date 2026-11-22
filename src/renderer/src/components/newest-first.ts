@@ -1,12 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
-import { firstDrawn, placeKey as keyOf, placeToRestore, type Place } from './kept-place';
+import { firstDrawn, nextDrawn, placeKey as keyOf, placeToRestore, type Drawn, type Place } from './kept-place';
 
 /** How many items a conversation draws at first: about a screen's worth, so it shows at once. */
 export const FIRST_ITEMS = 15;
 /** A dashboard card shows only its newest messages. */
 export const CARD_ITEMS = 6;
-/** While the page is idle, a conversation goes on drawing older items up to this many, so scrolling up finds them there. */
+/**
+ * While the page is idle, a conversation goes on drawing older items until READY_SCREENS of its view's height are
+ * drawn above what it shows, and at most READY items, so scrolling up finds them there. Drawing READY items whatever
+ * their height drew 13 screens of a phone's long chat above the one shown: a third of its page's elements.
+ */
 const READY = 50;
+const READY_SCREENS = 2;
 /** How near its top (px) the reader asks for more. */
 const OLDER_AT = 600;
 /** How many older items are added at a time, so each batch fits in a frame on a phone. */
@@ -157,6 +162,8 @@ function followSize(el: HTMLElement, stays: RefObject<boolean>): () => void {
  * with fewer than FIRST_ITEMS (a card) it doesn't draw more while idle.
  * `startAt`: the item to draw from instead, where a reader's place was kept. Only `first` items are drawn from it,
  * and the newer ones below are added as the reader scrolls down to them; `newer` counts those not drawn yet.
+ * `lead`: how many items come ahead of the conversation's last part (a chat's history, read in after it opened):
+ * items added there don't draw, and the drawn ones stay drawn (nextDrawn).
  */
 export function useNewestFirst(
   scrollRef: RefObject<HTMLElement | null>,
@@ -165,11 +172,11 @@ export function useNewestFirst(
   all: boolean,
   first = FIRST_ITEMS,
   startAt?: number,
+  lead = 0,
 ): { hidden: number; newer: number; onScroll: (el: HTMLElement) => void; toEnd: () => void } {
-  const [drawn, setDrawn] = useState(() => ({ key, ...firstDrawn(total, first, startAt) }));
-  if (drawn.key !== key) setDrawn({ key, ...firstDrawn(total, first) });
-  // Once the newest item is drawn, what arrives after it is drawn too.
-  else if (drawn.end !== null && drawn.end >= total) setDrawn({ ...drawn, end: null });
+  const [drawn, setDrawn] = useState<Drawn>(() => ({ key, lead, empty: total === 0, ...firstDrawn(total, first, startAt) }));
+  const next = nextDrawn(drawn, key, total, lead, first, startAt);
+  if (next !== drawn) setDrawn(next);
   const hidden = Math.min(drawn.start, total);
   const newer = drawn.end === null ? 0 : Math.max(0, total - drawn.end);
   const card = first < FIRST_ITEMS;
@@ -203,20 +210,35 @@ export function useNewestFirst(
   }, [hidden, drawn.end]);
   // `all`: the next batch once this one is on the screen. Otherwise, older ones while the page has nothing else to do.
   const prefetch = !card && total - newer - hidden < READY;
+  // The next idle batch, while one waits: older items until READY_SCREENS of them are above the view.
+  const idle = useRef<(() => void) | null>(null);
+  const topUp = () => {
+    if (idle.current) return;
+    idle.current = whenIdle(() => {
+      idle.current = null;
+      const el = scrollRef.current;
+      if (el && el.scrollTop < READY_SCREENS * el.clientHeight) older(BATCH);
+    });
+  };
   useEffect(() => {
     if (all) {
       if (hidden === 0 && newer === 0) return;
       const t = setTimeout(() => (hidden > 0 ? older(BATCH) : drawNewer(BATCH)), 0);
       return () => clearTimeout(t);
     }
-    if (hidden > 0 && prefetch) return whenIdle(() => older(BATCH));
+    if (hidden > 0 && prefetch) topUp();
+    return () => {
+      idle.current?.();
+      idle.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [all, hidden, newer, prefetch]);
-  // `all` is drawing them already, a batch a frame.
+  // `all` is drawing them already, a batch a frame. A reader scrolling up into what's drawn above gets more while idle.
   const onScroll = (el: HTMLElement) => {
     if (all) return;
     if (hidden > 0 && el.scrollTop <= OLDER_AT) older(BATCH);
     else if (newer > 0 && el.scrollHeight - el.scrollTop - el.clientHeight <= OLDER_AT) drawNewer(BATCH);
+    else if (hidden > 0 && prefetch && el.scrollTop < READY_SCREENS * el.clientHeight) topUp();
   };
   // Draws the newest items as a conversation opened anew does, without drawing everything between.
   const toEnd = () => setDrawn((d) => ({ ...d, ...firstDrawn(total, first) }));

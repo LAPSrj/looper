@@ -36,7 +36,12 @@ Chats window itself, a History window, the tray menu), it opens in the Chats
 window instead.
 
 Once a tab has the focus, the arrow keys move between tabs, and Home and End
-go to the first and the last.
+go to the first and the last. The main window can't be made narrower than 800
+pixels. When the chat list, the conversation and the activity pane don't all fit
+at the window's width, **View → Activity Pane** switches the center column to the
+pane, which takes the conversation's place over the whole column, and back; the
+list stays. Once the window is wide enough for all three, the pane sits beside the
+conversation again.
 
 ### Where the tabs go
 
@@ -49,17 +54,17 @@ you point at it. The Tabs menu is only in the main window.
 
 ### A view in a window of its own
 
-**View → Dashboard**, **Projects**, **Tasks** and each addon tab open that
-view in a window of its own, titled Dashboard, Projects, Tasks or the addon
+**Window → Dashboard**, **Projects**, **Tasks**, **Chats** and each addon tab open that
+view in a window of its own, titled Dashboard, Projects, Tasks, Chats or the addon
 tab's title. The window has that view alone, with a status bar and no tabs,
 and its toolbar and menus have only what the view is about: a Tasks window
-has New Task and the task's commands, and the File, Task and View menus; a
-Projects window has New Project, New Chat and the project's commands, and the
-File, Project and View menus; a Dashboard window has File, Task and View, and
-no toolbar. Settings, Templates, Tools, Advanced and Help stay in the main
-window. Opening the window again brings it forward. In a Dashboard or Projects
-window, opening a task shows it on the main window's Tasks tab. **View → Chats**
-opens the Chats window.
+has the New and Tasks toolbars, and the File, Task and View menus; a
+Projects window has the New and Projects toolbars, and the File, Project and
+View menus; a Dashboard window has File, Task and View, and no toolbar.
+Settings, Templates, Tools, Advanced and Help stay in
+the main window. Opening the window again brings it forward. In a Dashboard or Projects
+window, opening a task shows it on the main window's Tasks tab. **Window →
+Chats** opens the Chats window.
 
 ### A task or project in its own window
 
@@ -109,8 +114,8 @@ waiting for.
 
 ### The menus and the View menu
 
-The menu bar follows the tab. File, View, Tools, Advanced and Help are always
-there. The **Task** menu shows on the Dashboard and Tasks tabs, and the
+The menu bar follows the tab. File, View, Tools, Advanced, Window and Help are
+always there. The **Task** menu shows on the Dashboard and Tasks tabs, and the
 **Project** menu on the Dashboard, Projects and Tasks tabs. The Project menu
 acts on the selected project, or the selected task's: New Task in Project…,
 New Chat (Ctrl+T), New Terminal (Ctrl+Shift+T), Edit Project…, Open Folder and Delete
@@ -129,22 +134,39 @@ don't take Ctrl+N and Ctrl+Shift+N, so a terminal session keeps those keys.
 
 The View menu, from the top:
 
-- **Dashboard**, **Projects**, **Tasks**, **Chats** and each addon tab, which
-  open that view in a window of its own (see above).
-- **History** (see [the History window](#the-history-window)).
-- **Tabs**, in the main window only (see above).
+- **Task History** (see [the Task History window](#the-task-history-window)),
+  and **Tabs**, in the main window only (see above).
 - The shown tab's options. On the Dashboard tab, **Task Runs** (see
   [below](#the-dashboard)). On the Projects tab, **Group Projects By** (see
-  [Projects](projects.md#the-projects-tab)). On the Tasks tab, a check box for
+  [Projects](projects.md#the-projects-tab)). On the Tasks tab, **Dashboard**,
+  which shows the tasks' dashboard, a check box for
   each pane that shows or hides it: **Tasks Pane** (or **Goals Pane** and
   **Watchers Pane** with multiple panes), then each addon's panes. With every
   pane hidden the tab has no sidebar, and the detail pane takes the whole
   width. Then **Task List Options** and **Task Runs**. On
-  the Chats tab, **Activity Pane**, **Show Task Runs**, **Waiting Chats
-  First**, **Previous Waiting Chat** and **Next Waiting Chat** (F8 and F9),
-  **Previous Chat** and **Next Chat** (Shift+F8 and Shift+F9), and **Next
-  Pane** and **Previous Pane** (F6 and Shift+F6).
-- **Toolbar**, each addon's "<addon> Toolbar" check box, and **Status Bar**.
+  the Chats tab, **Overview** (**Dashboard** in the Chats window), **Dashboard
+  Filter**, **Dashboard Layout**, **Activity Pane**, **Show Thinking**,
+  **Show Task Runs**, **Group Chats By** and **Waiting Chats First**.
+- **Toolbars**, a submenu of check boxes with the main window's toolbars: New
+  Toolbar, Projects Toolbar, Tasks Toolbar and Chats Toolbar, then each
+  addon's "<addon> Toolbar" (see [The toolbar](#the-toolbar)); a view window has
+  its own, and the Chats window has **Toolbar** and each addon's check box
+  instead. Then **Status Bar**.
+
+The Tools menu has **History** (see [the History window](#the-history-window)),
+**Recycle Bin**, **Templates**, the addons' tools, **Agent Settings…** and
+**Settings**. The Window menu lists the windows that are open, and in the main
+window, **Dashboard**, **Projects**, **Tasks**, **Chats** and each addon tab,
+which open that view in a window of its own (see above). On the Chats tab and in
+the Chats window it also has **Previous Waiting Chat** and **Next Waiting Chat**
+(Shift+F8 and Shift+F9), **Previous Chat** and **Next Chat** (F8 and F9), and
+**Next Pane** and **Previous Pane** (F6 and Shift+F6); a chat's own window has
+the pane items and **Always on Top**.
+
+Right-clicking the empty space below a list (the task, project and chat lists,
+the dashboard's lists and the History windows' list) opens that list's View
+options, such as its grouping and filters; on a phone they're in the list's
+More menu.
 
 Ctrl+= and Ctrl+- zoom a window in and out, Ctrl+0 goes back to 100%, and
 Ctrl+wheel zooms too. Each kind of window remembers its zoom.
@@ -246,20 +268,35 @@ guide in its own window, and Help → About Looper shows the version.
 
 ## The toolbar
 
-The New buttons come first, in the order of the tabs, and each one shows its
-tab's icon with a plus.
-After them come the shown tab's buttons, then the buttons that addons add
-(see [Addons](addons.md#menus-and-toolbars)), then the buttons of the addon screen
-that shows, if one does. Buttons, left to right, with their tooltips:
+The main window has a toolbar for each kind of item, and shows the ones that
+belong to the tab: the **New** toolbar on every tab, then the shown tab's own
+(**Projects**, **Tasks** or **Chats**), then the buttons that addons add (see
+[Addons](addons.md#menus-and-toolbars)), a toolbar for each addon, and the
+buttons of the addon screen that shows, if one does. **View → Toolbars** (or a
+right-click on the toolbar area) has a check box for each toolbar, to show
+or hide it. Looper remembers the choice.
+
+Each toolbar starts with a grip, a column of dots. Drag the grip to move the
+toolbar along its row, to another row, or above the first row or below the last
+to start a new one; a line shows where it will land. Drag a toolbar's right edge
+to give it a width, and double-click the edge to give it its buttons' width
+again. A toolbar narrower than its buttons ends in a double chevron, whose menu
+lists the buttons that don't fit. Looper remembers the layout, which every
+window with these toolbars shares.
+
+The New toolbar's buttons, left to right, with their tooltips:
 
 | Button | Tooltip | Shortcut |
 |---|---|---|
 | Folder with a plus | New Project (the same as File → New Project…) | — |
-| Checklist with a plus | New Task, or New Task in &lt;project&gt; while a project or a task is selected | — |
+| Checklist with a plus | New Task, or New Task in &lt;project&gt; while a project or a task is selected; its arrow lists Blank Task, From Template and With Agent | — |
 | Bubble with a plus | New Chat in &lt;project&gt;; its arrow lists the projects | Ctrl+T |
 | Terminal | On the Chats tab only: New Terminal in &lt;project&gt;; its arrow lists the projects | Ctrl+Shift+T |
 
-On the **Tasks** tab, the buttons act on the selected task:
+On the **Tasks** toolbar, the first buttons are **Dashboard** (stays pressed
+while the tasks' dashboard shows, which is what the tab shows with no task
+selected), **Task History** and **Recycle Bin**. The buttons after them act on
+the selected task:
 
 | Button | Tooltip | Shortcut |
 |---|---|---|
@@ -268,20 +305,21 @@ On the **Tasks** tab, the buttons act on the selected task:
 | Pause/Resume | Pause / Resume | Ctrl+P |
 | Power | Enable / Disable | — |
 | Check | Complete / Reopen | — |
-| Note with a folded corner | Add Guidance for Next Run / Edit Guidance for Next Run | — |
 | Edit | Edit Task | Ctrl+E |
+| Note with a folded corner | Add Guidance for Next Run / Edit Guidance for Next Run | — |
 | Open folder | Open Working Directory | — |
 
-On the **Projects** tab, the buttons are Edit Project and Open Folder, for the
-selected [project](projects.md). On the **Chats** tab they are the Chats
-window's, from Overview to Activity Pane (see [The toolbar and status
-bar](#the-toolbar-and-status-bar)). The **Dashboard** tab adds none. While a
-dashboard shows, the Task menu acts on the row you picked.
+On the **Projects** toolbar, the buttons are Edit Project and Open Folder, for the
+selected [project](projects.md). The **Chats** toolbar has the Chats window's
+buttons, from Overview to Activity Pane (see [The toolbar and status
+bar](#the-toolbar-and-status-bar)). The Dashboard tab has only the New
+toolbar. While a dashboard shows, the Task menu acts on the row you picked.
 
 New Chat and New Terminal start the session in the selected project, the
 selected task's project, or the shown chat's. With none of them, or from the
 arrow beside the button, they list your projects to pick one, then **Other
-Folder…** and **New Project…** (see [the Chats window](#the-chats-window)).
+Folder…** (see [the Chats window](#the-chats-window)). The lists follow the
+Projects tab's folders and order.
 
 Running Now on a disabled or completed task asks '"<task name>" is disabled.
 Run it anyway?' first — the run happens, and the task goes straight back to
@@ -308,10 +346,9 @@ sessions](#terminal-sessions) for where it opens.
 
 Chats and Looper terminal sessions show on the **Chats** tab of the main
 window, and in the **Chats** window, which has the same view in a window of
-its own. It lists every open session on the left, grouped by
-[project](projects.md) in the Projects tab's order (then by folder, for the
-ones opened in another folder), shows the selected one in the middle, and
-shows what its agent is doing on the right. **View → Chats** and **Show
+its own. It lists every open session on the left, grouped as **View → Group Chats
+By** says (see [the chat list](#the-chat-list)), shows the selected one in the middle, and
+shows what its agent is doing on the right. **Window → Chats** and **Show
 Chats** in the tray menu open the window. Starting a chat or a terminal
 session anywhere in Looper shows it on the Chats tab, or in the Chats window
 when it's open and you start it from another window (see [The main
@@ -332,10 +369,19 @@ except for a chat with no messages yet, or, with **Close conversations without
 asking once their cache has expired** under it, once the prompt cache of the
 agent's last reply has expired (the status bar says "Cache expired").
 
-Right-clicking a project's group in the list also has **Open Recent Chat**,
+Right-clicking a project's group in the list also has **New Chat**, **Edit
+Project…** and **Open Recent Chat**,
 a list of the project's 15 most recent conversations, from its tasks' runs and
 from Claude Code or Codex in its folder, as in the [History window](#the-history-window).
 Picking one goes on with it in a chat, or shows it when it's already open.
+
+Right-clicking a chat has the Chat menu's commands for it, with **Open in
+Terminal**, **Open in New Window**, **Edit Project…**, **Mark as Unread**,
+**Open Working Directory** and **Close Conversation**. Right-clicking a task
+run in the list has **Send Guidance…**, **Stop Run…**, and **Open in Terminal**,
+which goes on with the run's conversation in a terminal session as a run's
+Continue in Terminal does, after asking while the run is going, since its agent
+stops.
 
 Quitting Looper doesn't close them: it stops every session's agent (asking
 first while a chat's agent works or a terminal session runs), and the next
@@ -404,7 +450,9 @@ at 0k it only continues a chat whose cache still lasts. The line says so, and
 **Continue Anyway** sends it at the reset time, or at once if that has passed.
 
 **Stop** ends the agent's turn at once, and the conversation goes on with your
-next message. It's on the toolbar, in a session's right-click menu, under a
+next message. Background subagents and workflows the agent started keep
+running, each with its own Stop in the activity pane (see [the activity
+pane](#the-activity-pane)). It's on the toolbar, in a session's right-click menu, under a
 chat's Send button, and in the Chat menu (Esc in a chat). In a chat, Looper asks Claude Code to stop, which
 it does right away, and ends the process if it hasn't stopped within 5
 seconds. Codex's turn ends with its process. In a terminal session, Stop
@@ -444,11 +492,11 @@ list) opens the chat in a
 window of its own, titled with the chat's name. It shows the conversation like
 the Chats window's middle pane, without the list; **View → Activity Pane**
 shows the [activity pane](#the-activity-pane) on its right (it starts hidden),
-and Looper remembers the pane's width apart from the Chats window's. **View →
+and Looper remembers the pane's width apart from the Chats window's. **Window →
 Always on Top** keeps the window above your other windows until you turn it
 off or close the window.
 The chat stays in the Chats window too, and you can write in either one: both
-show the same conversation as it happens. Its File, Edit and Chat menus have
+show the same conversation as it happens. Its File, Edit, View, Chat and Window menus have
 the commands about the chat. Opening it again brings its window to the front,
 and closing the window leaves the chat running; Close Conversation ends the
 chat and closes its window. Terminal sessions stay in the Chats window.
@@ -467,21 +515,45 @@ haven't looked at yet, and grey once the session ended.
 that has waited longest first, with the reason and how long it has waited:
 
 - the agent asks for permission to use a tool;
-- it finished a turn you haven't looked at yet (its title shows in bold);
+- it finished a turn you haven't looked at yet;
 - it sent a notification;
-- the session ended without you seeing it.
+- the session ended without you seeing it;
+- you marked it unread (see below).
 
-Looking at the session takes it off the list, except a permission request,
-which stays until you answer it. **View → Waiting Chats First** (on at first)
+A session's title shows in bold, in the list and on the dashboard, while it
+waits for you for any of these reasons. Looking at the session takes it off the
+list, except a permission request, which stays until you answer it.
+**Mark as Unread** (the Chat menu, and the right-click menu of a chat or terminal
+session in the list or on its dashboard card) makes a session that's ready and
+not waiting wait as a finished turn again, with "Marked as unread", until you
+open it. No device gets a notification for it. It's off while the agent works
+(its next turn is news anyway) and while a permission request waits, which
+stays bold until you answer it. Once a session is unread, the same item reads
+**Mark as Read** and marks it seen. On a phone or tablet it's in a chat's More
+menu and in the long-press menu of a chat or terminal session in the list, and
+swiping a row to the right shows **Unread** (or **Read**) behind it. **View → Waiting Chats First** (on at first)
 shows Waiting for you, and puts the waiting sessions' cards first on the
 [dashboard](#the-dashboard); turned off, the list shows only the projects'
 groups. Looper remembers the setting.
 
+**View → Group Chats By** chooses the groups. **Project**, the default, makes
+one for each project in the Projects tab's order, then one for each other folder
+a chat was opened in. **Project Folder** makes one for each of the Projects
+tab's folders that has chats, named with the folders it's in ("Clients /
+Acme") and in that tab's order, and then **No Folder** for the chats of projects
+in no folder and for chats opened in another folder. **None** lists every chat
+in one list without group names, in the order they started, and you can drag a
+chat to another place there (on a phone, **Reorder** in the list's More menu
+moves them in a sheet). Looper remembers the grouping, but the order you drag
+chats into only until Looper closes. Right-click the empty space below the list for
+**Show Task Runs**, **Group Chats By** and **Waiting Chats First**; a phone has
+them in the list's More menu.
+
 Clicking a group's name closes or opens it, and Looper remembers which groups
 are closed. Up and Down move through the sessions shown, and a click on the
-empty space below the list shows the dashboard. F8 and F9 (or
+empty space below the list shows the dashboard. Shift+F8 and Shift+F9 (or
 Ctrl+Shift+PageUp and Ctrl+Shift+PageDown) go to the previous and next session
-that's waiting for you, and Shift+F8 and Shift+F9 (or Ctrl+PageUp and
+that's waiting for you, and F8 and F9 (or Ctrl+PageUp and
 Ctrl+PageDown) to the previous and next session. Ctrl+1 to Ctrl+8 go to the
 session at that place in the list, counting the projects' groups and not
 Waiting for you, and Ctrl+9 to the last one. F6 and Shift+F6 move between
@@ -501,9 +573,10 @@ Enter does too): the agent gets it mid-run. It looks like a chat's message
 box, with Send above Stop. While the
 agent waits for your answer to its question, the question shows above the box,
 and what you send is the answer. The run's dashboard card has the same box,
-and its right-click menu has **Send Guidance…** and **Stop**. Stop (in the
-toolbar, beside the box, or on the right-click menu) stops the whole run, the
-same as Stop on the Tasks tab, not only its conversation, so Looper asks first.
+and its right-click menu has **Send Guidance…** and **Stop Run…**. Stop Run…
+stops the whole run, the same as Stop on the Tasks tab, not only its
+conversation, so Looper asks first; **Stop** in the toolbar and beside the box
+stops at once.
 A task run has no Close Conversation, and Send to Chats doesn't list it. Looper
 remembers the setting.
 
@@ -555,6 +628,23 @@ fits after your columns, the last one reaches the edge. A narrower window
 drops the columns it has no room for and brings them back when it's wider
 again. Double-click a gap to give its column or row the automatic size
 again. Looper remembers the widths and heights.
+
+**View → Dashboard Layout** (the toolbar's **Layout** button, which shows
+while the dashboard does) chooses **Grid**, described above, or **Focus**.
+Focus shows one conversation large, with its message box, and the other cards
+stacked in a column on its right that scrolls and has no message boxes. The
+cards meet at a thin border, with no gaps. Click a card in the column to swap
+it into the large spot, and drag the line between the two to size the column
+(360 pixels at first, at least 240). Looper remembers the layout, the large
+conversation and the column's width. On a tablet Focus is the same, and on a
+phone the large conversation is on top with the other chats as a row of small
+cards above it that scrolls sideways.
+
+**View → Dashboard Filter** (the toolbar's **Filter** button) has **Only Chats
+Shown in the List**, which leaves out the chats in groups you've closed, and
+**Show Hidden Chats**. **Hide from Dashboard** in a card's right-click menu takes
+that chat off the dashboard, and **Show on Dashboard** puts it back while Show
+Hidden Chats shows it. Looper remembers each choice.
 
 Clicking a chat's or task run's title bar (or anywhere on a terminal session's
 card) opens the session, and right-clicking it has the session's menu. The toolbar's Dashboard button
@@ -613,7 +703,9 @@ one per agent the workflow started.
 
 The pane on the right has four tabs, and a fifth for a project in a git
 repository. **View → Activity Pane** (or the toolbar's Activity Pane button)
-shows or hides it.
+shows or hides it. In a window too narrow for the list, the conversation and
+the pane side by side, it takes the conversation's place instead (see [The main
+window](#the-main-window)).
 
 - **Now** shows the agent's latest tool call the way it looks on its screen. A
   command shows in a terminal, the command line and then its output, under its
@@ -627,8 +719,9 @@ shows or hides it.
   read or wrote shows formatted, as a page of a document; **Markdown Source**
   (angle brackets) shows its text instead, and a change to one shows as a
   change. A message the agent sends another agent (SendMessage), a
-  subagent's final report, and the task the agent gives a subagent show as an
-  email: From, To and Subject rows, then the message formatted. An image it
+  subagent's final report, and the task the agent gives a subagent show as a
+  message in a mail app: the subject, the sender and "to" the recipient, with a
+  chevron that shows the call's other parameters, then the message formatted. An image it
   read shows as the image. A skill it loaded shows the skill's instructions as
   formatted text. Other tools show their parameters in a table, names on the
   left and values on the right, and then their result. An addon can change how
@@ -641,24 +734,32 @@ shows or hides it.
   move, and a click or Enter shows that call. While Now follows the latest,
   the list keeps the newest in view.
 - **Background** lists the commands and workflows the agent runs in the
-  background (its subagents are in Subagents), with how long each has been
-  running, and the last few that ended, with how they ended. Its title counts
-  the ones running. Clicking a command shows the end of its output, and
+  background (its subagents are in Subagents) at the top, under **Running** and
+  **Finished**, with how long each has been running and how the ended ones
+  ended. Its title counts the ones running. The selected one's output shows
+  below the list, in a console, with a draggable divider between them (on a phone,
+  the **Tasks** and **Output** tabs). Clicking a command shows the end of its output, and
   clicking a workflow shows its tab above the conversation. Right-clicking a
-  command has Open File (its output file), Copy Path and Copy Content (the
-  command).
+  running item has **Stop**, for a chat or task run on Claude Code (a terminal
+  session's work stops in its terminal), and a command has Open File (its
+  output file), Copy Path and **Copy Command**.
 - **Subagents** lists the subagents the agent started, the newest first (a
   workflow's agents are in the workflow's tab): what each one does, whether
   it's running, its agent type, the model and effort it runs on, and how many
   tokens its context holds. The model, effort and context come from its
-  latest reply, so they read "Not known yet" until it has one. Clicking a
-  subagent shows its tab. Right-click it for **Open Subagent Conversation** in
-  its own window.
+  latest reply, so they read "Not known yet" until it has one. The list is at
+  the top, and the selected subagent's conversation shows below it. The tab's
+  title counts the running ones. Right-click a subagent for **Open Subagent
+  Conversation** in its own window, and **Stop** for a running one the agent
+  started in the background.
 - **Files** lists the files the agent sent you (under Received, each once, as
   in the conversation: images as thumbnails, which open like there), the
   files it changed and read, and the files you attached. Images show as
-  thumbnails. Clicking a changed or read file shows the agent's last tool
-  call on it in Now, and right-clicking it has Open File and Copy Path.
+  thumbnails. Double-clicking a file, or pressing Enter on it, opens it in
+  [Preview](#the-preview-window), or in its default program when Preview
+  doesn't show its kind. Right-clicking it has **Open File**, **Show on
+  Now** (the agent's last tool call on it), **Save As…** for a received file
+  (copies it to a place you pick) and **Copy Path**.
 - **Git** shows the session's project repository: its uncommitted changes and
   its history, with the lists above the changes; the sections have draggable
   dividers. It works like the project's
@@ -666,15 +767,19 @@ shows or hides it.
 
 ### The toolbar and status bar
 
-The toolbar's buttons, left to right, with their tooltips:
+The toolbar's buttons, left to right, with their tooltips. On the Chats tab of
+the main window the first two are on the New toolbar, and the rest on the Chats
+toolbar:
 
 | Button | Tooltip | Shortcut |
 |---|---|---|
-| Bubble with a plus | New Chat in &lt;project&gt;, the shown session's project; its arrow lists the projects, Other Folder… and New Project… | Ctrl+T |
-| Terminal | New Terminal in &lt;project&gt;; its arrow lists the projects, Other Folder… and New Project… | — |
+| Bubble with a plus | New Chat in &lt;project&gt;, the shown session's project; its arrow lists the projects and Other Folder… | Ctrl+T |
+| Terminal | New Terminal in &lt;project&gt;; its arrow lists the projects and Other Folder… | Ctrl+Shift+T |
 | Grid | Dashboard (stays pressed while the dashboard shows); Overview on the Chats tab | — |
-| Clock with an arrow around it | History: opens the [History window](#the-history-window); its arrow lists the 15 most recent conversations, each of which goes on in a chat (or comes forward, when a chat has it open), and More… | — |
+| Funnel | Filter: Only Chats Shown in the List and Show Hidden Chats (only while the dashboard shows) | — |
+| Layout | Layout: Grid or Focus (only while the dashboard shows) | — |
 | Bullhorn | Send to Chats | — |
+| Clock with an arrow around it | History: opens the [History window](#the-history-window); its arrow lists the 15 most recent conversations, each of which goes on in a chat (or comes forward, when a chat has it open), and More… | — |
 | Bubble with a square | Stop (greyed out while the agent isn't working) | Esc in a chat |
 | Bubble with fast-forward | Send Now: stops the turn, and the agent goes on with the chat's queued messages | Ctrl+Enter |
 | Bubble with a circular arrow | Restart Agent: a new Claude Code or Codex process on the same conversation (greyed out for a task run and a custom harness's terminal) | — |
@@ -692,7 +797,7 @@ them in a chat on that harness: how much of the 5-hour limit is used, when it
 resets, and how much of the weekly limit is used. Harnesses can run on
 different accounts, so each one shows its own limits, and a harness shows none
 until a chat on it has reported them. The dashboard shows no limits. **View →
-Toolbar** and **View → Status Bar** show or hide them.
+Toolbar** (in the main window, **View → Toolbars**) and **View → Status Bar** show or hide them.
 
 ### Send to Chats
 
@@ -711,13 +816,14 @@ and a terminal session gets it typed in and sent.
 ## The History window
 
 The **History** window lists the conversations on this computer, to read one
-or go on with it. **View → History** in the main window or the Chats window,
+or go on with it. **Tools → History** in the main window or the Chats window,
 or the Chats toolbar's History button, opens it. It isn't on phones.
 
 The list on the left has two kinds of conversation, newest first:
 
-- Looper's own runs: chats, terminal sessions, Remote Control conversations
-  and task runs, as long as the run recorded a conversation.
+- Looper's own chats, terminal sessions and Remote Control conversations, as
+  long as the run recorded a conversation. Task runs are in [Task
+  History](#the-task-history-window).
 - Every conversation in Claude Code or Codex, whatever folder it ran in,
   started outside Looper or by it. Looper reads them from the folders each
   environment's harnesses keep them in: Claude Code's config folder
@@ -744,8 +850,7 @@ meanwhile.
 
 **View → Group by Date** groups the list by Today, Yesterday, This Week, This
 Month, and then by each earlier month, and **View → Group by Folder** by folder: the projects first,
-in the Projects tab's order, then the other folders. **View → Show Task
-Runs** (on at first) lists task runs too. Looper remembers these settings.
+in the Projects tab's order, then the other folders. Looper remembers these settings.
 **View → Folder** shows All Folders, one project's conversations, or the
 ones Outside Projects.
 
@@ -801,6 +906,28 @@ still be open elsewhere. Continue anyway?"
 
 Once a conversation has opened, the History window closes. It stays open for
 Copy Session ID, Open Working Directory, a cancelled question and an error.
+
+## The Task History window
+
+The **Task History** window lists every task's runs, newest first, to read one
+or go on with it. **View → Task History** in the main window, or the Tasks
+toolbar's Task History button, opens it. It's the History window's layout: the
+list on the left, the selected run's conversation in the middle, and the
+[activity pane](#the-activity-pane) on the right, with only its Now and Files
+tabs, once **View → Activity Pane** shows it. A run that never started its agent
+has no conversation to read.
+
+A row has the run's title, then a line with its task, its result, when it
+was last active and, grouped by date, its project. The View menu has **Group by Date** and **Group by Folder**, **Folder**,
+**Task** (**All Tasks**, or one task's runs), **Result** (**All Results**, or
+one result), and **Task Runs**, whose **Show Skipped Runs** and **Show Runs with
+No Action** are the same choices as on the [Runs tab](#the-runs-tab). Right-click
+the empty space below the list for the grouping and filters. **Edit → Find…**
+and **View → Refresh** work as in the History window.
+
+The toolbar, the File menu and a run's right-click menu have its Continue in
+Chat, Continue Compacted and Continue in Terminal, for the runs that can, as
+the Runs tab's do.
 
 ## Terminal sessions
 
@@ -885,10 +1012,12 @@ three lines tall; drag its top border up to make it taller, up to half the
 chat's height. Looper remembers the height for the Chats window and for a chat's
 own window. **Stop**, under the
 Send button, ends the agent's turn while it works. While the agent works, or
-waits for your answer, a line above the message box says so. In an empty message
+waits for your answer, a line above the message box says so: the harness's
+name and what the running tool does ("Claude Code: Run the test suite"), or
+"Claude Code is working…" when it has no description. In an empty message
 box, Up brings back the messages you sent, newest first, and Down goes back
 toward your draft. Each chat keeps the message you're typing while you look at
-another session.
+another session, and the cursor is at its end when you come back.
 
 A message you send while the agent works waits at the end of the
 conversation, outlined, and the Send button reads Queue. With Claude Code it
@@ -904,10 +1033,11 @@ stops the agent's turn, as Stop does, and the agent goes on with the queued
 messages at once.
 
 The bar above the message box has **Attach Files** (Ctrl+O) and **Skills and
-Commands** on the left, and the chat's harness, model, effort and permission
-mode on the right. Clicking one of those opens the same list as the Chat menu.
-In a narrow chat, such as a dashboard card or a phone, the four are one button
-named after the model, and its menu has them as submenus.
+Commands** on the left, and the chat's harness, model, effort, permission
+mode, session type and auto compact on the right. Clicking one of those opens
+the same list as the Chat menu. In a narrow chat, such as a dashboard card or a
+phone, they're one button named after the model, and its menu has them as
+submenus.
 
 Typing **/** at the start of the message box, or at the start of a word, lists
 the harness's commands and skills with their descriptions in a drop-down list
@@ -951,8 +1081,12 @@ the search box, then closes the bar. Text inside a collapsed tool group or think
 The Chat menu has **Stop** (Esc), which ends the agent's turn while it works
 (the next message goes on with the same conversation), **Send Now**, **Restart
 Agent** (see [the Chats window](#the-chats-window)), the
-**Harness**, **Model**, **Effort** and **Permission Mode** submenus,
-**Compact into New Chat** (see below) and **Copy Session ID**. The submenus change
+**Harness**, **Model**, **Effort**, **Permission Mode**, **Session Type** and
+**Auto Compact** submenus, **Show Terminal** (an interactive chat's terminal),
+**Compact into New Chat** and **Continue in Terminal** (see below),
+**Rename…**, **Continue When Limit Resets**, **Mute Notifications**, **Watch
+Task Events**, **Mark as Unread** (see [Waiting for you](#the-chats-window)) and
+**Copy Session ID**. The submenus change
 this chat only, and the task keeps its own settings. A new permission mode
 applies right away, even mid-turn. With Claude Code, a new model or effort, or
 switching to Bypass, restarts the session on the same conversation, so those
@@ -961,13 +1095,29 @@ the next message.
 
 **Harness** lists the Claude Code and Codex harnesses of the task's
 [environment](environments.md), so a chat can run on another one than its
-project's or task's. It changes only until you send the first message, because
-a conversation can't move to another harness; it's greyed out in a chat that
-goes on with a run's conversation or forks one. On a harness of another kind,
-the chat starts with the default model and effort and the Auto permission mode.
+project's or task's. Before the first message any of them works, and on a
+harness of another kind the chat starts with the default model and effort and
+the Auto permission mode. Once the conversation has started, or when the chat
+goes on with a run's conversation or forks one, only the harnesses of its own
+kind (Claude Code or Codex) are enabled, because a conversation can't move
+between the two kinds. Picking one doesn't restart the agent: the next message
+goes to the same conversation on the new harness, once a turn that's still
+going has ended, and what you send meanwhile waits for it. When the two
+harnesses keep their conversations in different config folders, Looper copies
+the conversation's transcript to the new one's first.
 Continue in Chat opens the chat again on its own harness. Continue in Terminal
 and Continue with Guidance use the task's harness, so a chat on another harness
 doesn't offer them.
+
+**Session Type** is **Interactive** or **Headless**; Codex chats run headless
+only. An interactive chat runs Claude Code's own screen in a terminal, which
+shows as a **Terminal** tab beside the conversation (**Show Terminal**).
+**Open in Terminal** (right-click a chat) shows that tab, and first turns a
+headless chat on Claude Code interactive, going on with its conversation, once its turn
+has ended; for a Codex chat it does what **Continue in Terminal** does.
+**Continue in Terminal**, in the Chat menu and the chat's right-click menu,
+closes the chat and goes on with its conversation in a terminal session on the
+Chats tab, once the harness has started it.
 
 Right-click a message for Copy (the selected text) and Copy Message; on a tool
 call, Copy Input and Copy Result, plus Open File and Copy Path when it worked
@@ -990,22 +1140,46 @@ of each turn (and on your messages), and not while the turn is running. The
 new chat becomes a run of its own once you send a message.
 
 **Compact into New Chat** (the toolbar or the Chat menu) replaces the chat with
-a new one that starts from its messages only: yours, the agent's replies, the
-files it sent, and each subagent's final report. Tool calls and their results,
-thinking and errors are left out, so the new conversation starts with far less
-context. The new chat shows those messages under "Compacted from run …", and
-they're exactly what the agent gets: they go to it as one block ahead of your
-text, with the first message you send. The old chat closes, and its run keeps
+a new one that starts from a compacted copy of its conversation: your messages,
+the agent's replies, the files it sent and each subagent's final report, in
+order, with every tool call of the latest session listed where it ran and the
+results that fit the budget in Settings → Chats, newest and smallest first.
+Calls from earlier sessions are counted, not listed, and thinking and errors are
+left out, so the new conversation starts with far less context. The new chat
+shows the messages under "Compacted from run …", and the whole compacted copy
+goes to the agent as one block ahead of your text, with the first message you
+send. In Claude Code's Code Mode, the new
+session's REPL also starts with what the old session's scripts left defined,
+values, functions and class instances alike, and the agent is told what couldn't
+come back (a promise still waiting, a WeakMap) with the code that made it. The new chat goes on as the same chat: it keeps the old one's
+name, harness, model, effort, permission mode, session type, Auto Compact, Mute
+Notifications, Continue When Limit Resets, the tasks it watches, a task's run it
+holds, its place in the Chats list and on the dashboard (its card's size and
+order, Hide from Dashboard, Focus), the message box's text and files, whether
+you've read it, and its Terminal tab. Every window and device that showed the old
+chat shows the new one, and `looper` commands and notifications that name the
+old chat's id reach the new one. The old chat closes, and its run keeps
 the whole conversation, so Continue in Chat on it opens it again. Compact is
 greyed out while the agent works or waits for a permission answer, and until it
-has replied. The new chat keeps the old one's harness, model, effort and
-permission mode. Because it starts from text, its Harness menu works until the
-first message, so a Claude Code conversation can go on in Codex or the other way
-round.
+has replied. Because the new chat starts from text, its Harness menu works until
+the first message, so a Claude Code conversation can go on in Codex or the other
+way round. A chat compacts the same way by itself with Auto Compact, and when
+its context is too full for the model.
 
 **Continue Compacted** on a finished run (right-click it in the Runs tab, or the
 run window's File menu) opens the same kind of chat from the run's
 conversation, and leaves the run as it is.
+
+**Auto Compact** compacts a chat by itself. With **Settings → Chats → Compact
+at turn end when the context passes** checked (90% at first, off by default),
+a chat whose context is past that share of its model's window when a turn ends
+compacts as Compact into New Chat does. **Chat → Auto Compact**, or the button
+in the message box's bar, sets one chat apart from that: **Default** (what
+Settings says), **At N%** or **Off**; a phone has it in the Usage sheet with
+the chat's other settings. A chat doesn't compact while a message waits to go
+to the agent or a permission request waits for you, or after a turn that
+failed, and a chat that compacted and whose first turn already ends past the
+share doesn't compact again.
 
 With Claude Code, a tool call that the task's permission mode would ask about
 shows in the chat with **Allow** and **Deny**, and the agent waits for your
@@ -1074,16 +1248,42 @@ When Claude Code sends you a file (its SendUserFile tool, for a diagram, a
 report or a screenshot), the conversation shows it as a message from the agent:
 the caption as its text, then each file under it, instead of a collapsed tool
 call. An image (PNG, JPEG, GIF, WebP or SVG) shows as a thumbnail, and clicking
-it opens the image window. When the message has more than one image, the window
+it opens it in the [Preview window](#the-preview-window). When the message has more than one image, the window
 has **Previous Image** and **Next Image** buttons (the Left and Right keys, and
 Home and End, do the same), "2 of 5" in its status bar, and its title follows
 the image it shows. Any other file, and an image the agent asked to
 attach rather than display, shows as a card with the file's name and size, and
-clicking it opens the file in its default app. From a browser or phone, both
+clicking it opens it in Preview when Preview shows its kind, and in its default
+app when not. From a browser or phone, both
 open in Looper's own viewer, as an attachment does, with **Download to This
 Device** and **Download to Host Computer**. A file that no longer exists shows
 its name and "File not found". The agent's tool call itself still shows in the
 activity pane's **Now** tab and in the Messages view's raw mode.
+
+### The Preview window
+
+The **Preview** window, titled with the file's name, shows a file as what it
+is: an image (with **Zoom Out**, **Zoom In**, a zoom box, **Fit to Window** and
+**Fit to Width**), a PDF's pages, a Word document, an Excel workbook's sheets, a
+PowerPoint presentation's slides, an HTML page, a CSV or TSV file as a table,
+code in its syntax colors, Markdown formatted, or plain text. Its status bar
+names the kind, the image's size in pixels and the file's size. **View Code**
+shows the source of an HTML, Markdown or CSV file, **Desktop Width** lays an
+HTML page out at a desktop's width, and **Open in Default Program** opens the file
+in the app that has it. It's what a double-click on a file in the activity pane's
+Files tab, a click on a file the agent sent and a message's **Open File** open,
+for the kinds above; any other file, or one larger than Preview reads (25 MB for
+an image or Word document, 50 MB for a PDF or presentation, 10 MB for a
+spreadsheet or CSV, 5 MB for text), opens in its default program. A phone or
+browser shows the same kinds in its own viewer (see [Remote
+Access](remote-access.md#files)).
+
+An HTML page runs its scripts, apart from Looper: it can't reach Looper's
+windows, files or data. **Settings → Advanced → Internet access for web pages
+in Preview** says whether it may load content from the internet: **Allow** (the
+default), **Ask** or **Deny**, which loads only what the file holds. With Ask, a
+bar above the page says "This page loads content from the internet" when it
+tries to, with **Load** and **Don't Load**.
 
 ## Attachments
 
@@ -1174,6 +1374,7 @@ pane. Double-clicking a row, pressing Enter on it, or right-clicking it and
 choosing "Open" opens the run window described below. The
 context menu also offers "Copy Details", "Send Guidance…" (while the run's agent is going; see
 [guidance for a run in progress](how-a-run-works.md#guidance-for-a-run-in-progress)),
+"Continue Run" (for a run stopped before its agent started),
 "Continue in Terminal", "Continue in Chat", "Continue Compacted" and "Continue with Guidance…" (for
 a finished Claude Code or Codex run; see [continuing a finished run](how-a-run-works.md#continuing-a-finished-run)),
 "Open Run Folder", and "Copy Run Folder Path". Ctrl+C copies the selected
@@ -1227,7 +1428,7 @@ Agent tool call, **Open Subagent Conversation**. On a phone, the run's screen
 lists the same rows, and the Conversation row opens the chat as its own page.
 
 The window's menu bar has a File menu (Save as Markdown…, Open Output File,
-Continue in Terminal, Continue in Chat, Continue Compacted, Continue with
+Continue Run, Continue in Terminal, Continue in Chat, Continue Compacted, Continue with
 Guidance…, Open Run Folder, Copy Run Folder Path, Open Working Directory) and a
 View menu. Save as Markdown… (Ctrl+S) asks for a file name,
 then opens an Export Options window with Include thinking, Include tool
@@ -1535,6 +1736,9 @@ On the Chats tab (all off by default):
   big. A message that waits in the queue behind a turn doesn't ask.
 - **Continue chats once the usage limit resets** turns on Continue When Limit
   Resets for each new chat (see [the Chats window](#the-chats-window)).
+- **Compact at turn end when the context passes**, followed on the same line by
+  a box in percent (90 by default), turns on Auto Compact for every chat that
+  has no choice of its own (see [Chats](#chats)).
 - **Don't continue once the cache has expired and the context is larger than**,
   followed on the same line by a box in thousands of tokens (0 by default, which
   counts any context), stops that continue for a chat whose cache has expired.
@@ -1559,3 +1763,5 @@ On the Advanced tab:
 - **Show conversations with the agent in** picks Chat window (default) or
   Terminal for [New Task with Agent and Edit with
   Agent](task-builder.md#terminal-view).
+- **Internet access for web pages in Preview** picks Allow (default), Ask or
+  Deny, for the HTML pages [Preview](#the-preview-window) shows.

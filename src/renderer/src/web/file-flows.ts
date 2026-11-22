@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { attachmentName } from '../../../shared/chat';
 import { baseName } from '../../../shared/paths';
+import type { PreviewNetwork } from '../../../shared/preview';
 import { REMOTE_CHANNELS, type HostDirEntry, type HostDirListing, type MessageBoxSpec } from '../../../shared/remote-access';
 import { languageOf } from '../components/code-languages';
 import type { ShellController } from './controller';
 import {
   allowedExtensions,
+  binaryKind,
   breadcrumbs,
   emptyHistory,
   fileSources,
@@ -382,10 +384,12 @@ export interface FileView {
   url: string | null;
   /** A text, code or Markdown file's text; null while it loads or when it can't be shown. */
   text: string | null;
-  /** A PDF's bytes; null while it loads or when it can't be shown. */
-  pdf: ArrayBuffer | null;
+  /** A PDF's or an Office file's bytes; null while it loads or when it can't be shown. */
+  data: ArrayBuffer | null;
   /** Why it can't be shown, or ''. */
   error: string;
+  /** An HTML file as a page its frame loads, apart from Looper (sessions.previewPage). */
+  htmlPage: (html: string, load: boolean) => Promise<{ url: string; network: PreviewNetwork }>;
   toDevice: () => void;
   toHost: () => void;
   /** A phone's one Download button: asks where, naming this device. */
@@ -424,11 +428,11 @@ function dataUrl(blob: Blob): Promise<string> {
 interface Shown {
   url: string | null;
   text: string | null;
-  pdf: ArrayBuffer | null;
+  data: ArrayBuffer | null;
   error: string;
 }
 
-const LOADING: Shown = { url: null, text: null, pdf: null, error: '' };
+const LOADING: Shown = { url: null, text: null, data: null, error: '' };
 
 const isCodeFile = (name: string): boolean => languageOf(name) !== undefined;
 
@@ -439,7 +443,7 @@ async function readShown(controller: ShellController, path: string, kind: Viewer
     const blob = await controller.readHostFile(path, VIEWER_MAX_BYTES[kind]);
     if (!blob) return { ...LOADING, error: `${name} is too big to show here.` };
     if (kind === 'image') return { ...LOADING, url: await dataUrl(new Blob([blob], { type: imageType(path) })) };
-    if (kind === 'pdf') return { ...LOADING, pdf: await blob.arrayBuffer() };
+    if (binaryKind(kind)) return { ...LOADING, data: await blob.arrayBuffer() };
     return { ...LOADING, text: await blob.text() };
   } catch (err) {
     return { ...LOADING, error: errorText(err) };
@@ -527,6 +531,7 @@ export function usePathRequest(controller: ShellController, req: PathRequest): P
       ? {
           kind,
           ...shown,
+          htmlPage: (html, load) => controller.invoke<{ url: string; network: PreviewNetwork }>(w, 'sessions:previewPage', html, load),
           toDevice,
           toHost,
           askDownload: (thisDevice) =>

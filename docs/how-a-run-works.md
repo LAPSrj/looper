@@ -142,6 +142,16 @@ run it; if the agent ends its turn again without it, the stop goes through
 (in interactive mode, that's when the idle clock starts, unless the session
 waits on something). Once `looper-done` has run, every stop is allowed.
 
+With `agent.waitAfterDoneMin` set (Claude Code and Codex), the run doesn't
+complete at `looper-done`: it stays open that many minutes, and what comes
+for it goes to the same agent as a new turn that resumes its conversation.
+That's the user's guidance and the task's trigger events: with
+`trigger.sendRelatedEvents` on, only the events with the run's
+`looper_related_id` (a run that handles no id doesn't wait), otherwise any
+of the task's. After that turn's `looper-done` the wait starts again. The
+run's result is the last turn's report, the wait counts toward
+`maxRuntimeMin`, and Stop ends it.
+
 The agent can end its turn to wait for a background task or a wake-up, in
 both modes: Claude Code keeps the session open and starts the agent's next
 turn with the task's result, the Monitor's event or the wake-up. A
@@ -318,7 +328,10 @@ opens a Run Options window instead of starting the run. It has a
 **Guidance** box at the top, prefilled with the task's
 [one-off guidance note](#one-off-guidance-notes), and a checkbox for each
 step to run: Check and Classifier (each shown only when the task has that
-step turned on) and Agent. **Run** saves the guidance box as the task's note
+step turned on) and Agent. When the task's environment has more than one
+harness, a **Harness** box below them picks the one the agent runs on for this run
+only; it starts as the task's own, and it's greyed out while Agent is unchecked.
+**Run** saves the guidance box as the task's note
 (emptying it clears the note) and starts the run with only the checked steps;
 it's greyed out while no step is checked. Cancel starts nothing.
 
@@ -443,7 +456,14 @@ window's File menu:
   run, the task's one-off note is left untouched, and the run counts toward
   the task's Simultaneous runs cap like any Run Now.
 
-All four are greyed out while the run is still in progress, for custom
+A run that was stopped before its agent started has no conversation to pick up.
+Its menus have **Continue Run** instead: it starts a new run on the same
+trigger events and the same harness, which goes on to the agent. A step that
+passed in the stopped run (the check, for example) doesn't run again, and the
+step it was stopped in does. It's greyed out for any other run, and a task at
+its Simultaneous runs cap doesn't start one.
+
+The four above are greyed out while the run is still in progress, for custom
 harnesses, and for runs that never recorded a conversation. While an open
 chat or terminal session holds the conversation, only Continue Compacted and
 the Continue item of that kind are available, and that item shows the session.

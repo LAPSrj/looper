@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react';
 import type { QRCodeToDataURLOptions } from 'qrcode';
 import icon from '../../../assets/icon.png';
 import {
+  NOTIFY_TOPICS,
   REMOTE_ACCESS_SOURCES,
   SOURCE_NAMES,
   sourceStatusText,
+  type DeviceNotifications,
+  type NotifyTopic,
   type PairedDevice,
   type PairingCode,
   type RemoteAccessProviderId,
@@ -15,8 +18,7 @@ import type { RemoteAccessSettings } from '@shared/types';
 import { CheckboxField, EmptyWindow, Field, FieldRow, FormGroup, MainInstruction, NumberInput, SelectInput, TextInput } from './components/ui';
 import { WindowActions } from './components/WindowActions';
 import { ListActions, ListButton, SelectList } from './components/SelectList';
-import { RenameWindow } from './components/RenameWindow';
-import { useSave, type ItemSource } from './components/hooks';
+import { useLiveItem, useSave, type ItemSource } from './components/hooks';
 import { fmtDateTime } from './format';
 import { useRemoteAccessState } from './useRemoteAccess';
 import { reportError } from './report-error';
@@ -182,21 +184,21 @@ export function RemoteAccessDevicesApp() {
             itemSub={deviceSub}
             empty="No paired devices"
             onSelect={(d) => setSelected(d.id)}
-            onOpen={(d) => void window.looper.remoteAccess.openRename(d.id)}
+            onOpen={(d) => void window.looper.remoteAccess.openDevice(d.id)}
             autoFocus
             menu={(d) => [
-              { label: 'Rename…', run: () => void window.looper.remoteAccess.openRename(d.id) },
+              { label: 'Edit…', run: () => void window.looper.remoteAccess.openDevice(d.id) },
               { label: 'Remove', destructive: true, run: () => void remove(d) },
             ]}
-            onRename={(d) => void window.looper.remoteAccess.openRename(d.id)}
+            onRename={(d) => void window.looper.remoteAccess.openDevice(d.id)}
             onDelete={(d) => void remove(d)}
           />
           <ListActions>
             <ListButton disabled={state.phase !== 'running'} onClick={() => void window.looper.remoteAccess.openPair()}>
               Pair Device…
             </ListButton>
-            <ListButton row disabled={!device} onClick={() => device && void window.looper.remoteAccess.openRename(device.id)}>
-              Rename…
+            <ListButton row disabled={!device} onClick={() => device && void window.looper.remoteAccess.openDevice(device.id)}>
+              Edit…
             </ListButton>
             <ListButton row danger disabled={!device} onClick={() => void remove()}>
               Remove
@@ -321,24 +323,55 @@ export function RemoteAccessPairApp() {
   );
 }
 
-/** Rename Device, from the paired-devices list. */
+/** The paired devices, kept current, for Edit Device. */
 const DEVICES: ItemSource<PairedDevice> = {
   list: () => window.looper.remoteAccess.state().then((s) => s.devices),
   from: (e) => (e.type === 'remote-access' ? e.state.devices : null),
   onError: reportError,
 };
 
-export function RemoteAccessRenameApp({ id }: { id: string }) {
+/**
+ * Edit Device, from the paired-devices list: its name and what it's notified
+ * of, a draft saved with Save. The device's own This Device screen edits the same.
+ */
+export function RemoteAccessDeviceApp({ id }: { id: string }) {
+  const [draft, setDraft] = useState<{ name: string; notify: DeviceNotifications } | null>(null);
+  const { item, missing } = useLiveItem(DEVICES, id, (d) => setDraft({ name: d.name, notify: { ...d.notify } }));
+  const saver = useSave();
+
+  useEffect(() => {
+    document.title = 'Edit Device';
+  }, []);
+
+  if (missing) return <EmptyWindow gone="This device is no longer paired." />;
+  if (!draft) return <EmptyWindow />;
+
+  const blank = !draft.name.trim();
+  const doSave = async () => {
+    const name = draft.name.trim();
+    if (item && name !== item.name) await window.looper.remoteAccess.renameDevice(id, name);
+    await window.looper.remoteAccess.setDeviceNotifications(id, draft.notify);
+  };
+  const setTopic = (topic: NotifyTopic, on: boolean) => setDraft({ ...draft, notify: { ...draft.notify, [topic]: on } });
+
   return (
-    <RenameWindow
-      title="Rename Device"
-      source={DEVICES}
-      id={id}
-      nameOf={(d) => d.name}
-      rename={(name) => window.looper.remoteAccess.renameDevice(id, name)}
-      gone="This device is no longer paired."
-      maxLength={64}
-    />
+    <div className="editor">
+      <div className="editor-body">
+        <div className="form">
+          <FormGroup>
+            <Field label="Name">
+              <TextInput selectWhen autoFocus value={draft.name} maxLength={64} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+            </Field>
+          </FormGroup>
+          <FormGroup title="Notifications">
+            {NOTIFY_TOPICS.map((t) => (
+              <CheckboxField key={t.id} label={t.label} checked={draft.notify[t.id]} onChange={(on) => setTopic(t.id, on)} />
+            ))}
+          </FormGroup>
+        </div>
+      </div>
+      <WindowActions confirm={{ label: 'Save', run: () => !blank && saver.save(doSave), disabled: blank }} busy={saver.busy} />
+    </div>
   );
 }
 

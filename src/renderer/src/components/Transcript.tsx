@@ -4,6 +4,7 @@ import type { MessageRow } from '@shared/messages';
 import type { RunAgent, RunPermission, SlashCommand, SubagentInfo } from '@shared/sessions';
 import { PermissionCard } from './PermissionCard';
 import { commandAttachment, parseCommands } from '@shared/bash-mode';
+import { harnessKindLabel } from '@shared/environments';
 import { localScriptCalls, showRowContextMenu, UserMessage, useSelectText, type RowCtx } from './ChatRows';
 import { groupRows } from './chat-groups';
 import { Composer, takeIntoBox } from './Composer';
@@ -19,7 +20,8 @@ function PendingMessage({ text, status, taskId, runId }: { text: string; status:
   return (
     <div className="chat-queued">
       <UserMessage text={rest} attachments={commands.length ? commands.map(commandAttachment) : undefined} files={{ taskId, runId }} />
-      <div className="chat-queued-actions muted">{status}</div>
+      {/* Edit and Cancel look as under a chat's queued message; a line of text is muted. */}
+      <div className={typeof status === 'string' ? 'chat-queued-actions muted' : 'chat-queued-actions'}>{status}</div>
     </div>
   );
 }
@@ -46,6 +48,7 @@ export function QueuedGuidanceActions({ taskId, runId }: { taskId: string; runId
  * hasn't picked up yet, at the end like a queued message, with `pendingStatus`
  * under it. `footer`: what goes under it (a task run's guidance box). `quote`:
  * that box takes text, so the rows' menu has Quote and Edit as New Message.
+ * `status`: the conversation's last line, as a chat's (ChatStatus).
  */
 export function TranscriptView({
   taskId,
@@ -60,6 +63,8 @@ export function TranscriptView({
   rowMenu = true,
   quote = false,
   scriptCalls,
+  status,
+  permission,
 }: {
   taskId: string;
   runId: string;
@@ -77,6 +82,9 @@ export function TranscriptView({
   quote?: boolean;
   /** A transcript outside Looper's runs: its Code Mode scripts' calls (HistoryConversation.scriptCalls). */
   scriptCalls?: Record<string, MessageRow[]>;
+  status?: React.ReactNode;
+  /** The tool call a task run's agent waits for the user to allow: in the conversation, as a chat's (its terminal asks too). */
+  permission?: RunPermission;
 }) {
   const { expandThinking } = useChatsSettings();
   const selectText = useSelectText(`${taskId}/${runId}`);
@@ -94,13 +102,22 @@ export function TranscriptView({
         id={`${taskId}/${runId}`}
         parts={parts}
         ctx={ctx}
-        endKey={`${rows.length}/${pendingGuidance ?? ''}`}
+        endKey={`${rows.length}/${pendingGuidance ?? ''}/${permission?.id ?? ''}`}
         drawAll={drawAll}
         card={embedded}
         measure="Transcript rows"
       >
         {rows.length === 0 && !pendingGuidance && <div className="muted">{waitingText}</div>}
+        {permission && (
+          <PermissionCard
+            key={permission.id}
+            harnessKind="claude-code"
+            p={permission}
+            answer={(allow) => void window.looper.answerRunPermission(taskId, runId, permission.id, allow)}
+          />
+        )}
         {pendingGuidance && <PendingMessage text={pendingGuidance} status={pendingStatus} taskId={taskId} runId={runId} />}
+        {status}
       </Conversation>
       {footer}
     </div>
@@ -179,7 +196,6 @@ export function RunGuidance({
   taskId,
   runId,
   question,
-  permission,
   recheck,
   onSent,
   stop,
@@ -192,8 +208,6 @@ export function RunGuidance({
   taskId: string;
   runId: string;
   question: string | null;
-  /** The tool call the agent waits for the user to allow (the run's terminal asks too). */
-  permission?: RunPermission;
   recheck?: string;
   onSent?: () => void;
   stop?: MessageBoxStop;
@@ -211,19 +225,11 @@ export function RunGuidance({
       live = false;
     };
   }, [taskId, runId, question, recheck]);
-  const permissionCard = permission && (
-    <PermissionCard
-      key={permission.id}
-      harnessKind="claude-code"
-      p={permission}
-      answer={(allow) => void window.looper.answerRunPermission(taskId, runId, permission.id, allow)}
-    />
-  );
-  if (!canGuide) return permissionCard || null;
-  const placeholder = question !== null ? 'Your answer' : 'Guidance for the agent';
+  if (!canGuide) return null;
+  // The box reads as a chat's: what it sends is the run's guidance.
+  const placeholder = question !== null ? 'Your answer' : agent ? `Message ${harnessKindLabel(agent.harnessKind)}` : 'Message the agent';
   return (
     <>
-      {permissionCard}
       {question !== null && <InfoBar stacked title="The agent has a question" message={question} />}
       <Composer key={runId} run={{ taskId, runId, placeholder, commands, agent, working, queued, rows, stop, onSent }} />
     </>

@@ -191,9 +191,23 @@ html[data-platform='ios'] {
     border-radius 0.35s,
     filter 0.35s;
 }
+/* The shadow a pushed screen's edge casts on the one under it shows only while it moves (coming in, going out, under
+   the finger): at rest it lies off the screen's left edge, and drawing it there anyway held each frame of a chat
+   scrolling in WebKit (iPhone 15: 64 → 37 ms a frame; iPad Pro 11: 56 → 32). */
 .ios .pres-push > .ph-card {
-  animation: ph-push-in var(--spring-default-ms, 0.42s) var(--spring-default, cubic-bezier(0.2, 0.85, 0.25, 1));
+  animation:
+    ph-push-in var(--spring-default-ms, 0.42s) var(--spring-default, cubic-bezier(0.2, 0.85, 0.25, 1)),
+    ph-push-edge var(--spring-default-ms, 0.42s);
+}
+.ios .pres-push.leaving > .ph-card,
+.ph-root.ios[data-peek] .pres-push > .ph-card {
   box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
+}
+@keyframes ph-push-edge {
+  from,
+  to {
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
+  }
 }
 .ios .pres-push.leaving > .ph-card {
   animation: ph-push-out var(--spring-smooth-ms, 0.35s) var(--spring-smooth, cubic-bezier(0.2, 0.8, 0.2, 1)) forwards;
@@ -445,6 +459,11 @@ html[data-platform='ios'] {
 .ios-cell-label.secondary {
   color: var(--ios-label2);
 }
+/* A label that may take two lines rather than be cut (a switch's long name); the row grows with it. */
+.ios-cell-label.wrap {
+  padding-block: 14px;
+  white-space: normal;
+}
 .ios-cell-value {
   flex: 0 1 auto;
   min-width: 0;
@@ -490,6 +509,17 @@ html[data-platform='ios'] {
 .ios-field input.mono {
   font-family: ui-monospace, Menlo, monospace;
   letter-spacing: 0.08em;
+}
+/* A section title over its card (ios.md Lists): 17/22 semibold in secondary label, 9 above the card. */
+.ios-group-title {
+  margin: 20px 32px 0;
+  font-size: calc(17 * var(--u));
+  line-height: calc(22 * var(--u));
+  font-weight: 600;
+  color: var(--ios-label2);
+}
+.ios-group.ios-group-titled {
+  margin-top: 9px;
 }
 .ios-group-footer {
   margin: 7px 32px 0;

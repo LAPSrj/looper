@@ -7,6 +7,8 @@ import { copyAttachment, ensureDir, writeJsonAtomic } from './fsutil';
 
 /** The files in a run folder that make the run a chat, or a terminal session. */
 const CHAT_FILE = 'chat.json';
+/** In a task run's folder: the harness Run Options ran its agent on instead of the task's (readRunHarness). */
+const RUN_HARNESS_FILE = 'harness-id';
 const TERMINAL_FILE = 'terminal.json';
 
 function pad(n: number, w = 2): string {
@@ -141,6 +143,26 @@ export class RunStore {
       },
       () => null,
     );
+  }
+
+  /** Run Options' Harness: the harness a task run's agent ran on instead of the task's; null when it ran on the task's. */
+  readRunHarness(taskId: string, runId: string): string | null {
+    try {
+      return fs.readFileSync(path.join(this.runDir(taskId, runId), RUN_HARNESS_FILE), 'utf8').trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  readRunHarnessAsync(taskId: string, runId: string): Promise<string | null> {
+    return fs.promises.readFile(path.join(this.runDir(taskId, runId), RUN_HARNESS_FILE), 'utf8').then(
+      (text) => text.trim() || null,
+      () => null,
+    );
+  }
+
+  writeRunHarness(taskId: string, runId: string, harnessId: string): void {
+    fs.writeFileSync(path.join(this.runDir(taskId, runId), RUN_HARNESS_FILE), harnessId);
   }
 
   createRunDir(taskId: string, runId: string): string {

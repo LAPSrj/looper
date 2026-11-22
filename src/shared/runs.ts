@@ -29,7 +29,9 @@ export interface RunFilter {
   hideNoAction: boolean;
 }
 
-const PRIORITY: string[] = ['error', 'max-runtime', 'interrupted', 'idle-timeout', 'held', 'stopped', 'warning', 'success', 'done', 'exited', 'started', 'noop', 'skipped', 'act'];
+/** The results a run can end with, the most important first: a run with several records has the first of them that any record has. */
+export const RUN_RESULTS: readonly string[] = ['error', 'max-runtime', 'interrupted', 'idle-timeout', 'held', 'stopped', 'warning', 'success', 'done', 'exited', 'started', 'noop', 'skipped', 'act'];
+const PRIORITY = RUN_RESULTS;
 
 /** The record of a run opened in a chat starting its report: how the run went is decided from here on. */
 export function startsOver(r: RunRecord): boolean {
@@ -176,7 +178,7 @@ function summaryOf(a: RunAcc): RunSummary {
 export const isSessionRun = (g: Pick<RunSummary, 'result'>): boolean => g.result === 'chat' || g.result === 'terminal';
 
 /** Whether a task run shows in the run lists (a task's Runs tab, Recent runs). Sessions show in their project's Chat tab instead. */
-export function runShown(g: RunSummary, filter: RunFilter): boolean {
+export function runShown(g: Pick<RunSummary, 'result'>, filter: RunFilter): boolean {
   if (isSessionRun(g)) return false;
   if (g.result === 'skipped') return !filter.hideSkipped;
   return !(filter.hideNoAction && g.result === 'noop');

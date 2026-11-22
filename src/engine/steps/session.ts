@@ -29,7 +29,8 @@ import { killHostTree } from '../target/kill';
 import type { SpawnSpec } from '../target';
 import { CRON_REFUSAL, stopHookMessages, subagentGuardMessage } from '../target/stop-hook';
 import { mergeClaudeSettings, mergeSystemPrompt, readUserSettings } from '../claude-settings';
-import { MOD_DIR, MOD_FILES, MOD_MISSING_TEXT, toolKey, writeClaudeMod } from '../claude-mod';
+import { MOD_DIR, MOD_FILES, MOD_MISSING_TEXT, toolKey, writeClaudeMod, type ModControl } from '../claude-mod';
+import { parseReplSnapshot, REPL_FILES, replDataFiles, replSnapshotScript, type ReplSnapshot } from '../repl-state';
 import {
   ASK_DIR,
   childEnv,
@@ -99,6 +100,16 @@ export interface SessionHandle {
    * no turn to end apart from its process: the scheduler ends it.
    */
   stopTurn(): void;
+  /**
+   * Claude Code: stop a background command, Monitor, subagent or workflow of the agent's (its task id), through
+   * Looper's mod. Throws with the reason when the session can't.
+   */
+  stopBackground(taskId: string): void;
+  /**
+   * Claude Code in Code Mode, between turns: save what the REPL holds under `names` (engine/repl-state.ts), through
+   * Looper's mod. Resolves to the snapshot, or to the error that kept it from being taken; throws when the session can't ask.
+   */
+  snapshotRepl(names: readonly string[], timeoutMs?: number): Promise<ReplSnapshot>;
   /** Interactive: the agent's turn is over (at its prompt, or held). */
   readonly turnOver: boolean;
   /** The question the agent is waiting on an answer to, or null. */
@@ -158,6 +169,10 @@ const BASH_MAX_DEFAULT_MS = 600_000;
  * error (claude-mod.ts).
  */
 const MOD_READY_MS = 20_000;
+
+/** How long a REPL snapshot may take: the mod's next poll, a REPL call, and the files the script writes, up to REPL_STATE_MAX_BYTES. */
+const REPL_SNAPSHOT_WAIT_MS = 30_000;
+const REPL_SNAPSHOT_POLL_MS = 200;
 
 export interface SessionOpts {
   /** The step behind the session, deciding the stop-hook wording and log labels. */
@@ -258,6 +273,10 @@ export interface SessionOpts {
    * Unset: the error ends the session, as an unattended run has nobody to go on.
    */
   keepOnApiError?: boolean;
+  /** Claude Code in Code Mode: the run-dir file whose script the REPL runs as the first turn starts (REPL_FILES.prelude). */
+  replPrelude?: string;
+  /** How many data files go with it (replDataFiles). */
+  replDataParts?: number;
 }
 
 /**
@@ -783,6 +802,7 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       prompted: !!opts.prompt,
       windows: target.kind === 'windows',
       ...(liveDir ? { live: targetFile(ctx, f(MOD_FILES.live)) } : {}),
+      ...(opts.replPrelude ? { prelude: targetFile(ctx, opts.replPrelude), preludeData: replDataFiles(opts.replDataParts ?? 1).map((n) => targetFile(ctx, n)) } : {}),
     });
     writeJsonAtomic(
       path.join(ctx.runDir, f('settings.json')),
@@ -1039,6 +1059,12 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
   let modReady = false;
   /** Each Stop sent through the mod raises this (MOD_FILES.control). */
   let abortSeq = 0;
+  /** The background tasks the mod was asked to stop (MOD_FILES.control). */
+  const bgStops: string[] = [];
+  /** The REPL snapshot asked of the mod last (MOD_FILES.control); its id grows past any an earlier session's control file had. */
+  let replRequest: ModControl['snapshot'];
+  const writeControl = (): void =>
+    writeJsonAtomic(runFile(MOD_FILES.control), { abort: abortSeq, stop: bgStops, ...(replRequest ? { snapshot: replRequest } : {}) } satisfies ModControl);
   let modTimer: NodeJS.Timeout | null = null;
   const runFile = (name: string): string => path.join(ctx.runDir, f(name));
   const mtimeOf = (name: string): Promise<number | null> =>
@@ -1824,7 +1850,8 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       if (claude && modReady) {
         // The mod ends the turn (no Stop hook runs for it), then starts the next one with the guidance waiting.
         if (idleSince === null && !held) {
-          writeJsonAtomic(runFile(MOD_FILES.control), { abort: ++abortSeq });
+          abortSeq++;
+          writeControl();
           idleSince = Date.now();
           waiting = false;
         }
@@ -1838,6 +1865,36 @@ export async function startSession(ctx: RunContext, opts: SessionOpts, cb: Sessi
       }
       // The TUI takes the Esc in before a paste.
       setTimeout(deliverIdleGuidance, 500);
+    },
+    stopBackground(taskId: string) {
+      if (!claude) throw new Error('Only Claude Code’s background work can be stopped from Looper.');
+      if (ended) throw new Error('The agent has ended.');
+      if (!modReady) throw new Error('The agent is still starting. Try again in a moment.');
+      if (!bgStops.includes(taskId)) bgStops.push(taskId);
+      writeControl();
+    },
+    async snapshotRepl(names: readonly string[], timeoutMs = REPL_SNAPSHOT_WAIT_MS) {
+      if (!claude) throw new Error('Only Claude Code has a REPL.');
+      if (ended) throw new Error('The agent has ended.');
+      if (!modReady) throw new Error('The agent is still starting. Try again in a moment.');
+      const id = Math.max(Date.now(), (replRequest?.id ?? 0) + 1);
+      const out = runFile(REPL_FILES.snapshot);
+      // The Write tool won't write over a file it hasn't read, so every part an earlier snapshot left goes first.
+      const parts = (await fs.promises.readdir(ctx.runDir).catch(() => [] as string[])).filter((n) => n.startsWith(f(REPL_FILES.data)));
+      await Promise.all([out, ...parts.map((n) => path.join(ctx.runDir, n))].map((p) => fs.promises.rm(p, { force: true })));
+      const outTarget = targetFile(ctx, f(REPL_FILES.snapshot));
+      const dataTarget = targetFile(ctx, f(REPL_FILES.data));
+      await fs.promises.writeFile(runFile(REPL_FILES.script), replSnapshotScript(names, outTarget, dataTarget, id));
+      replRequest = { id, script: targetFile(ctx, f(REPL_FILES.script)), out: outTarget, data: dataTarget };
+      writeControl();
+      // The script writes the index through Claude Code's Write tool, after the data, so a read can catch it half written: it reads again.
+      for (const until = Date.now() + timeoutMs; Date.now() < until && !ended; ) {
+        await new Promise((r) => setTimeout(r, REPL_SNAPSHOT_POLL_MS));
+        const text = await fs.promises.readFile(out, 'utf8').catch(() => null);
+        const snapshot = text === null ? null : parseReplSnapshot(text, id);
+        if (snapshot) return snapshot;
+      }
+      return { version: 2, id, error: ended ? 'The agent ended.' : "The REPL didn't save its state in time." } satisfies ReplSnapshot;
     },
     resize(cols: number, rows: number) {
       if (ended) return;

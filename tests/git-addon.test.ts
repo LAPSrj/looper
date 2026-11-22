@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { commandStates } from '../src/addons/git/addon';
+import { commandStates, layoutState, readOptions } from '../src/addons/git/addon';
 import { MANIFEST } from '../src/addons/git/manifest';
 import { badFolderName, branchEntryId, branchOfEntry, itemId, joinSidePath, nameFromUrl, needsIdentity, pathRowId, repoDescription, toSidePath } from '../src/addons/git/text';
 import { AddonCommandStateSchema, readAddonManifest } from '../src/shared/addons';
@@ -66,6 +66,28 @@ describe('the branch menu', () => {
     ]);
     expect(branchOfEntry(branchEntryId('feature/a&b'))).toBe('feature/a&b');
     expect(branchOfEntry('branches')).toBeUndefined();
+  });
+});
+
+describe('the diff layout option', () => {
+  it('is a View menu command whose items are the ones its state checks', () => {
+    const cmd = MANIFEST.commands.find((c) => c.id === 'layout')!;
+    expect(cmd.menu).toBe('view');
+    const ids = cmd.entries!.flatMap((e) => ('id' in e ? [e.id] : []));
+    for (const layout of ['side', 'stack'] as const) {
+      const s = layoutState(layout);
+      expect(AddonCommandStateSchema.safeParse(s).success).toBe(true);
+      expect(s.entries!.flatMap((e) => ('id' in e ? [e.id] : []))).toEqual(ids);
+      expect(s.entries!.filter((e) => 'checked' in e && e.checked)).toHaveLength(1);
+    }
+    expect(layoutState('stack').entries).toContainEqual(expect.objectContaining({ id: 'layout-stack', checked: true }));
+  });
+
+  it('reads the saved layout and falls back to side by side', () => {
+    expect(readOptions('{"layout":"stack"}')).toEqual({ layout: 'stack' });
+    expect(readOptions('{"layout":"side"}')).toEqual({ layout: 'side' });
+    expect(readOptions('')).toEqual({ layout: 'side' });
+    expect(readOptions('{"layout":3}')).toEqual({ layout: 'side' });
   });
 });
 

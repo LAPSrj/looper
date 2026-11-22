@@ -52,6 +52,8 @@ interface Harness {
   agentStarted: number;
   /** ctx.agentSession of each agent start, in order. */
   agentSessions: ({ id: string; resume: boolean } | undefined)[];
+  /** ctx.task's agent of each agent start, in order. */
+  agentTasks: TaskInput['agent'][];
   /** ctx.restart of each agent start, in order (a copy: the scheduler moves it on). */
   agentRestarts: ({ count: number; handoff: string; elapsedMs: number } | undefined)[];
   /** ctx.note of each check run and each agent start, in order. */
@@ -109,6 +111,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
     agentEnds: [],
     agentStarted: 0,
     agentSessions: [],
+    agentTasks: [],
     agentRestarts: [],
     checkNotes: [],
     agentNotes: [],
@@ -151,6 +154,7 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
         }
         h.agentStarted!++;
         h.agentSessions!.push(ctx.agentSession);
+        h.agentTasks!.push(ctx.task.agent);
         h.agentRestarts!.push(ctx.restart && { ...ctx.restart });
         h.agentNotes!.push(ctx.note);
         const signal = h.completeSignals!.shift();
@@ -179,6 +183,10 @@ async function makeHarness(taskInput: TaskInput = baseTask): Promise<Harness> {
           resize: () => undefined,
           deliverGuidance: () => undefined,
           stopTurn: () => undefined,
+          stopBackground: () => undefined,
+          snapshotRepl: async () => {
+            throw new Error('unused');
+          },
           turnOver: false,
           stop: async (reason = 'stopped', headline) => resolve(agentEnd(reason, headline)),
           finished,
@@ -717,6 +725,62 @@ describe('run options', () => {
     expect(h.sched.runNow('t1', { check: true })).toBe(true);
     await flush();
     expect(notifies().map((n) => n.kind)).toEqual(['agent-start']);
+  });
+
+  describe('harness', () => {
+    beforeEach(() => {
+      h.settings.environments[0].harnesses = [
+        { id: 'own', name: 'Own', kind: 'claude-code', command: 'claude', args: [], env: {} },
+        { id: 'other', name: 'Other', kind: 'claude-code', command: 'claude', args: [], env: {} },
+        { id: 'cx', name: 'Codex', kind: 'codex', command: 'codex', args: [], env: {} },
+      ];
+      const t = h.tasks.get('t1')!;
+      h.tasks.patch('t1', { overrideAgent: true, agent: { ...t.agent, harnessId: 'own', command: 'wrapper', model: 'opus', extraArgs: ['--x'], session: 'continue' } });
+    });
+
+    it("runs the agent on the picked harness for that run only, records it in the run's folder, and leaves the rolling conversation alone", async () => {
+      h.agentEnds.push(agentEnd('done', 'ran'), agentEnd('done', 'ran'));
+      expect(h.sched.runNow('t1', { check: true, harnessId: 'other' })).toBe(true);
+      await flush();
+      // The task's own command is its own harness's; a harness of the same kind keeps the model and arguments.
+      expect(h.agentTasks[0]).toMatchObject({ harnessId: 'other', command: undefined, model: 'opus', extraArgs: ['--x'] });
+      expect(h.agentSessions[0]).toBeUndefined();
+      const runId = records()[0].runId;
+      expect(h.runs.readRunHarness('t1', runId)).toBe('other');
+      expect(h.sched.get('t1')!.session).toBeNull();
+      // The next run is on the task's own harness again, on its rolling conversation.
+      expect(h.sched.runNow('t1', { check: true })).toBe(true);
+      await flush();
+      expect(h.agentTasks[1]).toMatchObject({ harnessId: 'own', command: 'wrapper' });
+      expect(h.agentSessions[1]).toMatchObject({ resume: false });
+      expect(h.runs.readRunHarness('t1', records().at(-1)!.runId)).toBeNull();
+    });
+
+    it("drops the model and arguments on another kind of harness, and picking the task's own is no override", async () => {
+      h.agentEnds.push(agentEnd('done', 'ran'), agentEnd('done', 'ran'));
+      h.sched.runNow('t1', { check: true, harnessId: 'cx' });
+      await flush();
+      expect(h.agentTasks[0]).toMatchObject({ harnessId: 'cx', command: undefined, model: undefined, effort: undefined, extraArgs: [] });
+      h.sched.runNow('t1', { check: true, harnessId: 'own' });
+      await flush();
+      expect(h.agentTasks[1]).toMatchObject({ harnessId: 'own', command: 'wrapper' });
+      expect(h.runs.readRunHarness('t1', records().at(-1)!.runId)).toBeNull();
+    });
+
+    it("counts the run against the picked harness's limit", async () => {
+      h.settings.environments[0].harnesses[1].maxConcurrentTasks = 1;
+      h.tasks.upsert({ ...baseTask, id: 't2', name: 'Task two', overrideAgent: true, agent: { prompt: 'x', harnessId: 'other' } });
+      await flush();
+      expect(h.tasks.get('t2')!.agent.harnessId).toBe('other');
+      expect(h.sched.runNow('t1', { check: true, harnessId: 'other' })).toBe(true);
+      await flush();
+      expect(h.sched.get('t1')!.runs[0].harnessId).toBe('other');
+      expect(h.sched.runNow('t2', { check: true })).toBe(false);
+    });
+
+    it('refuses a harness the environment no longer has', () => {
+      expect(() => h.sched.runNow('t1', { harnessId: 'gone' })).toThrow('no longer has this harness');
+    });
   });
 });
 
@@ -2639,6 +2703,37 @@ describe('a check that lists items', () => {
     await flush();
   });
 
+  it("starts the items' runs from the task as it is when the check ends", async () => {
+    h.tasks.patch('t1', { maxConcurrentRuns: 2 });
+    let finish!: (r: CheckResult) => void;
+    h.checks.push(new Promise<CheckResult>((r) => (finish = r)) as unknown as CheckResult);
+    await h.tickN(1);
+    // Edited while the check runs: the runs the check starts are new runs, which take the edit.
+    h.tasks.patch('t1', { agent: { ...h.tasks.get('t1')!.agent, prompt: 'edited prompt' } });
+    finish(check('act', { summary: 'a', more: [item('b')] }));
+    await flush();
+    expect(h.agentStarted).toBe(2);
+    expect(agentStarts().find((r) => r.summary === 'b')!.body).toContain('edited prompt');
+    for (const live of h.liveAgents) live.end(agentEnd('done'));
+    await flush();
+  });
+
+  it("runs the items on the task's own harness when Run Options picked another for the run that checked", async () => {
+    h.settings.environments[0].harnesses = [
+      { id: 'own', name: 'Own', kind: 'claude-code', command: 'claude', args: [], env: {} },
+      { id: 'other', name: 'Other', kind: 'claude-code', command: 'claude', args: [], env: {} },
+    ];
+    h.tasks.patch('t1', { maxConcurrentRuns: 2, overrideAgent: true, agent: { ...h.tasks.get('t1')!.agent, harnessId: 'own' } });
+    h.checks.push(check('act', { summary: 'a', more: [item('b')] }));
+    expect(h.sched.runNow('t1', { harnessId: 'other' })).toBe(true);
+    await flush();
+    expect(h.agentTasks.map((a) => a.harnessId).sort()).toEqual(['other', 'own']);
+    const b = agentStarts().find((r) => r.summary === 'b')!;
+    expect(h.runs.readRunHarness('t1', b.runId)).toBeNull();
+    for (const live of h.liveAgents) live.end(agentEnd('done'));
+    await flush();
+  });
+
   it('past the cap the items wait, and run one after another without checking again', async () => {
     h.tasks.patch('t1', { maxConcurrentRuns: 1 });
     h.checks.push(check('act', { summary: 'a', more: [item('b'), item('c')] }));
@@ -3065,5 +3160,203 @@ describe('task completion', () => {
     h.agentEnds.push(agentEnd('done', 'ok'));
     await h.tickN(1);
     expect(h.sched.get('t1')!.session).toBeNull();
+  });
+});
+
+describe('wait before completing', () => {
+  const line = (id: string, n = 1) => JSON.stringify({ looper_related_id: id, n });
+  const runs = () => h.sched.get('t1')!.runs;
+  const done = (headline: string): AgentEnd => ({ ...agentEnd('done', headline, `${headline} report`), doneStatus: 'success' });
+  const waitTask = (sendRelatedEvents: boolean, waitAfterDoneMin = 1) => {
+    h.settings.signalPollMs = 10;
+    h.tasks.patch('t1', { trigger: { mode: 'manual', sendRelatedEvents }, agent: { prompt: 'do it', waitAfterDoneMin } });
+  };
+  /** A run started by `event`, its agent's conversation recorded as conv-1. */
+  async function started(event: string): Promise<LiveAgent> {
+    h.checks.push(check('act'));
+    h.sched.receiveEvent('t1', event);
+    await flush();
+    const live = h.liveAgent!;
+    fs.writeFileSync(path.join(h.runs.runDir('t1', live.runId), 'session.json'), JSON.stringify({ session_id: 'conv-1' }));
+    return live;
+  }
+  const settle = async (ms = 60) => {
+    await new Promise((r) => setTimeout(r, ms));
+    await flush();
+  };
+  const sentTo = (runId: string) => records().filter((r) => r.runId === runId && r.phase === 'events' && r.result === 'sent').map((r) => r.body);
+
+  it("with related events on, an event with the run's id goes to its agent as a new turn, another id waits, and the wait starts again", async () => {
+    waitTask(true);
+    const first = await started(line('t1'));
+    first.end(done('first'));
+    await flush();
+    expect(runs()).toHaveLength(1);
+    expect(h.sched.turnOver(first.runId)).toBe(true);
+    expect(records().findLast((r) => r.runId === first.runId)!.summary).toBe('the agent is done; the run waits 1 min before it completes');
+    h.sched.receiveEvent('t1', line('t2'));
+    await settle();
+    expect(h.agentStarted).toBe(1);
+    expect(sentTo(first.runId)).toEqual([]);
+    h.sched.receiveEvent('t1', line('t1', 2));
+    await settle();
+    expect(h.agentStarted).toBe(2);
+    expect(h.liveAgent!.runId).toBe(first.runId);
+    expect(h.agentSessions[1]).toEqual({ id: 'conv-1', resume: true });
+    expect(sentTo(first.runId)[0]).toContain(line('t1', 2));
+    // The first turn's report stays in the run log.
+    expect(records().filter((r) => r.runId === first.runId && r.phase === 'result').map((r) => r.summary)).toEqual(['first']);
+    h.liveAgent!.end(done('second'));
+    await flush();
+    expect(runs()).toHaveLength(1);
+    expect(h.sched.turnOver(first.runId)).toBe(true);
+    // Stop ends the wait; the run ends as its agent said, and the other id's event gets its run.
+    h.checks.push(check('act'));
+    expect(await h.sched.stopTask('t1', undefined, first.runId)).toBe(true);
+    await settle();
+    expect(records().findLast((r) => r.runId === first.runId && r.phase === 'agent')!.result).toBe('success');
+    expect(records().findLast((r) => r.runId === first.runId && r.phase === 'result')!.summary).toBe('second');
+    await h.tickN(1);
+    expect(runs().map((r) => r.relatedId)).toEqual(['t2']);
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+  });
+
+  it("with related events off, any of the task's events goes to the waiting agent", async () => {
+    waitTask(false);
+    const first = await started('{"a":1}');
+    first.end(done('first'));
+    await flush();
+    h.sched.receiveEvent('t1', '{"b":2}');
+    await settle();
+    expect(h.agentStarted).toBe(2);
+    expect(h.liveAgent!.runId).toBe(first.runId);
+    expect(sentTo(first.runId)[0]).toContain('{"b":2}');
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+  });
+
+  it("the user's guidance during the wait is a new turn too", async () => {
+    waitTask(false);
+    const first = await started('{"a":1}');
+    first.end(done('first'));
+    await flush();
+    expect(h.sched.canGuideRun('t1', first.runId)).toBe(true);
+    h.sched.sendGuidance('t1', first.runId, 'one more thing');
+    await settle();
+    expect(h.agentStarted).toBe(2);
+    expect(h.agentSessions[1]).toEqual({ id: 'conv-1', resume: true });
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+  });
+
+  it('with nothing coming the run completes once the wait is over, and the next event starts a new run', async () => {
+    waitTask(false, 0.002);
+    const first = await started('{"a":1}');
+    first.end(done('first'));
+    await flush();
+    expect(runs()).toHaveLength(1);
+    await settle(300);
+    expect(runs()).toEqual([]);
+    expect(h.agentStarted).toBe(1);
+    expect(records().findLast((r) => r.runId === first.runId && r.phase === 'agent')!.result).toBe('success');
+    expect(records().filter((r) => r.runId === first.runId && r.phase === 'result')).toHaveLength(1);
+    h.checks.push(check('act'));
+    h.sched.receiveEvent('t1', '{"b":2}');
+    await flush();
+    expect(runs()).toHaveLength(1);
+    expect(runs()[0].runId).not.toBe(first.runId);
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+  });
+
+  it("doesn't wait when nothing can come: related events on and no related id, or an end without looper-done", async () => {
+    waitTask(true);
+    const first = await started('{"a":1}');
+    first.end(done('first'));
+    await flush();
+    expect(runs()).toEqual([]);
+    waitTask(false);
+    const second = await started('{"a":2}');
+    second.end(agentEnd('idle-timeout'));
+    await flush();
+    expect(runs()).toEqual([]);
+  });
+});
+
+describe('Continue Run on a run stopped before its agent started', () => {
+  const runs = () => h.sched.get('t1')!.runs;
+  const dirOf = (runId: string) => h.runs.runDir('t1', runId);
+  const manual = () => h.tasks.patch('t1', { trigger: { mode: 'manual' } });
+  const steps = (runId: string) => records().filter((r) => r.runId === runId).map((r) => `${r.phase}:${r.result}`);
+
+  it('starts a new run on its events, running the check again when it was stopped in it', async () => {
+    manual();
+    h.hangChecks = true;
+    h.sched.receiveEvent('t1', '{"a":1}');
+    await flush();
+    const stopped = runs()[0].runId;
+    await h.sched.stopTask('t1');
+    await flush();
+    expect(runs()).toEqual([]);
+    h.hangChecks = false;
+    h.checks.push(check('act', { summary: 'one item' }));
+    expect(await h.sched.continueStopped('t1', stopped)).toBe(true);
+    await flush();
+    const next = runs()[0].runId;
+    expect(next).not.toBe(stopped);
+    expect(fs.readFileSync(path.join(dirOf(next), 'events.jsonl'), 'utf8')).toBe('{"a":1}\n');
+    expect(records().find((r) => r.runId === next && r.phase === 'system' && r.result === 'started')!.summary).toBe(`continues run ${stopped}, stopped before its agent started`);
+    expect(steps(next)).toContain('check:act');
+    expect(h.agentStarted).toBe(1);
+    h.liveAgent!.end(agentEnd('done'));
+    await flush();
+  });
+
+  it("doesn't run again a check that passed, runs the classifier it was stopped in, and refuses a run whose agent started", async () => {
+    manual();
+    h.tasks.patch('t1', { classifier: { prompt: 'worth it?' } });
+    h.checks.push(check('act', { summary: '2 items' }));
+    h.classifies.push({ status: 'act', durationMs: 1, exitCode: 0 }, { status: 'stopped', durationMs: 1, exitCode: null });
+    // Two runs: the first one's classifier passes and its agent is stopped; the second is stopped in its classifier.
+    h.sched.receiveEvent('t1', '{"a":1}');
+    await flush();
+    const ran = runs()[0].runId;
+    // The prompt a real agent start writes.
+    fs.writeFileSync(path.join(dirOf(ran), 'prompt.txt'), 'do it');
+    await h.sched.stopTask('t1');
+    await flush();
+    await expect(h.sched.continueStopped('t1', ran)).rejects.toThrow(/before its agent started/);
+    // The check's output, as the check step leaves it in the run folder.
+    h.checks.push(check('act', { summary: '3 items' }));
+    h.sched.receiveEvent('t1', '{"b":2}');
+    await flush();
+    const stopped = h.sched.get('t1')!.lastRunId!;
+    expect(runs()).toEqual([]);
+    expect(steps(stopped)).toEqual(['system:act', 'check:act', 'classify:started', 'classify:stopped']);
+    fs.writeFileSync(path.join(dirOf(stopped), 'check.out.txt'), 'progress\n{"act":true,"summary":"3 items","context":{"n":3}}\n');
+    expect(await h.sched.continueStopped('t1', stopped)).toBe(true);
+    await flush();
+    // Its classifier says no this time, so the run is over already.
+    const next = h.sched.get('t1')!.lastRunId!;
+    expect(next).not.toBe(stopped);
+    expect(records().find((r) => r.runId === next && r.phase === 'system' && r.result === 'started')!.summary).toBe(
+      `continues run ${stopped}, stopped before its agent started; check already passed, not run again`,
+    );
+    expect(steps(next).filter((s) => s.startsWith('check:'))).toEqual([]);
+    expect(steps(next)).toContain('classify:noop');
+  });
+
+  it('refuses a run still active, one unknown, and one that ended otherwise', async () => {
+    manual();
+    h.hangChecks = true;
+    h.sched.receiveEvent('t1', '{"a":1}');
+    await flush();
+    const live = runs()[0].runId;
+    await expect(h.sched.continueStopped('t1', live)).rejects.toThrow(/still active/);
+    await h.sched.stopTask('t1');
+    await flush();
+    await expect(h.sched.continueStopped('t1', 'nope')).rejects.toThrow(/before its agent started/);
+    await expect(h.sched.continueStopped('t2', live)).rejects.toThrow(/unknown task/);
   });
 });

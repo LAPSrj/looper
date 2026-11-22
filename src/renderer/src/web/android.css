@@ -72,12 +72,7 @@
 }
 
 /* ---------- how windows present ---------- */
-.android .pres-push > .ph-card {
-  animation: md-axis-in 0.3s cubic-bezier(0.2, 0, 0, 1);
-}
-.android .pres-push.leaving > .ph-card {
-  animation: md-axis-out 0.2s cubic-bezier(0.3, 0, 1, 1) forwards;
-}
+/* A pushed window's own motion is the shared axis of web/motion.ts (installAndroidWindows). */
 .android .pres-full-dialog > .ph-card {
   animation: ph-up-in 0.4s cubic-bezier(0.05, 0.7, 0.1, 1);
 }
@@ -399,6 +394,14 @@
   gap: 2px;
   padding: 0 16px 8px;
 }
+/* A list's section title: Material's title small in the primary color, as Android's Settings head a group. */
+.md-list-title {
+  margin: 8px 32px 8px;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--md-primary);
+}
 .md-list-item {
   display: flex;
   align-items: center;
@@ -440,6 +443,11 @@ button.md-list-item {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A line that may wrap rather than be cut (a switch's long name, a hint that says where to go). */
+.md-list-headline.wrap,
+.md-list-supporting.wrap {
+  white-space: normal;
 }
 .md-list-supporting {
   font-size: 14px;
@@ -747,18 +755,6 @@ button.md-list-item {
   color: var(--md-error);
 }
 
-@keyframes md-axis-in {
-  from {
-    transform: translateX(30%);
-    opacity: 0;
-  }
-}
-@keyframes md-axis-out {
-  to {
-    transform: translateX(30%);
-    opacity: 0;
-  }
-}
 @keyframes md-dialog-in {
   from {
     transform: scale(0.9);

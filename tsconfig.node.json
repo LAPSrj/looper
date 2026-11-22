@@ -51,6 +51,8 @@
     "src/renderer/src/components/subagents.ts",
     "src/renderer/src/components/tabs-model.ts",
     "src/renderer/src/components/list-nav.ts",
+    "src/renderer/src/components/fit-columns.ts",
+    "src/renderer/src/components/list-window.ts",
     "src/renderer/src/components/agent-fields-model.ts",
     "src/renderer/src/components/field-model.ts",
     "src/renderer/src/components/term-theme.ts",

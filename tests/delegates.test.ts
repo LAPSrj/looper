@@ -365,6 +365,10 @@ describe('Scheduler with delegated agents', () => {
             resize: () => undefined,
             deliverGuidance: () => void s.delivered++,
             stopTurn: () => void s.turnStops++,
+            stopBackground: () => undefined,
+            snapshotRepl: async () => {
+              throw new Error('unused');
+            },
             turnOver: false,
             stop: async (reason = 'stopped', headline) => resolve(end(reason, headline)),
             finished,

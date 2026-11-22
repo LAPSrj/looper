@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Cron } from 'croner';
-import { RELATED_ID_FIELD, type Environment, type Project, type Task, type TaskInput } from '@shared/types';
+import { type Environment, type Project, type Task, type TaskInput } from '@shared/types';
 import { ALL_DAYS, TIMEZONE_ALIASES, cronToForm, formToCron, timesExpressible, type CronForm } from '@shared/cron';
 import { slugify, validateTask } from '@shared/validate';
 import { EFFORT_LEVELS, PERMISSION_MODES, harnessModels, pathFlavor } from '@shared/environments';
@@ -758,7 +758,6 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
             <FormGroup>
               <CheckboxField
                 label="Send new related events to the running agent"
-                note={`Events are related when they have the same ${RELATED_ID_FIELD}.`}
                 checked={trig.sendRelatedEvents ?? false}
                 onChange={(on) => set('trigger', { ...trig, sendRelatedEvents: on })}
               />
@@ -1006,6 +1005,15 @@ export function TaskEditor({ task, initial, environments, projects, projectId, d
                   value={draft.maxConcurrentRuns ?? 1}
                   onChange={(n) => set('maxConcurrentRuns', n)}
                 />
+                {(isClaude || isCodex) && (
+                  <NumberField
+                    label="Wait before completing"
+                    suffix="min"
+                    min={0}
+                    value={draft.agent.waitAfterDoneMin ?? 0}
+                    onChange={(n) => setAgent('waitAfterDoneMin', n)}
+                  />
+                )}
               </FieldRow>
             </FormGroup>
             {(isClaude || isCodex) && (

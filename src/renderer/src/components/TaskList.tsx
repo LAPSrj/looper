@@ -70,7 +70,7 @@ export function TaskList({ tasks, folders, layout, runtimes, selected, onSelect,
       onItemMenu={(t) => showTaskMenu(t, runtimes[t.id])}
       onFolderCommand={(id, command) => window.looper.folders.command(id, command)}
       onFolderMenu={(id) => window.looper.showFolderContextMenu({ folderId: id })}
-      onEmptyMenu={showTasksListMenu}
+      onEmptyMenu={() => showTasksListMenu(pane?.id)}
       onReorder={(ids, folderById, nextLayout, parentById) =>
         void window.looper.tasks.reorder(ids, folderById, nextLayout, parentById).catch(reportError)
       }

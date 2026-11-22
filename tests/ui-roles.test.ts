@@ -102,14 +102,18 @@ describe('every feature on every device', () => {
 
   it('keeps a platforms mark only on what a short list allows', () => {
     const files = walk(src).filter((f) => /\.tsx?$/.test(f));
+    const offenders: string[] = [];
     for (const file of files) {
       const lines = fs.readFileSync(file, 'utf8').split('\n');
       lines.forEach((line, i) => {
-        if (!/platforms(: |[,=] ?)(NOT_MOBILE|DESKTOP_ONLY)|platforms = NOT_MOBILE/.test(line)) return;
+        // Any mark: a constant (NOT_MOBILE), a literal array or a platform name; not a comment, nor a copy of a mark ([...x]).
+        if (/^\s*(\*|\/\/|\/\*)/.test(line)) return;
+        if (!/\bplatforms\??\s*[:=]\s*(\[(?!\.\.\.)|['"]|[A-Z][A-Z_]+\b)|\bplatforms[,=] ?(NOT_MOBILE|DESKTOP_ONLY)/.test(line)) return;
         const near = lines.slice(Math.max(0, i - 4), i + 3).join('\n');
-        expect(ALLOWED.some((r) => r.test(near)), `${path.relative(src, file)}:${i + 1}: ${line.trim()}`).toBe(true);
+        if (!ALLOWED.some((r) => r.test(near))) offenders.push(`${path.relative(src, file)}:${i + 1}: ${line.trim()}`);
       });
     }
+    expect(offenders).toEqual([]);
   });
 });
 

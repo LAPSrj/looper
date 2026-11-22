@@ -12,10 +12,10 @@ import { loadSettings } from '../src/engine/store/settings';
 import type { ChatInfo } from '../src/shared/chat';
 import { RECENT_CHATS, dateGroupOf, filterHistory, groupHistory, historySourceText, recentChatLabel, type HistoryItem, type HistoryListOptions } from '../src/shared/history';
 import { projectSessionTask, projectTaskId } from '../src/shared/projects';
-import { ProjectSchema, TaskSchema, type Project } from '../src/shared/types';
+import { ProjectSchema, TaskSchema, type Project, type RunPhase, type RunResult } from '../src/shared/types';
 
 /** The engine's list of every conversation: reading the folders, newest first. */
-const opts = (o: Partial<HistoryListOptions> = {}): HistoryListOptions => ({ fresh: true, limit: 100, showRuns: true, folder: '', ...o });
+const opts = (o: Partial<HistoryListOptions> = {}): HistoryListOptions => ({ fresh: true, limit: 100, folder: '', ...o });
 
 describe('recentChatLabel', () => {
   it('is the title, then where it ran, on one line', () => {
@@ -171,6 +171,7 @@ describe('the History scanner', () => {
       runDir: (taskId, runId) => runs.runDir(taskId, runId),
       readChatInfo: (taskId, runId) => runs.readChatInfoAsync(taskId, runId),
       readTerminalInfo: (taskId, runId) => runs.readTerminalInfoAsync(taskId, runId),
+      readRunHarness: (taskId, runId) => runs.readRunHarnessAsync(taskId, runId),
       remoteRuns: () => new Set(),
       readRun: async () => [],
       compactableRun: async () => [],
@@ -314,11 +315,41 @@ describe('the History scanner', () => {
 
     const { items } = await service.list(opts());
     const got = items.map((i) => [i.source, i.sessionId ?? '', i.title, i.taskName ?? '', i.runId ?? '']).sort((a, b) => a[1].localeCompare(b[1]));
+    // The task runs are Task History's, not the History window's.
+    expect(got).toEqual([['chat', 'resumed', 'Resumed', '', '20261011-100000-bbbb']]);
+  });
+
+  it("lists the task runs for Task History: every run with its result, one with no conversation too, filtered by task, result, skipped and no action", async () => {
+    const { runs, service, folder } = setup();
+    const all = { taskId: '', result: '', hideSkipped: false, hideNoAction: false };
+    const run = (runId: string, ts: string, phase: RunPhase, result: RunResult, summary: string) => runs.append({ ts, taskId: 'nightly', runId, phase, result, summary });
+    // A run with its conversation, one the scheduler skipped and one whose check found nothing: neither of those has a session.
+    run('20261010-100000-aaaa', '2026-10-10T10:00:00.000Z', 'result', 'success', 'All green');
+    write(join(runs.runDir('nightly', '20261010-100000-aaaa'), 'session.json'), JSON.stringify({ session_id: 'live-run' }));
+    write(join(folder('/w/looper'), 'live-run.jsonl'), claudeTranscript('/w/looper', [['run prompt', 'done']]));
+    run('20261011-100000-bbbb', '2026-10-11T10:00:00.000Z', 'skip', 'skipped', 'Already running');
+    run('20261012-100000-cccc', '2026-10-12T10:00:00.000Z', 'check', 'noop', 'Nothing to do');
+    // A conversation from outside is the History window's.
+    write(join(folder('/w/looper'), 'outside.jsonl'), claudeTranscript('/w/looper', [['from outside', 'ok']]));
+
+    const list = async (runsFilter: Partial<typeof all>, o: Partial<HistoryListOptions> = {}) => (await service.list(opts({ runs: { ...all, ...runsFilter }, ...o }))).items;
+    const got = (await list({})).map((i) => [i.runId, i.result, i.sessionId ?? '', i.title]);
     expect(got).toEqual([
-      ['run', 'live-run', 'All green', 'Nightly', '20261010-100000-aaaa'],
-      ['run', 'pruned-run', 'old run', 'Nightly', ''],
-      ['chat', 'resumed', 'Resumed', '', '20261011-100000-bbbb'],
+      ['20261012-100000-cccc', 'noop', '', 'Nothing to do'],
+      ['20261011-100000-bbbb', 'skipped', '', 'Already running'],
+      ['20261010-100000-aaaa', 'success', 'live-run', 'All green'],
     ]);
+    expect((await list({ hideSkipped: true })).map((i) => i.result)).toEqual(['noop', 'success']);
+    expect((await list({ hideNoAction: true })).map((i) => i.result)).toEqual(['skipped', 'success']);
+    expect((await list({ result: 'skipped' })).map((i) => i.runId)).toEqual(['20261011-100000-bbbb']);
+    expect(await list({ taskId: 'another' })).toEqual([]);
+    expect((await list({ taskId: 'nightly' }, { folder: 'project:looper' })).length).toBe(3);
+    expect(await list({}, { folder: 'project:ab' })).toEqual([]);
+    expect(await list({}, { folder: 'other' })).toEqual([]);
+    // A run with no conversation reads as empty, and the other windows' lists have none of the runs.
+    expect(await service.read('run:nightly:20261011-100000-bbbb')).toMatchObject({ rows: [] });
+    expect(service.item('run:nightly:20261011-100000-bbbb')).toMatchObject({ source: 'run', taskName: 'Nightly', result: 'skipped' });
+    expect((await service.list(opts())).items.map((i) => i.title).sort()).toEqual(['from outside']);
   });
 
   it('keeps the Recent menus ready: a chat shows once recorded, and one from outside after the next rescan', async () => {
@@ -331,11 +362,11 @@ describe('the History scanner', () => {
     };
     chat('20261011-100000-aaaa', '2026-10-11T10:00:00.000Z', 'First chat', 'first');
     write(join(folder('/w/looper'), 'outside.jsonl'), claudeTranscript('/w/looper', [['from outside', 'ok']]));
-    const titles = (f: '' | `project:${string}`) => service.recent(f, true)?.map((i) => i.title);
+    const titles = (f: '' | `project:${string}`) => service.recent(f)?.map((i) => i.title);
 
     expect(titles('')).toBeUndefined();
     // From Looper's runs and the cache, which doesn't know the outside one yet; asking starts the rescan that finds it.
-    await service.warm(true);
+    await service.warm();
     expect(titles('')).toEqual(['First chat']);
     await until(() => titles('project:looper')?.length === 2, 'the rescan');
     expect(titles('')).toEqual(['from outside', 'First chat']);
@@ -343,7 +374,7 @@ describe('the History scanner', () => {
     expect(titles('project:ab')).toEqual([]);
     // One pass for every list gives what list() gives for each folder.
     for (const f of ['', 'project:looper', 'project:ab'] as const) {
-      expect(service.recent(f, true)).toEqual((await service.list({ fresh: false, limit: RECENT_CHATS, showRuns: true, folder: f })).items);
+      expect(service.recent(f)).toEqual((await service.list({ fresh: false, limit: RECENT_CHATS, folder: f })).items);
     }
 
     // A chat Looper records: in the list as soon as its records are written.
@@ -496,6 +527,41 @@ describe.skipIf(process.platform === 'win32')('continuing a conversation from ou
     expect(infos.at(-1)).toMatchObject({ harnessKind: 'claude-code', title: 'go on', resumedSession: 'outside-1' });
   });
 
+  it("a Code Mode script's calls in the conversation a chat went on with, before the chat's own session has written any", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'looper-history-script-'));
+    const dir = mkdtempSync(join(tmpdir(), 'looper-history-script-cwd-'));
+    const claudeDir = join(dataDir, 'claude-config');
+    const fake = fakeClaude(dir);
+    engine = createEngine({ dataDir, historyDirs: async () => ({ claude: [claudeDir], codex: [] }) });
+    engine.start();
+    engine.updateSettings({
+      environments: engine.settings.environments.map((e) =>
+        e.id === 'local' ? { ...e, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fake.command }] } : e,
+      ),
+    });
+    const project = engine.saveProject({ name: 'Work', environmentId: 'local', cwd: dir, harnessId: 'fake', mode: 'headless' });
+    // A script that sent two files: its calls are records of their own after the script's result.
+    const script = [
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'r1', name: 'REPL', input: { code: 'send' } }] }, timestamp: '2026-10-02T10:00:00.000Z' },
+      { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'r1', content: '(dispatched #1)' }] }, timestamp: '2026-10-02T10:00:00.500Z' },
+      { type: 'attachment', attachment: { type: 'poll_events', envelopes: ['<event nonce="n" kind="repl-eval" at="2026-10-02T10:00:01.000Z" eval="1" ms="5" status="settled">\n<result>sent</result>\n</event>'] } },
+      { type: 'assistant', isVirtual: true, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'repl_1', name: 'SendUserFile', input: { files: [join(dir, 'a.png'), join(dir, 'b.png')], caption: 'Two shots' } }] }, timestamp: '2026-10-02T10:00:01.004Z' },
+    ].map((r) => ({ ...r, cwd: dir }));
+    write(join(claudeDir, 'projects', claudeProjectFolder(dir), 'outside-3.jsonl'), claudeTranscript(dir, [['send the shots', 'sending']], script));
+    const {
+      items: [item],
+    } = await engine.historyList(opts());
+    const chat = await engine.continueHistoryInChat(item.id);
+    const taskId = projectTaskId(project.id);
+    // The fake harness writes no session.json: the chat's own transcript isn't known.
+    expect(existsSync(join(engine.runDir(taskId, chat.id), 'session.json'))).toBe(false);
+    const calls = await engine.readScriptCalls(taskId, chat.id, 'r1', null, 20);
+    expect(calls?.rows.map((r) => [r.tool, r.toolUseId])).toEqual([['SendUserFile', 'repl_1']]);
+    expect(await engine.readScriptCalls(taskId, chat.id, 'none', null, 20)).toBeNull();
+    // A subagent's calls come only from its own transcript.
+    expect(await engine.readScriptCalls(taskId, chat.id, 'r1', null, 20, 'agent-x')).toBeNull();
+  });
+
   it('Continue in Chat and Continue Compacted on a conversation from outside, through the engine and its History list', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'looper-history-engine-'));
     const dir = mkdtempSync(join(tmpdir(), 'looper-history-cwd-'));
@@ -567,5 +633,31 @@ describe.skipIf(process.platform === 'win32')('continuing a conversation from ou
     expect(engine.findSessionTask(folderStandInId('local', loose))?.cwd).toBe(loose);
     expect(engine.historyCommands(looseItem.id)).toMatchObject({ chat: true, terminal: false, outside: false });
     await until(() => lines(fake.args).some((a) => (a as string[]).includes('outside-3')), 'claude to resume the loose conversation');
+  });
+
+  it('copies the transcript to the folder of a harness that keeps its conversations elsewhere before going on with it', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'looper-history-engine-'));
+    const dir = mkdtempSync(join(tmpdir(), 'looper-history-cwd-'));
+    const claudeDir = join(dataDir, 'claude-config');
+    const ownConfig = join(dataDir, 'own-config');
+    const fake = fakeClaude(dir);
+    engine = createEngine({ dataDir, historyDirs: async () => ({ claude: [claudeDir], codex: [] }) });
+    engine.start();
+    engine.updateSettings({
+      environments: engine.settings.environments.map((e) =>
+        e.id === 'local'
+          ? { ...e, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fake.command, env: { CLAUDE_CONFIG_DIR: ownConfig } }] }
+          : e,
+      ),
+    });
+    engine.saveProject({ name: 'Work', environmentId: 'local', cwd: dir, harnessId: 'fake', mode: 'headless' });
+    const text = claudeTranscript(dir, [['elsewhere', 'answer']]);
+    const file = write(join(claudeDir, 'projects', claudeProjectFolder(dir), 'outside-4.jsonl'), text);
+    utimesSync(file, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
+    const item = (await engine.historyList(opts())).items.find((i) => i.sessionId === 'outside-4')!;
+    await engine.continueHistoryInChat(item.id);
+    // Claude Code resumes only a conversation in its own config folder.
+    expect(readFileSync(join(ownConfig, 'projects', claudeProjectFolder(dir), 'outside-4.jsonl'), 'utf8')).toBe(text);
+    await until(() => lines(fake.args).some((a) => (a as string[]).includes('outside-4')), 'claude to resume');
   });
 });

@@ -13,7 +13,7 @@ export const MANIFEST = {
   $version: 2 satisfies typeof ADDON_FORMAT,
   id: 'git',
   name: 'Git',
-  version: '1.1.0',
+  version: '1.2.2',
   description: "Your projects' git repositories: changes, history, commits, branches, pull and push.",
   run: { on: 'looper', command: ['${addonDir}/addon.js'] },
   panes: [{ id: 'repositories', title: 'Git' }],
@@ -42,6 +42,19 @@ export const MANIFEST = {
       group: 'branch',
       entries: [{ id: 'branches', label: '&Branches…' }],
       in: onRepo(true),
+    },
+    // Where the lists put their diff: beside them or under them (the state's `entries` check the current one). On a phone the diff goes under the list too; Side by Side pushes it over.
+    {
+      id: 'layout',
+      label: '&Layout',
+      icon: 'library:layout-panel-left',
+      menu: 'view',
+      group: 'layout',
+      entries: [
+        { id: 'layout-side', label: '&Side by Side', icon: 'library:columns-2', check: 'radio' },
+        { id: 'layout-stack', label: '&One Above the Other', icon: 'library:rows-2', check: 'radio' },
+      ],
+      in: { screen: { views: ['repo', 'project'], toolbar: true, main: true } },
     },
     { id: 'repo-settings', label: 'Repositor&y Settings…', icon: 'library:folder-cog', menu: 'tools', group: 'repo', in: onRepo() },
     { id: 'init', label: 'Create Rep&ository', icon: 'library:folder-git', menu: 'tools', group: 'repo', in: onRepo() },

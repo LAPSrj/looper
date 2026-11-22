@@ -4,6 +4,8 @@ import path from 'node:path';
 import type { Logger } from '../../engine/log';
 import {
   REMOTE_ACCESS_SOURCES,
+  type DeviceNotifications,
+  type NotifyTopic,
   type PairingCode,
   type PushPayload,
   type PwaIconName,
@@ -19,7 +21,7 @@ import { RemoteClients } from '../platform/clients';
 import { IpcTable } from '../platform/ipc-table';
 import { DeviceStore, Pairing, type Clock } from './devices';
 import { LocalProvider, TailscaleProvider, type AccessProvider, type ProviderStatus } from './providers';
-import { PushSender, PushStore, WaitWatcher, waitingPayload, webPushSend, type PushSend } from './push';
+import { PushSender, PushStore, WaitWatcher, waitTopic, waitingPayload, webPushSend, type PushSend } from './push';
 import { RemoteServer, freePort, type RemoteConnection } from './server';
 
 export type { RemoteConnection } from './server';
@@ -104,6 +106,9 @@ export class RemoteAccess {
   private readonly push: PushStore;
   private readonly pusher: PushSender;
   private readonly waits = new WaitWatcher();
+  /** The last sessionsChanged, which a finished turn's settle timer looks at again. */
+  private lastSessions: { sessions: SessionSummary[]; notify: boolean } | null = null;
+  private settleTimer: NodeJS.Timeout | null = null;
   /** The browser tabs and their windows. */
   readonly clients: RemoteClients;
   private readonly running = new Map<RemoteAccessProviderId, Running>();
@@ -158,7 +163,7 @@ export class RemoteAccess {
       ...(opts.icon ? { icon: opts.icon } : {}),
       ...(opts.startup ? { startup: opts.startup } : {}),
       onUnpair: (id) => this.removeDevice(id),
-      onRenamed: () => this.changed(),
+      onDeviceChanged: () => this.changed(),
       computerName: () => opts.settings().name.trim() || os.hostname(),
     });
     this.clients = new RemoteClients({
@@ -238,6 +243,7 @@ export class RemoteAccess {
         pairedAt: d.pairedAt,
         ...(d.lastSeenAt ? { lastSeenAt: d.lastSeenAt } : {}),
         connected: this.server.connectedCount(d.id),
+        notify: d.notify,
       })),
       ...(this.pairedWith ? { pairedWith: this.pairedWith } : {}),
       ...(lockedCode ? { lockedCode } : {}),
@@ -284,6 +290,22 @@ export class RemoteAccess {
   renameDevice(id: string, name: string): void {
     if (!this.devices.rename(id, name)) throw new Error('This device is no longer paired.');
     this.changed();
+  }
+
+  /** What the device is notified of. */
+  setDeviceNotifications(id: string, notify: DeviceNotifications): void {
+    if (!this.devices.setNotifications(id, notify)) throw new Error('This device is no longer paired.');
+    this.changed();
+  }
+
+  /** Whether the device wants notifications on `topic` (its own settings); an unknown device doesn't. */
+  notifies(deviceId: string, topic: NotifyTopic): boolean {
+    return !!this.devices.get(deviceId)?.notify[topic];
+  }
+
+  /** A desktop toast, shown in every connected tab of a device that wants `topic` (its push is pushToast's). */
+  notifyClients(n: { title: string; body: string; taskId?: string; runId?: string }, topic: NotifyTopic): void {
+    this.clients.broadcast({ t: 'notify', ...n }, (deviceId) => this.notifies(deviceId, topic));
   }
 
   /** Sign this computer out of Tailscale; while Tailscale stays a source, it then asks for a new sign-in. The other sources keep running. */
@@ -346,26 +368,43 @@ export class RemoteAccess {
     return this.server.offerDownload(filePath, name, onDone);
   }
 
-  /** A desktop toast the computer shows now: every paired device not looking at Looper gets it as a push. */
-  pushToast(n: { title: string; body: string; taskId?: string; runId?: string }): Promise<void> {
+  /** A desktop toast the computer shows now: every paired device that wants `topic` and isn't looking at Looper gets it as a push. */
+  pushToast(n: { title: string; body: string; taskId?: string; runId?: string }, topic: NotifyTopic): Promise<void> {
     const payload: PushPayload = {
       title: n.title,
       body: n.body,
       tag: `task:${n.taskId ?? '-'}:${n.runId ?? '-'}`,
       ...(n.taskId ? { open: { kind: 'task' as const, taskId: n.taskId, ...(n.runId ? { runId: n.runId } : {}) } } : {}),
     };
-    return this.pushAway(payload, 'normal', TOAST_TTL_S);
+    return this.pushAway(payload, 'normal', TOAST_TTL_S, topic);
+  }
+
+  /** A chat compacted into `to`: what was pushed about it counts as pushed about the new chat. */
+  sessionMoved(from: string, to: string): void {
+    this.waits.moved(from, to);
   }
 
   /**
    * The sessions' state changed: a session that started waiting for the user
-   * (a question, a finished turn) is pushed, unless `notify` is off (Looper's
-   * notifications are), when it's only noted as seen.
+   * (a question, a finished turn once it has settled) is pushed to the devices
+   * that want it, unless `notify` is off (Looper's notifications are), when
+   * it's only noted as seen.
    */
   sessionsChanged(sessions: SessionSummary[], notify: boolean): Promise<void> {
-    const fresh = this.waits.next(sessions);
+    this.lastSessions = { sessions, notify };
+    if (this.settleTimer) clearTimeout(this.settleTimer);
+    this.settleTimer = null;
+    const { fresh, retryIn } = this.waits.next(sessions, this.now());
+    // A finished turn counts later: the sessions are looked at again then, if no new state came first.
+    if (retryIn !== undefined && !this.disposed) {
+      this.settleTimer = setTimeout(() => {
+        this.settleTimer = null;
+        const last = this.lastSessions;
+        if (last) void this.sessionsChanged(last.sessions, last.notify);
+      }, retryIn);
+    }
     if (!notify) return Promise.resolve();
-    return Promise.all(fresh.map((s) => this.pushAway(waitingPayload(s), 'high', WAITING_TTL_S))).then(() => undefined);
+    return Promise.all(fresh.map((s) => this.pushAway(waitingPayload(s), 'high', WAITING_TTL_S, waitTopic(s)))).then(() => undefined);
   }
 
   /**
@@ -373,10 +412,13 @@ export class RemoteAccess {
    * in-page toast instead (and iOS shows every push it gets, so the server
    * decides, not the service worker).
    */
-  private async pushAway(payload: PushPayload, urgency: 'normal' | 'high', ttlSeconds: number): Promise<void> {
+  private async pushAway(payload: PushPayload, urgency: 'normal' | 'high', ttlSeconds: number, topic: NotifyTopic): Promise<void> {
     if (!this.anyRunning()) return;
     const visible = this.server.visibleDevices();
-    const away = this.devices.list().map((d) => d.id).filter((id) => !visible.has(id));
+    const away = this.devices
+      .list()
+      .filter((d) => d.notify[topic] && !visible.has(d.id))
+      .map((d) => d.id);
     if (away.length) await this.pusher.push(away, payload, { urgency, ttlSeconds });
   }
 
@@ -387,6 +429,8 @@ export class RemoteAccess {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    if (this.settleTimer) clearTimeout(this.settleTimer);
+    this.settleTimer = null;
     await this.enqueue(async () => {
       await this.stopSignIn();
       await this.stopAll();

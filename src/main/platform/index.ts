@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { BrowserWindow, clipboard, dialog, ipcMain, screen, shell, type Menu } from 'electron';
-import type { FileDialogSpec, MenuItemSpec, MessageBoxSpec, PopupButton, ServerMessage, WindowRole } from '../../shared/remote-access';
+import type { FileDialogSpec, MenuItemSpec, MessageBoxSpec, PopupButton, WindowRole } from '../../shared/remote-access';
 import { isWebLink } from '../../shared/links';
 import type { RemoteClients } from './clients';
 import { caller } from './context';
@@ -358,7 +358,3 @@ export function openOnHost(p: string): Promise<string> {
   return shell.openPath(p);
 }
 
-/** A desktop toast, shown on every connected device too. */
-export function notifyClients(n: Omit<Extract<ServerMessage, { t: 'notify' }>, 't'>): void {
-  remote?.broadcast({ t: 'notify', ...n });
-}

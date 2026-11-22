@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   LiveSweep,
   MessagesService,
@@ -180,6 +180,51 @@ describe('TranscriptAccumulator', () => {
     expect(acc.rows.map((r) => r.calls)).toEqual([{ count: 1, failed: 0 }, undefined]);
     expect(acc.scriptCalls.get('r1')!.map((r) => r.result)).toEqual(['a']);
     expect(acc.scriptCalls.get('r2')).toEqual([]);
+  });
+
+  it("keeps the calls the mod handed over when a reader meets them after the script's result was delivered, under the script that ended after they started", () => {
+    const acc = new TranscriptAccumulator();
+    for (const n of [1, 2]) {
+      acc.addLine(assistantBlock({ type: 'tool_use', id: `r${n}`, name: 'REPL', input: { code: `script ${n}` } }));
+      acc.addLine(toolResult(`r${n}`, `(dispatched #${n})`));
+    }
+    // The transcript holds both results already; Claude Code has not written the calls yet.
+    acc.addLine(settledAt(1, '2026-11-20T01:00:01.000Z'));
+    acc.addLine(settledAt(2, '2026-11-20T01:00:05.000Z'));
+    const stamped = (rec: Record<string, unknown>, timestamp: string) => ({ ...rec, timestamp });
+    const sentTur = { caption: 'Both views.', attachments: [{ path: '/p/shot.png', size: 512, isImage: true }] };
+    acc.addParsed(stamped(liveCall('repl_a', 'Read', { file_path: '/x/a.json' }), '2026-11-20T01:00:00.500Z'));
+    acc.addParsed(stamped(liveEnd('repl_a', readA), '2026-11-20T01:00:00.600Z'));
+    acc.addParsed(stamped(liveCall('repl_f', 'SendUserFile', { files: ['/p/shot.png'], caption: 'Both views.' }), '2026-11-20T01:00:03.000Z'));
+    acc.addParsed(stamped(liveEnd('repl_f', sentTur), '2026-11-20T01:00:03.100Z'));
+    expect(acc.rows.map((r) => [r.tool, r.calls?.count, r.calls?.running])).toEqual([
+      ['REPL', 1, undefined],
+      ['REPL', 1, undefined],
+      ['SendUserFile', undefined, undefined],
+    ]);
+    expect(acc.scriptCalls.get('r1')!.map((r) => [r.tool, r.result])).toEqual([['Read', '     1\tA']]);
+    expect(acc.scriptCalls.get('r2')!.map((r) => r.tool)).toEqual(['SendUserFile']);
+    // Then Claude Code writes its copies: they change nothing.
+    acc.addLine(scriptCall('repl_a', 'Read', { file_path: '/x/a.json' }, '2026-11-20T01:00:01.004Z'));
+    acc.addLine(scriptResult('repl_a', '', '2026-11-20T01:00:01.004Z'));
+    expect(acc.rows.map((r) => r.calls?.count)).toEqual([1, 1, undefined]);
+    expect(acc.scriptCalls.get('r1')).toHaveLength(1);
+  });
+
+  it("shows no calls for a script whose calls the transcript hasn't written yet, and all of them once it has", () => {
+    const acc = new TranscriptAccumulator();
+    const lines = [
+      assistantBlock({ type: 'tool_use', id: 'r1', name: 'REPL', input: { code: 'x' } }),
+      assistantBlock({ type: 'tool_use', id: 'p1', name: 'Poll', input: {} }),
+      toolResult('r1', '(dispatched #1)'),
+      toolResult('p1', delivery([['a1', 1, '2026-11-20T01:00:01.000Z', 'sent']])),
+    ];
+    for (const l of lines) acc.addLine(l);
+    expect(acc.rows.map((r) => [r.tool, r.result, r.calls])).toEqual([['REPL', 'sent', undefined]]);
+    // Claude Code writes a script's calls after the Poll result that delivered it.
+    acc.addLine(scriptCall('repl_a', 'Read', { file_path: '/x/a.json' }, '2026-11-20T01:00:01.003Z'));
+    acc.addLine(scriptResult('repl_a', 'A', '2026-11-20T01:00:01.003Z'));
+    expect(acc.rows.map((r) => [r.tool, r.result, r.calls?.count])).toEqual([['REPL', 'sent', 1]]);
   });
 
   it("puts a script's calls under its REPL call again when the transcript is read again from its start", () => {
@@ -817,6 +862,26 @@ describe('TranscriptReader', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('lets the rest of the main process run while it reads a long transcript', async () => {
+    const file = path.join(dir, 'long.jsonl');
+    const lines = Array.from({ length: 100 }, (_, i) => (i % 2 ? assistantBlock({ type: 'text', text: `reply ${i}` }) : userPrompt(`msg ${i}`)));
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+    // Every line takes 6 ms: the read gives the event loop a turn about every other line instead of holding it for all of them.
+    let t = 0;
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => (t += 6));
+    const yields = vi.spyOn(globalThis, 'setImmediate');
+    try {
+      const r = new TranscriptReader(file);
+      await r.read();
+      expect(r.acc.rows).toHaveLength(100);
+      expect(r.acc.rows[99].text).toBe('reply 99');
+      expect(yields.mock.calls.length).toBeGreaterThanOrEqual(30);
+    } finally {
+      now.mockRestore();
+      yields.mockRestore();
+    }
+  });
+
   it('reads incrementally and completes a line torn across appends', async () => {
     const file = path.join(dir, 't.jsonl');
     const line1 = userPrompt('first');
@@ -969,6 +1034,109 @@ describe('TranscriptReader', () => {
     await r.read();
     expect(r.acc.rows).toHaveLength(1);
   });
+
+  it('reads a chunk at a time, lines longer than a chunk too, and keeps where its images are instead of them', async () => {
+    const file = path.join(dir, 't.jsonl');
+    const data = 'A'.repeat(2_500_000); // a screenshot's base64, longer than a chunk (1 MB)
+    const image = (d: string) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: d } });
+    const call = assistantBlock({ type: 'tool_use', id: 'tu-shot', name: 'Read', input: { file_path: '/s.png' } });
+    const result = rec({ type: 'user', timestamp: '2026-09-03T10:00:02.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu-shot', content: [image(data)] }] }, toolUseResult: { type: 'image', file: { base64: data } } });
+    const pasted = rec({ type: 'user', timestamp: '2026-09-03T10:00:03.000Z', message: { role: 'user', content: [{ type: 'text', text: 'look' }, image('aGk=')] } });
+    const lines = [...Array.from({ length: 3000 }, (_, i) => userPrompt(`msg ${i} ${'x'.repeat(i % 700)}`)), call, result, pasted, userPrompt('after')];
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+    const r = new TranscriptReader(file);
+    await r.read();
+    expect(r.acc.rows).toHaveLength(3004);
+    expect(r.acc.rows[2999].text).toBe(`msg 2999 ${'x'.repeat(2999 % 700)}`);
+    expect(r.acc.rows.at(-1)!.text).toBe('after');
+    const [shot, , paste] = r.acc.rows.slice(-4);
+    expect(shot.image).toEqual({ mediaType: 'image/png' });
+    expect(paste).toMatchObject({ text: '(image)', image: { mediaType: 'image/png' } });
+    expect(r.acc.images.get(shot.id)).not.toHaveProperty('data');
+    expect(await r.toolImage('tu-shot')).toEqual({ mediaType: 'image/png', data });
+    expect(await r.image(shot.id)).toEqual({ mediaType: 'image/png', data });
+    expect(await r.image(paste.id)).toEqual({ mediaType: 'image/png', data: 'aGk=' });
+    expect(await r.toolImage('tu-none')).toBeNull();
+  });
+
+  it('reads a line longer than a chunk that is still being written once it ends, and nothing while the file stays the same', async () => {
+    const file = path.join(dir, 't.jsonl');
+    const data = 'B'.repeat(2_500_000);
+    const call = assistantBlock({ type: 'tool_use', id: 'tu-shot', name: 'Read', input: { file_path: '/s.png' } });
+    const result = rec({ type: 'user', timestamp: '2026-09-03T10:00:02.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu-shot', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data } }] }] }, toolUseResult: { type: 'image', file: { base64: data } } });
+    fs.writeFileSync(file, [userPrompt('first'), call].join('\n') + '\n' + result.slice(0, 1_500_000));
+    const r = new TranscriptReader(file);
+    expect(await r.read()).toBe(true);
+    expect(r.acc.rows).toHaveLength(2);
+    expect(await r.read()).toBe(false);
+    fs.appendFileSync(file, result.slice(1_500_000) + '\n' + userPrompt('after') + '\n');
+    expect(await r.read()).toBe(true);
+    expect(r.acc.rows.map((row) => row.preview).at(-1)).toBe('after');
+    expect(r.acc.rows[1].image).toEqual({ mediaType: 'image/png' });
+    expect(await r.toolImage('tu-shot')).toEqual({ mediaType: 'image/png', data });
+  });
+
+  it('keeps where every screenshot of a transcript is, so one before the newest 40 opens too', async () => {
+    const file = path.join(dir, 't.jsonl');
+    const lines = Array.from({ length: 45 }, (_, i) => [
+      assistantBlock({ type: 'tool_use', id: `tu-${i}`, name: 'Read', input: { file_path: `/s${i}.png` } }),
+      rec({ type: 'user', timestamp: '2026-09-03T10:00:02.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `tu-${i}`, content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: `shot${i}` } }] }] } }),
+    ]).flat();
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+    const r = new TranscriptReader(file);
+    await r.read();
+    expect(r.acc.images.size).toBe(45);
+    expect(await r.toolImage('tu-0')).toEqual({ mediaType: 'image/png', data: 'shot0' });
+    expect(await r.toolImage('tu-44')).toEqual({ mediaType: 'image/png', data: 'shot44' });
+  });
+
+  it('skips the records nothing reads before parsing them, and shows every line raw', async () => {
+    const file = path.join(dir, 't.jsonl');
+    const lines = [
+      rec({ type: 'queue-operation', operation: 'enqueue', content: 'queued' }),
+      rec({ type: 'repl-mode', replMode: true }),
+      userPrompt('hi'),
+      rec({ type: 'api-request', body: '{"type":"user"}' }),
+      rec({ type: 'custom-title', customTitle: 'Named' }),
+    ];
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+    const seen: string[] = [];
+    await new TranscriptReader(file, {}, 'claude', (line) => void seen.push(JSON.parse(line).type)).read();
+    expect(seen).toEqual(['repl-mode', 'user', 'custom-title']);
+    const r = new TranscriptReader(file);
+    await r.read();
+    expect(r.acc.rows.map((row) => row.text)).toEqual(['hi']);
+    expect(r.acc.sessionName).toBe('Named');
+    const raw = new TranscriptReader(file, { raw: true });
+    await raw.read();
+    expect(raw.acc.rows).toHaveLength(5);
+  });
+
+  it("reads a queued task notification, the only record of a subagent's subagent ending", async () => {
+    const file = path.join(dir, 't.jsonl');
+    const note = '<task-notification>\n<task-id>agent123</task-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>';
+    fs.writeFileSync(file, [userPrompt('hi'), rec({ type: 'queue-operation', operation: 'enqueue', content: note })].join('\n') + '\n');
+    const r = new TranscriptReader(file);
+    await r.read();
+    expect([...r.acc.ended]).toEqual([['agent123', 'completed']]);
+  });
+
+  it('reads only the end of a long transcript, from the first whole line in it, and goes on from there', async () => {
+    const file = path.join(dir, 't.jsonl');
+    const lines = Array.from({ length: 400 }, (_, i) => userPrompt(`msg ${i}`));
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+    const size = fs.statSync(file).size;
+    const short = new TranscriptReader(file);
+    expect(await short.readTail(1000, size + 1)).toBe(false);
+    expect(short.acc.rows).toHaveLength(0);
+    const r = new TranscriptReader(file);
+    // It starts 5 bytes before line 390: the end of line 389 isn't a row.
+    expect(await r.readTail(Buffer.byteLength(lines.slice(-10).join('\n') + '\n') + 5, size)).toBe(true);
+    expect(r.acc.rows.map((row) => row.preview)).toEqual(Array.from({ length: 10 }, (_, i) => `msg ${390 + i}`));
+    fs.appendFileSync(file, userPrompt('msg 400') + '\n');
+    await r.read();
+    expect(r.acc.rows.at(-1)!.preview).toBe('msg 400');
+  });
 });
 
 describe('readTranscriptRef', () => {
@@ -1117,6 +1285,39 @@ describe('a run with context restarts', () => {
     const runs = await service.workflows('t1', 'r1');
     expect(runs.map((r) => [r.runId, r.status, r.phases.map((p) => p.agents.map((a) => a.label))])).toEqual([['wf_e83e0899-949', 'running', [['menus and power']]]]);
   });
+
+  it("answers a subagent's unchanged transcript without its rows, and sends the new ones once it grows", async () => {
+    const runDir = path.join(dir, 'run');
+    fs.mkdirSync(runDir);
+    const transcript = session('', 'parent', 'starting');
+    const subs = path.join(transcript.replace(/\.jsonl$/, ''), 'subagents');
+    fs.mkdirSync(subs, { recursive: true });
+    const agent = path.join(subs, 'agent-a1.jsonl');
+    fs.writeFileSync(agent, [userPrompt('Look into it'), assistantBlock({ type: 'text', text: 'Looking' })].join('\n') + '\n');
+    const service = new MessagesService({
+      getTask: () => undefined,
+      runDir: () => runDir,
+      attachment: () => null,
+      host: 'linux',
+      settings: SettingsSchema.parse({}),
+      log: new Logger(),
+    });
+    const first = await service.read('t1', 'r1', 'a1');
+    expect(first.status).toBe('ok');
+    expect(first.rows).toHaveLength(2);
+    expect(first.version).toBeTruthy();
+    // Nothing was written: the version it sent is current, and no rows come back.
+    const same = await service.read('t1', 'r1', 'a1', false, first.version);
+    expect(same).toEqual({ status: 'ok', rows: [], version: first.version, unchanged: true });
+    // Without a version, or with another, the rows come back.
+    expect((await service.read('t1', 'r1', 'a1')).rows).toHaveLength(2);
+    expect((await service.read('t1', 'r1', 'a1', false, 'other')).rows).toHaveLength(2);
+    fs.appendFileSync(agent, assistantBlock({ type: 'text', text: 'Found it' }) + '\n');
+    const grown = await service.read('t1', 'r1', 'a1', false, first.version);
+    expect(grown.unchanged).toBeUndefined();
+    expect(grown.rows).toHaveLength(3);
+    expect(grown.version).not.toBe(first.version);
+  });
 });
 
 describe('readRunSessionId', () => {
@@ -1178,5 +1379,39 @@ describe("a Code Mode script's tool calls, read a page at a time", () => {
     expect(older!.rows.map((r) => r.file)).toEqual(['/f/0', '/f/1', '/f/2', '/f/3', '/f/4']);
     expect(await service.readScriptCalls('t1', 'r1', 'none', null, 20)).toBeNull();
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('MessagesService readers', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'looper-readers-'));
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('keeps every session the dashboard polls, more than 16 too, so none is read from its start again', async () => {
+    const runs = Array.from({ length: 20 }, (_, i) => {
+      const runDir = path.join(dir, `run${i}`);
+      fs.mkdirSync(runDir);
+      const transcript = path.join(dir, `t${i}.jsonl`);
+      fs.writeFileSync(transcript, userPrompt(`prompt ${i}`) + '\n');
+      fs.writeFileSync(path.join(runDir, 'session.json'), JSON.stringify({ session_id: `s${i}`, transcript_path: transcript }));
+      return `r${i}`;
+    });
+    const service = new MessagesService({
+      getTask: () => undefined,
+      runDir: (_taskId, runId) => path.join(dir, runId.replace('r', 'run')),
+      attachment: () => null,
+      host: 'linux',
+      settings: SettingsSchema.parse({}),
+      log: new Logger(),
+    });
+    for (const run of runs) expect((await service.read('t1', run)).rows.map((r) => r.text)).toEqual([`prompt ${run.slice(1)}`]);
+    const open = vi.spyOn(fs.promises, 'open');
+    for (const run of runs) expect((await service.read('t1', run)).rows.map((r) => r.text)).toEqual([`prompt ${run.slice(1)}`]);
+    expect(open).not.toHaveBeenCalled();
   });
 });

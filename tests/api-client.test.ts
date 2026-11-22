@@ -69,6 +69,24 @@ describe('createLooperApi', () => {
   });
 });
 
+describe('sessions.readSentFile', () => {
+  const api = (value: unknown) =>
+    createLooperApi({ invoke: async () => value, send: () => undefined, on: () => () => undefined, files: async () => [], filePath: async () => '' }).sessions;
+  afterEach(() => void vi.unstubAllGlobals());
+
+  it("gives a window the file's bytes, and a device the download it fetches, never base64", async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    expect(await api({ data: bytes }).readSentFile('t', 'a.pdf', 10)).toEqual({ data: bytes });
+    expect(await api({ error: 'gone' }).readSentFile('t', 'a.pdf', 10)).toEqual({ error: 'gone' });
+    const fetchMock = vi.fn(async () => ({ ok: true, arrayBuffer: async () => new Uint8Array([4, 5]).buffer }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await api({ url: '/api/download/tok' }).readSentFile('t', 'a.pdf', 10)).toEqual({ data: new Uint8Array([4, 5]) });
+    expect(fetchMock).toHaveBeenCalledWith('/api/download/tok');
+    fetchMock.mockResolvedValueOnce({ ok: false, arrayBuffer: async () => new ArrayBuffer(0) });
+    expect(await api({ url: '/api/download/tok' }).readSentFile('t', 'a.pdf', 10)).toEqual({ error: 'The file can’t be read.' });
+  });
+});
+
 // ---------- bytes ----------
 
 describe('bytes encoding', () => {
@@ -406,6 +424,13 @@ describe('reduceShell', () => {
     expect(s.menus).toEqual([]);
   });
 
+  it("keeps a window's new route for its next load without loading it again now", () => {
+    let s = reduceShell(initialShellState, open('w1', 'sessions/a') as ShellMessage);
+    s = reduceShell(s, { t: 'window-hash', w: 'w1', hash: 'sessions/b' });
+    expect(s.windows[0]).toMatchObject({ hash: 'sessions/b', nonce: 0 });
+    expect(windowSrc(s.windows[0])).toMatch(/#sessions\/b$/);
+  });
+
   it('a resume closes the windows the computer closed meanwhile and loads again only the pages it names', () => {
     let s = initialShellState;
     for (const w of ['w1', 'w2', 'w3']) s = reduceShell(s, open(w) as ShellMessage);
@@ -418,8 +443,8 @@ describe('reduceShell', () => {
   });
 
   it('addresses a window by id with its route in the hash', () => {
-    expect(windowSrc({ w: 'a b', hash: 'settings' } as never)).toBe('/index.html?w=a%20b#settings');
-    expect(windowSrc({ w: 'w1', hash: '' } as never)).toBe('/index.html?w=w1');
+    expect(windowSrc({ w: 'a b', hash: 'settings' } as never)).toBe('/frame.html?w=a%20b#settings');
+    expect(windowSrc({ w: 'w1', hash: '' } as never)).toBe('/frame.html?w=w1');
   });
 });
 

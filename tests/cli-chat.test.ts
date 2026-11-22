@@ -125,11 +125,21 @@ describe('looper chat in the engine', { timeout: 120_000 }, () => {
     expect(await ask('rename', { id: secondId, name: 'Tests' })).toBe('Renamed the chat "Tests".');
     await until(() => engine!.getChat(secondId)?.title === 'Tests', 'the new name');
     expect(await ask('queue', { id })).toEqual([]);
-    expect(await ask('configure', { id })).toEqual(refused('give a model, an effort, a permission mode or a harness'));
+    expect(await ask('configure', { id })).toEqual(refused('give a model, an effort, auto compact, a permission mode or a harness'));
     expect(await ask('configure', { id, effort: 'high' })).toBe('Set the effort of the chat "Build check".');
+    expect(await ask('configure', { id, autoCompact: 'on' })).toBe('Set the auto compact of the chat "Build check".');
+    expect(engine!.getChat(id)?.settings.autoCompact).toBe(true);
+    expect(await ask('configure', { id, autoCompact: 'default' })).toBe('Set the auto compact of the chat "Build check".');
+    expect(engine!.getChat(id)?.settings.autoCompact).toBeUndefined();
+    expect(await ask('configure', { id, autoCompact: 'sometimes' })).toEqual(refused('auto compact is on, off or default'));
     const transcript = (await ask('transcript', { id })) as { title: string; rows: { text: string }[] };
     expect(transcript.title).toBe('Build check');
     expect(transcript.rows.some((r) => r.text.includes('look at the build'))).toBe(true);
+
+    // Task History's list: the runs only, which a task or a result filter also asks for. T1 and T2 have no runs, and the chats aren't task runs.
+    expect(await ask('history', { runs: true })).toEqual([]);
+    expect(await ask('history', { task: 't1', result: 'success', hideSkipped: true, hideNoAction: true })).toEqual([]);
+    expect(((await ask('history')) as { source: string }[]).some((h) => h.source === 'run')).toBe(false);
 
     expect(await ask('nope')).toEqual(refused("This Looper can't answer nope: it needs a newer Looper, or the desktop app (looper serve has no windows, addons or paired devices)."));
     expect(await ask('settings', { key: 'environments.nope' })).toEqual(refused('The settings have no environments.nope.'));

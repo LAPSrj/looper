@@ -9,12 +9,15 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import type { Logger } from '../../engine/log';
 import {
   DEVICE_COOKIE,
+  FRAME_PAGE,
   MAX_WS_MESSAGE_BYTES,
   PROXY_LOGIN_HEADER,
   PROXY_SECRET_HEADER,
   REQUEST_HEADER,
   REQUEST_HEADER_VALUE,
+  parseDeviceNotifications,
   type ClientMessage,
+  type DeviceNotifications,
   PWA_ICONS,
   type MeResponse,
   type PushKeyResponse,
@@ -28,6 +31,7 @@ import {
 import { cleanDeviceName, safeEqual, type Clock, type DeviceStore, type Pairing, type StoredDevice } from './devices';
 import { manifest, serviceWorker, withMobileHead } from './pwa';
 import { parseSubscription } from './push';
+import { previewFrame, previewFrameHeaders } from '../preview-frames';
 import { sendPayload, StaticCache } from './static-cache';
 
 export const MAX_PAIR_BODY_BYTES = 4 * 1024;
@@ -64,7 +68,10 @@ const REJECT_LOG_PER_MIN = 5;
 const wsSources = (host: string | null): string => (host ? ` ws://${host} wss://${host}` : '');
 
 const csp = (host: string | null): string =>
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; " +
+  // 'wasm-unsafe-eval' compiles WebAssembly (the PowerPoint preview's parser), not JavaScript from strings; a blob:
+  // worker is the one that parser starts on Safari, where the deck is drawn on the page (PptxSlides), and blob: images and media are what
+  // it decodes SVGs, audio and video through (URL.createObjectURL).
+  "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' blob:; " +
   `connect-src 'self'${wsSources(host)}; frame-ancestors 'self'`;
 
 /** index.html as served: its meta CSP (which the desktop app reads as it is) allows the WebSocket's address too. */
@@ -154,8 +161,8 @@ export interface RemoteServerOptions {
   startup?: (width: number, height: number, dark: boolean) => Buffer | null;
   /** A device unpaired itself (POST /api/unpair). */
   onUnpair?: (deviceId: string) => void;
-  /** A device renamed itself (POST /api/rename); stored by the time this runs. */
-  onRenamed?: (deviceId: string) => void;
+  /** A device renamed itself (POST /api/rename) or chose its notifications (POST /api/notifications); stored by the time this runs. */
+  onDeviceChanged?: (deviceId: string) => void;
   /** The computer's name, as paired devices show it. */
   computerName: () => string;
 }
@@ -566,6 +573,8 @@ export class RemoteServer {
         return await this.api(req, res, url, via.source);
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return this.text(res, 405, 'Method Not Allowed');
+      const frame = /^\/preview-frame\/([0-9a-f]{32})$/.exec(url.pathname);
+      if (frame) return this.previewPage(req, res, frame[1], via.source);
       return await this.serveStatic(req, res, url.pathname, via.source);
     } catch (err) {
       // The browser went away mid-response (a closed tab, a canceled download): nothing went wrong here.
@@ -574,6 +583,18 @@ export class RemoteServer {
       if (!res.headersSent && !res.destroyed) this.text(res, 500, 'Internal Server Error');
       else res.destroy();
     }
+  }
+
+  /**
+   * An HTML file Preview shows, for the paired device that asked (its page loads the frame, so its cookie comes
+   * along). The page's own Content-Security-Policy sandboxes it: an origin of its own, even opened outside the frame.
+   */
+  private previewPage(req: http.IncomingMessage, res: http.ServerResponse, token: string, source: RemoteAccessProviderId): void {
+    if (!this.device(req, source)) return this.text(res, 401, 'Unauthorized');
+    const f = previewFrame(token);
+    if (!f) return this.text(res, 404, 'Not Found');
+    res.writeHead(200, previewFrameHeaders(f));
+    res.end(req.method === 'HEAD' ? undefined : f.html);
   }
 
   private text(res: http.ServerResponse, status: number, body: string): void {
@@ -601,7 +622,13 @@ export class RemoteServer {
     }
     if (p === '/api/ws') return this.text(res, 426, 'Upgrade Required');
     const known =
-      p === '/api/me' || p === '/api/upload' || p === '/api/unpair' || p === '/api/rename' || p.startsWith('/api/download/') || (!!this.opts.push && p.startsWith('/api/push/'));
+      p === '/api/me' ||
+      p === '/api/upload' ||
+      p === '/api/unpair' ||
+      p === '/api/rename' ||
+      p === '/api/notifications' ||
+      p.startsWith('/api/download/') ||
+      (!!this.opts.push && p.startsWith('/api/push/'));
     if (!known) return this.text(res, 404, 'Not Found');
 
     const device = this.device(req, source);
@@ -626,6 +653,10 @@ export class RemoteServer {
     if (p === '/api/rename') {
       if (req.method !== 'POST') return this.text(res, 405, 'Method Not Allowed');
       return this.rename(req, res, device);
+    }
+    if (p === '/api/notifications') {
+      if (req.method !== 'POST') return this.text(res, 405, 'Method Not Allowed');
+      return this.setNotifications(req, res, device);
     }
     if (p.startsWith('/api/push/') && this.opts.push) return this.pushApi(req, res, p, device, this.opts.push);
     if (req.method !== 'GET') return this.text(res, 405, 'Method Not Allowed');
@@ -709,7 +740,23 @@ export class RemoteServer {
   }
 
   private me(device: StoredDevice): MeResponse {
-    return { paired: true, device: { id: device.id, name: device.name }, computer: this.opts.computerName() };
+    return { paired: true, device: { id: device.id, name: device.name, notify: { ...device.notify } }, computer: this.opts.computerName() };
+  }
+
+  /** The device chooses what it's notified of (This Device's switches). */
+  private async setNotifications(req: http.IncomingMessage, res: http.ServerResponse, device: StoredDevice): Promise<void> {
+    const body = await this.readBody(req, MAX_PAIR_BODY_BYTES);
+    if (!body) return this.text(res, 413, 'Payload Too Large');
+    let notify: DeviceNotifications | null;
+    try {
+      notify = parseDeviceNotifications(JSON.parse(body.toString('utf8')));
+    } catch {
+      notify = null;
+    }
+    if (!notify) return this.text(res, 400, 'Bad Request');
+    this.opts.devices.setNotifications(device.id, notify);
+    this.opts.onDeviceChanged?.(device.id);
+    return this.json(res, 200, this.me(this.opts.devices.get(device.id) ?? device));
   }
 
   /** The device renames itself (This Device's Name). */
@@ -724,7 +771,7 @@ export class RemoteServer {
     }
     if (typeof name !== 'string' || !name.trim()) return this.text(res, 400, 'Type a name for this device.');
     this.opts.devices.rename(device.id, name);
-    this.opts.onRenamed?.(device.id);
+    this.opts.onDeviceChanged?.(device.id);
     return this.json(res, 200, this.me(this.opts.devices.get(device.id) ?? device));
   }
 
@@ -769,7 +816,7 @@ export class RemoteServer {
     try {
       let stat: fs.Stats;
       try {
-        stat = fs.statSync(offer.file);
+        stat = await fs.promises.stat(offer.file);
         if (!stat.isFile()) throw new Error('not a file');
       } catch {
         return this.text(res, 404, 'Not Found');
@@ -835,7 +882,9 @@ export class RemoteServer {
       if (!png) return this.text(res, 404, 'Not Found');
       return sendPayload(req, res, this.cache.intern('image/png', png), 'public, max-age=86400');
     }
-    if (rel === '/' || rel === '/pair') rel = '/index.html';
+    // A window's frame gets index.html without the home-screen tags (pwa.ts FRAME_PAGE).
+    const frame = rel === FRAME_PAGE;
+    if (rel === '/' || rel === '/pair' || frame) rel = '/index.html';
     const root = path.resolve(this.opts.staticDir);
     const file = path.resolve(root, '.' + path.posix.normalize(rel.replace(/\\/g, '/')));
     if (rel.includes('\0') || (file !== root && !file.startsWith(root + path.sep))) return this.text(res, 404, 'Not Found');
@@ -848,7 +897,7 @@ export class RemoteServer {
     if (!stat.isFile()) return this.text(res, 404, 'Not Found');
     // The page itself must always be fresh; built assets carry a content hash.
     if (path.extname(file).toLowerCase() === '.html') {
-      const body = Buffer.from(withMobileHead(withConnectSrc(await fs.promises.readFile(file, 'utf8'), this.pageHost(req, source))), 'utf8');
+      const body = Buffer.from(withMobileHead(withConnectSrc(await fs.promises.readFile(file, 'utf8'), this.pageHost(req, source)), frame), 'utf8');
       return sendPayload(req, res, this.cache.intern(MIME['.html'] as string, body), 'no-cache');
     }
     return this.cache.sendFile(req, res, file, stat, MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream', 'public, max-age=31536000, immutable');
@@ -863,7 +912,7 @@ export class RemoteServer {
     }
   }
 
-  /** What the service worker keeps for the app to open offline: the page, the manifest, the icons that exist and the built code, styles and fonts. Images (the docs' screenshots among them) are kept once a screen shows them. */
+  /** What the service worker keeps for the app to open offline: the page and its windows' (FRAME_PAGE), the manifest, the icons that exist and the built code, styles and fonts. Images (the docs' screenshots among them) are kept once a screen shows them. */
   private precacheList(): string[] {
     const dir = path.join(path.resolve(this.opts.staticDir), 'assets');
     let mtimeMs = -1;
@@ -883,7 +932,7 @@ export class RemoteServer {
       assets = this.assetList = { mtimeMs, names };
     }
     const icons = (Object.keys(PWA_ICONS) as PwaIconName[]).filter((name) => this.opts.icon?.(name)).map((name) => `/icons/${name}.png`);
-    return ['/index.html', '/manifest.webmanifest', ...icons, ...assets.names.map((n) => `/assets/${n}`)];
+    return ['/index.html', FRAME_PAGE, '/manifest.webmanifest', ...icons, ...assets.names.map((n) => `/assets/${n}`)];
   }
 
   /** A file the server makes itself; always checked again (a 304 when unchanged), so an update shows at once. */

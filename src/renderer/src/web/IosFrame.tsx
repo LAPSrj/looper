@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { MessageBoxSpec } from '../../../shared/remote-access';
+import { NOTIFY_TOPICS, type MessageBoxSpec } from '../../../shared/remote-access';
 import { Icon } from '../components/Icon';
 import { ICONS } from '../components/icons';
 import { Menu } from '../components/Menu';
@@ -19,6 +19,7 @@ import { LocalMessageBox, NewFolderBox, useMessageAnswer, type MessageBoxProps }
 import { Notifications } from './Notifications';
 import { PathBar } from './PathBar';
 import { CHECK, FileRows, FileViewBody, Switch } from './phone-files';
+import { viewToggles, type ViewOptions } from './file-view';
 import { deviceNoun, moreFor, PhoneWindows, pickMore, screenBars, usePhoneShell, type PhoneShell, type Screen } from './phone-shell';
 import { slideCard, useDragToDismiss } from './sheet-drag';
 import type { PageNavTabs } from './page-nav';
@@ -26,6 +27,7 @@ import type { OpenDialog, PathRequest } from './store';
 import { noMnemonic } from '../../../shared/commands/command';
 import type { PageNavAction } from './nav-bar-model';
 import { installMotion } from './motion';
+import { installStatusBarTap } from './status-bar-tap';
 import { IosBarRow, IosBrowserBarRow } from './NavBarRow';
 import { BarHostContext, NavBar, type NavBarProps } from '../components/NavBar';
 import { ViewportContext } from './viewport-context';
@@ -48,6 +50,10 @@ export function IosFrame({ controller }: { controller: ShellController }) {
     if (meta && !/maximum-scale/.test(meta.content)) meta.content += ', maximum-scale=1';
     installMotion(document);
   }, []);
+  // A tap on the status bar scrolls the top screen's list to its top (status-bar-tap.ts).
+  const topW = useRef(shell.top?.win.w);
+  topW.current = shell.top?.win.w;
+  useEffect(() => installStatusBarTap(document, () => (topW.current ? controller.frameOf(topW.current)?.contentDocument : null)), [controller]);
   // iOS colors the status bar from the fixed element at the top (the served page's .ios-top-edge strip), not from
   // theme-color: the color of the topmost full screen's bar, which a page sheet leaves in view above it.
   const full = shell.screens.filter((x) => !x.leaving && (x.pres === 'root' || x.pres === 'push')).sort((a, b) => b.depth - a.depth)[0];
@@ -393,6 +399,7 @@ function FileSheet({ controller, shell, dialog }: { controller: ShellController;
 function PathSheet({ controller, shell, req }: { controller: ShellController; shell: PhoneShell; req: PathRequest }) {
   const p = usePathRequest(controller, req);
   const [query, setQuery] = useFolderSearch(p.browser?.path ?? null);
+  const [options, setOptions] = useState<ViewOptions>({});
   if (p.view) {
     const view = p.view;
     const steps = p.steps;
@@ -409,11 +416,12 @@ function PathSheet({ controller, shell, req }: { controller: ShellController; sh
                   { id: 'next', label: 'Next Image', icon: 'next', disabled: steps.index >= steps.count - 1, run: () => steps.go(steps.index + 1) },
                 ]
               : []),
+            ...viewToggles(view.kind, options, setOptions),
             { id: 'download', label: 'Download', icon: 'download', run: () => view.askDownload(`This ${deviceNoun('ios', shell.tablet)}`) },
           ],
         }}
       >
-        <FileViewBody view={view} name={p.name} steps={steps} />
+        <FileViewBody view={view} name={p.name} steps={steps} options={options} />
         <LocalMessageBox msg={p.message} box={Alert} />
       </Sheet>
     );
@@ -444,12 +452,7 @@ function DeviceSheet({ controller, shell, onClose }: { controller: ShellControll
     else d.resetName();
   };
   return (
-    <Sheet
-      shell={shell}
-      label="This Device"
-      small
-      onClose={onClose}
-    >
+    <Sheet shell={shell} label="This Device" onClose={onClose}>
       <div className="ios-grouped ph-scroll">
         <div className="ios-group">
           <IosField label="Name">
@@ -468,11 +471,18 @@ function DeviceSheet({ controller, shell, onClose }: { controller: ShellControll
             <span className="ios-cell-value">{d.computer}</span>
           </div>
         </div>
-        <div className="ios-group">
+        <div className="ios-group-title">Notifications</div>
+        <div className="ios-group ios-group-titled">
           <div className="ios-cell">
-            <span className="ios-cell-label">Notifications</span>
-            <Switch os="ios" on={d.push === 'on'} disabled={!d.usable || d.busy} label="Notifications" onChange={d.setNotifications} />
+            <span className="ios-cell-label">Allow notifications</span>
+            <Switch os="ios" on={d.push === 'on'} disabled={!d.usable || d.busy} label="Allow notifications" onChange={d.setNotifications} />
           </div>
+          {NOTIFY_TOPICS.map((t) => (
+            <div key={t.id} className="ios-cell">
+              <span className="ios-cell-label wrap">{t.label}</span>
+              <Switch os="ios" on={!!d.notify?.[t.id]} disabled={!d.notify} label={t.label} onChange={(on) => void d.setTopic(t.id, on)} />
+            </div>
+          ))}
         </div>
         {d.hint && <div className="ios-group-footer">{d.hint}</div>}
         <div className="ios-group">

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MeResponse, RenameRequest } from '../../../shared/remote-access';
+import type { DeviceNotifications, MeResponse, NotifyTopic, RenameRequest } from '../../../shared/remote-access';
 import type { ShellController } from './controller';
 import { useLocalMessage, type LocalMessage } from './file-flows';
 import { disablePush, enablePush, pushState, type PushState } from './push-client';
@@ -11,11 +11,17 @@ export interface ThisDevice {
   /** The computer's name ('' until known). */
   computer: string;
   push: PushState | null;
+  /** What the computer notifies this device of (null until known). */
+  notify: DeviceNotifications | null;
   busy: boolean;
   /** The Notifications switch: call it from the switch's own event (permission needs the gesture). Resolves false when it failed (the error is shown). */
   setNotifications: (on: boolean) => Promise<boolean>;
   /** Rename this device on the computer (its Paired Devices list follows). Resolves false when it failed (the error is shown). */
   rename: (name: string) => Promise<boolean>;
+  /** Turn one kind of notification on or off for this device (saved on the computer at once). Resolves false when it failed (the error is shown). */
+  setTopic: (topic: NotifyTopic, on: boolean) => Promise<boolean>;
+  /** Save all of them at once (a window's Save). */
+  saveNotify: (notify: DeviceNotifications) => Promise<boolean>;
   unpair: () => void;
   message: LocalMessage | null;
 }
@@ -27,6 +33,7 @@ export function useThisDevice(controller: ShellController): ThisDevice {
   const [name, setName] = useState('');
   const [computer, setComputer] = useState('');
   const [push, setPush] = useState<PushState | null>(null);
+  const [notify, setNotify] = useState<DeviceNotifications | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, ask] = useLocalMessage();
   const alive = useRef(true);
@@ -38,6 +45,7 @@ export function useThisDevice(controller: ShellController): ThisDevice {
       .then((me) => {
         if (!alive.current || !me?.device) return;
         setName(me.device.name);
+        setNotify(me.device.notify);
         setComputer(me.computer ?? '');
       })
       .catch(() => undefined);
@@ -52,6 +60,23 @@ export function useThisDevice(controller: ShellController): ThisDevice {
   }, [controller]);
 
   const fail = (err: unknown) => void ask({ type: 'error', title: 'Looper', message: errorText(err), buttons: ['OK'], defaultId: 0, cancelId: 0 });
+
+  const saveNotify = async (next: DeviceNotifications): Promise<boolean> => {
+    const before = notify;
+    // The switch moves at once; a failure puts it back.
+    setNotify(next);
+    try {
+      const res = await fetch('/api/notifications', { method: 'POST', headers: requestHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(next) });
+      if (!res.ok) throw new Error(`Couldn't change this device's notifications (${res.status}).`);
+      const me = (await res.json()) as MeResponse;
+      if (alive.current && me.device) setNotify(me.device.notify);
+      return true;
+    } catch (err) {
+      if (alive.current) setNotify(before);
+      fail(err);
+      return false;
+    }
+  };
 
   return {
     name,
@@ -73,6 +98,9 @@ export function useThisDevice(controller: ShellController): ThisDevice {
         })
         .finally(() => alive.current && setBusy(false));
     },
+    notify,
+    setTopic: (topic, on) => (notify ? saveNotify({ ...notify, [topic]: on }) : Promise.resolve(false)),
+    saveNotify,
     rename: async (next) => {
       setBusy(true);
       try {

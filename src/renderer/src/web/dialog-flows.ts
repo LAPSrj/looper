@@ -218,7 +218,7 @@ export function groupPlaces(entries: HostDirEntry[]): { heading: string | null; 
 
 // ---------- the file viewer ----------
 
-export type ViewerKind = 'image' | 'pdf' | 'markdown' | 'code' | 'text';
+export type ViewerKind = 'image' | 'pdf' | 'markdown' | 'html' | 'csv' | 'docx' | 'xlsx' | 'pptx' | 'code' | 'text';
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
 const TEXT_EXTS = ['txt', 'text', 'log', 'out', 'err', 'csv', 'tsv', 'diff', 'patch', 'lock', 'properties'];
@@ -234,6 +234,11 @@ export function viewerKind(name: string, isCode: (name: string) => boolean): Vie
   if (IMAGE_EXTS.includes(ext)) return 'image';
   if (ext === 'pdf') return 'pdf';
   if (ext === 'md' || ext === 'markdown') return 'markdown';
+  if (ext === 'html' || ext === 'htm') return 'html';
+  if (ext === 'csv' || ext === 'tsv') return 'csv';
+  if (ext === 'docx') return 'docx';
+  if (ext === 'xlsx' || ext === 'xlsm') return 'xlsx';
+  if (ext === 'pptx') return 'pptx';
   if (isCode(name)) return 'code';
   if (TEXT_EXTS.includes(ext) || TEXT_NAMES.includes(name.toLowerCase())) return 'text';
   return null;
@@ -244,9 +249,17 @@ export const VIEWER_MAX_BYTES: Record<ViewerKind, number> = {
   image: 25 * 1024 * 1024,
   pdf: 50 * 1024 * 1024,
   markdown: 5 * 1024 * 1024,
+  html: 5 * 1024 * 1024,
+  csv: 10 * 1024 * 1024,
+  docx: 25 * 1024 * 1024,
+  xlsx: 10 * 1024 * 1024,
+  pptx: 50 * 1024 * 1024,
   code: 5 * 1024 * 1024,
   text: 5 * 1024 * 1024,
 };
+
+/** The kinds the viewer reads as bytes (a PDF and Office files); the others as an image's URL or as text. */
+export const binaryKind = (kind: ViewerKind): boolean => kind === 'pdf' || kind === 'docx' || kind === 'xlsx' || kind === 'pptx';
 
 /** An <img>'s type for an image read as bytes (the download comes as application/octet-stream; an SVG needs its own). */
 export function imageType(name: string): string {

@@ -20,11 +20,12 @@ export const SESSION_TYPES = [
 
 /**
  * A chat's harness, model, effort, permission mode and session type, as a
- * menu's or the message box's choices. The harness changes only until the
- * first message. Claude replaces its process for a new model, effort, session
+ * menu's or the message box's choices. Once the conversation has started,
+ * the harness changes only to another of its kind (Claude Code or Codex). Claude replaces its process for a new model, effort, session
  * type or Bypass, which would cut a turn short, so those wait for the turn to
  * end; an interactive chat replaces it for a new permission mode too. Codex
- * runs headless only.
+ * runs headless only. Auto compact follows Settings → Chats unless the chat
+ * has a choice of its own, and changes at any time.
  */
 export function chatSettingEntries(s: ChatState, looper: LooperApi): Record<ChatSettingMenu, Entry[]> {
   const ended = s.status === 'ended';
@@ -40,7 +41,12 @@ export function chatSettingEntries(s: ChatState, looper: LooperApi): Record<Chat
   const failed = (e: unknown) => void looper.showError((e as Error).message);
   const configure = (patch: Parameters<LooperApi['chat']['configure']>[1]) => void looper.chat.configure(s.id, patch).catch(failed);
   return {
-    harness: radioEntries(s.harnesses.map((h) => [h.id, h.name] as const), s.harnessId, () => !s.harnessLocked, (id) => void looper.chat.setHarness(s.id, id).catch(failed)),
+    harness: radioEntries(
+      s.harnesses.map((h) => [h.id, h.name] as const),
+      s.harnessId,
+      (id) => !s.harnessLocked || s.harnesses.some((h) => h.id === id && h.kind === s.harnessKind),
+      (id) => void looper.chat.setHarness(s.id, id).catch(failed),
+    ),
     model: radioEntries([['', 'Default'], ...s.models.map((m) => [m.id, m.name] as const)], s.settings.model ?? '', () => canReplace, (v) => configure({ model: v || undefined })),
     effort: radioEntries(titled([['', defaultEffort ? `Default (${defaultEffort})` : 'Default'], ...offered]), s.settings.effort ?? '', () => canReplace, (v) => configure({ effort: (v || undefined) as never })),
     permission: radioEntries(
@@ -56,5 +62,18 @@ export function chatSettingEntries(s: ChatState, looper: LooperApi): Record<Chat
       (v) => canReplace && (v === 'headless' ? !s.codeMode : claude),
       (v) => configure({ mode: v as never }),
     ),
+    compact: radioEntries(
+      [
+        ['', `Default (${autoCompactLabel(s.autoCompactDefault.enabled, s.autoCompactDefault.percent)})`],
+        ['on', autoCompactLabel(true, s.autoCompactDefault.percent)],
+        ['off', autoCompactLabel(false, s.autoCompactDefault.percent)],
+      ],
+      s.settings.autoCompact === undefined ? '' : s.settings.autoCompact ? 'on' : 'off',
+      () => !ended,
+      (v) => configure({ autoCompact: v === '' ? undefined : v === 'on' }),
+    ),
   };
 }
+
+/** An auto-compact choice as the Auto Compact menu names it. */
+const autoCompactLabel = (on: boolean, percent: number): string => (on ? `At ${percent}%` : 'Off');

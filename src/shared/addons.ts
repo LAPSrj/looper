@@ -671,6 +671,8 @@ export type AddonNode =
       detailEmpty?: string;
       more?: boolean;
       menu?: AddonButton[];
+      /** The detail under the list instead of beside it, where there's room for both (the desktop's and a browser's panes); a narrow place and a phone always stack or push it. */
+      stack?: boolean;
       /** What the rows belong to (a commit's message): a tab of its own before the rows, a section above them on a phone. */
       head?: { label: string; body: AddonNode[] };
     }
@@ -755,6 +757,7 @@ export const AddonNodeSchema: z.ZodType<AddonNode> = z.lazy(() =>
         detailEmpty: z.string().optional(),
         more: z.boolean().optional(),
         menu: z.array(ButtonSchema).optional(),
+        stack: z.boolean().optional(),
         head: z.object({ label: z.string().min(1), body: z.array(AddonNodeSchema) }).strict().optional(),
       })
       .strict(),

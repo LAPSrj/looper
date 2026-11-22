@@ -80,7 +80,7 @@ function PhoneTasks({
       onOpenFolder={onOpenFolder}
       onFolderMenu={(id) => window.looper.showFolderContextMenu({ folderId: id })}
       empty={top ? NO_KIND_TEXT[kind] : undefined}
-      onEmptyMenu={top ? showTasksListMenu : undefined}
+      onEmptyMenu={top ? () => showTasksListMenu() : undefined}
       item={(t) => {
         const rt = m.runtimes[t.id];
         return (
@@ -101,7 +101,7 @@ function PhoneTasks({
   );
   return (
     // A long press between the rows: the list's menu (New Folder…).
-    <PhoneListScreen top={top} onMenu={showTasksListMenu}>
+    <PhoneListScreen top={top} onMenu={() => showTasksListMenu()}>
       {top && <LargeTitle>Tasks</LargeTitle>}
       {top ? <OverviewSwitch listLabel="Tasks" show={show} {...tasksSwitch} list={listBody} overview={<TasksOverview m={m} />} /> : listBody}
     </PhoneListScreen>

@@ -7,6 +7,7 @@
 import { BrowserWindow, screen } from 'electron';
 import { readJson, writeJsonAtomic } from '../../engine/store/fsutil';
 import { parsePlaces, placeKey, placeMode, restoredBounds, type Place, type PlaceMode, type Rect } from './placement';
+import { perfQuiet } from './perf-quiet';
 import { attachZoom } from './zoom';
 import { parseZooms } from './zoom-steps';
 
@@ -129,8 +130,10 @@ export function createPlacedWindow(options: Electron.BrowserWindowConstructorOpt
   const mode = placeMode(!!options.modal && !!options.parent, options.resizable ?? true);
   const restoring = !!file && mode !== 'none' && !!places[key];
   const show = options.show ?? true;
-  const w = new BrowserWindow(restoring ? { ...options, show: false } : options);
-  if (restoring) {
+  // Quiet mode (perf-quiet.ts) shows it here, inactive: shown by the constructor, it would take the focus.
+  const deferred = restoring || (show && perfQuiet());
+  const w = new BrowserWindow(deferred ? { ...options, show: false } : options);
+  if (deferred) {
     process.nextTick(() => {
       if (w.isDestroyed()) return;
       const saved = restore(w, key, mode);

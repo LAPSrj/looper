@@ -8,10 +8,11 @@ import { codexListSkills, isInterruptedRecord } from '../src/engine/chat';
 import { ClaudeStreamAccumulator } from '../src/engine/builder/stream';
 import { TranscriptAccumulator, type SubagentMeta } from '../src/engine/messages';
 import { backgroundOf, latestLine, recentMessages, SessionHub, subagentsOf, type RunEntry, type TerminalEntry } from '../src/engine/sessions';
+import { backgroundStoppedNote } from '../src/engine/claude-mod';
 import { Logger } from '../src/engine/log';
 import { slashCommandsOf, usageLimitsOf, type ChatState } from '../src/shared/chat';
 import type { MessageRow } from '../src/shared/messages';
-import { parseTaskNotification, waitedText, type SlashCommand } from '../src/shared/sessions';
+import { canToggleUnread, isUnread, parseTaskNotification, waitedText, type SlashCommand } from '../src/shared/sessions';
 import { TaskSchema, type EngineEvent, type Project, type Task } from '../src/shared/types';
 import type { WorkflowLaunch } from '../src/engine/workflows';
 import type { WorkflowRun } from '../src/shared/workflows';
@@ -61,6 +62,34 @@ describe('background work in a transcript', () => {
     ]);
     acc.addLine(notification);
     expect(acc.rows[0].background).toMatchObject({ status: 'completed', summary: 'Background command "Run the tests" completed (exit code 0)' });
+  });
+
+  it("ends a command Looper's mod stopped from when its note is stored, before the agent reads it, and shows no message for it", () => {
+    for (const acc of [new TranscriptAccumulator(), new ClaudeStreamAccumulator()]) {
+      const [call, result] = backgroundTranscript('completed');
+      acc.addLine(call);
+      acc.addLine(result);
+      const note = backgroundStoppedNote('b7', 'npm test');
+      // As claude 2.1.330 records a plugin's note on an idle session: held until the next request, then sent.
+      acc.addLine(line({ type: 'attachment', uuid: 'n1', attachment: { type: 'plugin_note', plugin: 'looper', rowUuid: 'n1', content: [], heldContent: [note] } }));
+      expect(acc.rows[0].background).toMatchObject({ status: 'stopped', summary: 'Task "npm test" was stopped by the user' });
+      acc.addLine(line({ type: 'attachment', uuid: 'n1', attachment: { type: 'plugin_note', plugin: 'looper', rowUuid: 'n1', content: [note], sentAs: 'beside' } }));
+      expect(acc.rows.map((r) => r.kind)).toEqual(['tool']);
+      expect(backgroundOf(acc.rows)[0].status).toBe('stopped');
+    }
+  });
+
+  it('ends a command a headless chat stopped with stop_task from its stream event, which says nothing else about how it ended', () => {
+    const acc = new ClaudeStreamAccumulator();
+    const [call, result] = backgroundTranscript('completed');
+    acc.addLine(call);
+    acc.addLine(result);
+    // A foreground call's event and a completion leave it as it is: only a stop counts (claude 2.1.330).
+    acc.addLine(line({ type: 'system', subtype: 'task_notification', task_id: 'b9', status: 'completed', summary: 'Run 40-second sleep' }));
+    acc.addLine(line({ type: 'system', subtype: 'task_notification', task_id: 'b7', status: 'completed', summary: 'Run the tests' }));
+    expect(acc.rows[0].background?.status).toBe('running');
+    acc.addLine(line({ type: 'system', subtype: 'task_notification', task_id: 'b7', status: 'stopped', summary: 'Run the tests', output_file: '/tmp/claude-1000/p/s/tasks/b7.output' }));
+    expect(acc.rows[0].background).toEqual({ id: 'b7', status: 'stopped', outputFile: '/tmp/claude-1000/p/s/tasks/b7.output' });
   });
 
   it('marks a subagent launched in the background by its agent id', () => {
@@ -318,9 +347,10 @@ describe('the session hub', () => {
     harnessId: 'claude',
     harnessName: 'Claude Code',
     harnessKind: 'claude-code',
-    harnesses: [{ id: 'claude', name: 'Claude Code' }],
+    harnesses: [{ id: 'claude', name: 'Claude Code', kind: 'claude-code' }],
     harnessLocked: false,
     settings: { permissionMode: '' },
+    autoCompactDefault: { enabled: false, percent: 90 },
     models: [],
     status: 'ready',
     history: [],
@@ -384,6 +414,16 @@ describe('the session hub', () => {
     expect(h.state().sessions[0].limit).toBeUndefined();
   });
 
+  it("keeps Group Chats By None's dragged order while it runs, a closed chat's id dropping out", () => {
+    const chats = [chat({ id: 'c1' }), chat({ id: 'c2', startedAt: 2000 })];
+    const { h } = hub({ chats });
+    expect(h.state().order).toEqual([]);
+    h.reorder(['c2', 'c1', 'c2']);
+    expect(h.state().order).toEqual(['c2', 'c1']);
+    chats.pop();
+    expect(h.state().order).toEqual(['c1']);
+  });
+
   it('keeps a chat with no reset time out of its limit until its next message', () => {
     const { h } = hub({ chats: [chat({ limit: { at: 4000 } })], now: () => 99_999_999 });
     expect(h.state().sessions[0].limit).toEqual({});
@@ -398,6 +438,56 @@ describe('the session hub', () => {
     now = 6000;
     h.seen('c1');
     expect(h.state().sessions[0].waiting).toBeUndefined();
+  });
+
+  it('shows a chat the user marked unread as a finished turn again, until they open it', () => {
+    let now = 5000;
+    const { h } = hub({ chats: [chat({ turnEndedAt: 4000 })], now: () => now });
+    expect(h.state().sessions[0].waiting).toMatchObject({ reason: 'turn' });
+    h.seen('c1');
+    expect(h.state().sessions[0].waiting).toBeUndefined();
+    now = 6000;
+    h.markUnread('c1');
+    expect(h.state().sessions[0].waiting).toMatchObject({ reason: 'turn', since: 6000, unread: true });
+    // A second look in the same millisecond or a later one clears it, and a later mark brings it back.
+    now = 7000;
+    h.seen('c1');
+    expect(h.state().sessions[0].waiting).toBeUndefined();
+    now = 8000;
+    h.markUnread('c1');
+    expect(h.state().sessions[0].waiting).toMatchObject({ unread: true });
+  });
+
+  it('decides from the summary whether Mark as Unread or Mark as Read applies', () => {
+    let now = 5000;
+    const read = hub({ chats: [chat({ turnEndedAt: 4000, status: 'ready' })], now: () => now });
+    // A finished turn nobody has looked at is unread: Mark as Read applies, and it marks it seen.
+    let [s] = read.h.state().sessions;
+    expect([isUnread(s), canToggleUnread(s)]).toEqual([true, true]);
+    read.h.seen('c1');
+    // Read and ready: Mark as Unread applies, and brings it back as "Marked as unread".
+    now = 6000;
+    [s] = read.h.state().sessions;
+    expect([isUnread(s), canToggleUnread(s)]).toEqual([false, true]);
+    read.h.markUnread('c1');
+    [s] = read.h.state().sessions;
+    expect([isUnread(s), canToggleUnread(s), s.waiting?.text]).toEqual([true, true, 'Marked as unread']);
+    // Working: its next turn is news anyway, so it can't be marked; a permission request is bold on its own.
+    const working = hub({ chats: [chat({ status: 'working' })], now: () => now }).h.state().sessions[0];
+    expect([isUnread(working), canToggleUnread(working)]).toEqual([false, false]);
+    const asking = hub({ chats: [chat({ status: 'working', permissions: [{ id: 'r1', tool: 'Bash', input: {} }] })], now: () => now }).h.state().sessions[0];
+    expect([asking.waiting?.reason, isUnread(asking), canToggleUnread(asking)]).toEqual(['permission', false, false]);
+    // A chat that ended unseen is unread (it can be marked read); one that ended and was seen can't be marked unread.
+    const ended = hub({ chats: [chat({ status: 'ended' })], now: () => now });
+    [s] = ended.h.state().sessions;
+    expect([isUnread(s), canToggleUnread(s)]).toEqual([true, true]);
+    now = 7000;
+    ended.h.seen('c1');
+    [s] = ended.h.state().sessions;
+    expect([isUnread(s), canToggleUnread(s)]).toEqual([false, false]);
+    // A task run's agent has no Mark as Unread.
+    expect(canToggleUnread({ ...s, kind: 'run', status: 'ready' })).toBe(false);
+    expect(canToggleUnread(undefined)).toBe(false);
   });
 
   it('marks a chat whose turn ended on an API error as failed with its text, until the user looks', () => {

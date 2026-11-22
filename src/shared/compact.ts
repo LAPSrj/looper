@@ -146,6 +146,8 @@ function shorten(s: string): string {
 export interface CompactedTextOptions extends Partial<CompactionBudget> {
   /** Turns a file's host path into the agent's. */
   path?: (hostPath: string) => string;
+  /** Code Mode: what the new session's REPL starts with of the earlier one's, and what it has to rebuild (replStateNote). */
+  replNote?: string;
 }
 
 /**
@@ -296,6 +298,7 @@ export function compactedText(rows: MessageRow[], opts: CompactedTextOptions = {
       );
     }
   }
+  if (opts.replNote) parts.push(`[Compaction: the REPL]\n${escapeLabels(opts.replNote)}`);
   const trimmed =
     removed || shortened
       ? ` To fit, ${[removed ? `${removed} older progress update${removed > 1 ? 's were' : ' was'} removed` : '', shortened ? `${shortened} older report${shortened > 1 ? 's were' : ' was'} shortened` : ''].filter(Boolean).join(' and ')}, each marked where it happened.`
@@ -336,4 +339,57 @@ export function withoutCompacted(text: string): string {
   if (!t.startsWith(OPEN)) return text;
   const end = t.indexOf(CLOSE);
   return end === -1 ? '' : t.slice(end + CLOSE.length).trim();
+}
+
+/**
+ * The error a harness ends a turn with when the conversation no longer fits
+ * its model's context window. Claude Code 2.1.330 says "Prompt is too long"
+ * (an API error message, model <synthetic>, error invalid_request; the
+ * result's terminal_reason is blocking_limit, or prompt_too_long when the API
+ * refused it), "Prompt is too long · automatic compaction failed: …" when its
+ * own compaction failed, and the API's refusal can read "input is too long
+ * for requested model". Codex 0.163.0 prints an `error` and a `turn.failed`
+ * event saying "Codex ran out of room in the model's context window. …", or,
+ * when the API answers the request with an error, the error's body, whose
+ * code is context_length_exceeded.
+ */
+export const CONTEXT_FULL_RE = /^(?:Error: )?(?:Prompt is too long|Input is too long for requested model)|ran out of room in the model's context window|context_length_exceeded/i;
+
+/** A harness's error as a row: Claude's API error, or Codex's "Error: …" line (CodexExecAccumulator). */
+const harnessError = (r: MessageRow) => r.kind === 'error' || (r.kind === 'agent' && !r.note && r.text.startsWith('Error: '));
+
+/**
+ * Whether the latest turn stopped because the context was full: its last rows
+ * (Looper's notes aside) are the harness's errors, one of them CONTEXT_FULL_RE.
+ * Then the rows a compaction that sends the turn's messages again starts from:
+ * without those errors, and without the turn's messages when nothing came
+ * after them, since they go again. Null when the turn didn't stop on it.
+ */
+export function contextFullRetry(rows: MessageRow[]): MessageRow[] | null {
+  let end = rows.length;
+  let full = false;
+  while (end > 0 && (rows[end - 1].note || harnessError(rows[end - 1]))) {
+    end--;
+    if (!rows[end].note && CONTEXT_FULL_RE.test(rows[end].text)) full = true;
+  }
+  if (!full) return null;
+  let start = end;
+  while (start > 0 && (rows[start - 1].kind === 'prompt' || rows[start - 1].kind === 'guidance')) start--;
+  return rows.slice(0, start);
+}
+
+type Resent = { text: string; attachments: NonNullable<MessageRow['attachments']> };
+
+/**
+ * What a chat compacted on a full context sends again: the messages Looper
+ * sent for the turn (`sent`, as they were sent), or, when it sent none (the
+ * prompt was typed in the terminal, or the agent started the turn itself),
+ * the prompts contextFullRetry left out of `kept`, so none is lost.
+ */
+export function contextFullResend(rows: MessageRow[], kept: MessageRow[], sent: Resent[]): Resent[] {
+  if (sent.length) return sent;
+  return rows
+    .slice(kept.length)
+    .filter((r) => (r.kind === 'prompt' || r.kind === 'guidance') && !r.note && (r.text.trim() || r.attachments?.length))
+    .map((r) => ({ text: r.text, attachments: r.attachments ?? [] }));
 }

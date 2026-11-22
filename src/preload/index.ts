@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { createLooperApi, type LooperTransport } from '../shared/api-client';
+import { isWebLink } from '../shared/links';
 
 const transport: LooperTransport = {
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
@@ -21,4 +22,33 @@ const transport: LooperTransport = {
   filePath: async (file) => webUtils.getPathForFile(file),
 };
 
-contextBridge.exposeInMainWorld('looper', createLooperApi(transport));
+/**
+ * A frame inside a window, where this preload runs too (nodeIntegrationInSubFrames): an HTML file Preview shows,
+ * or a frame in it at any depth. Its page gets nothing from Looper. It opens nothing itself (PREVIEW_SANDBOX), so a
+ * click the user makes on a web or mail link goes to main, which opens it in the browser once main has said the
+ * frame is a previewed page's. This runs in the preload's own world: the page's scripts can't reach this listener,
+ * and a click they make (click(), dispatchEvent) isn't trusted.
+ */
+function forwardPreviewLinks(): void {
+  let preview = false;
+  void ipcRenderer.invoke('preview:inPage').then((ok: unknown) => (preview = ok === true));
+  addEventListener('click', (e) => {
+    if (!preview || !e.isTrusted || e.defaultPrevented || e.button !== 0) return;
+    const a = e.target instanceof Element ? e.target.closest('a[href],area[href]') : null;
+    if (!a) return;
+    let url: string;
+    try {
+      // An SVG link's href isn't a string.
+      url = new URL(a.getAttribute('href') ?? '', document.baseURI).href;
+    } catch {
+      return;
+    }
+    // A link to a place in the same page moves there.
+    if (!isWebLink(url) || (url.includes('#') && url.split('#')[0] === location.href.split('#')[0])) return;
+    e.preventDefault();
+    ipcRenderer.send('preview:open', url);
+  });
+}
+
+if (process.isMainFrame) contextBridge.exposeInMainWorld('looper', createLooperApi(transport));
+else forwardPreviewLinks();

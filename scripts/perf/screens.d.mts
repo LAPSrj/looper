@@ -22,8 +22,12 @@ export interface PhoneScreenEntry {
   tab: string;
   push?: string;
   taps?: (string | RegExp)[];
+  split?: boolean;
+  window?: boolean;
 }
 export const WINDOWS: WindowScreen[];
 export const MAIN_SCREENS: MainScreen[];
 export const PHONE_SCREENS: PhoneScreenEntry[];
 export const PHONES: string[];
+export const DEVICES: string[];
+export function parseDevices(value: string | undefined): string[];

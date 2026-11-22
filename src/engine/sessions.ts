@@ -7,6 +7,7 @@ import { bareId } from '../shared/model-update';
 import { projectIdOf, sameFolder } from '../shared/projects';
 import {
   limitsKey,
+  permissionText,
   type BackgroundTask,
   type RunAgent,
   type RunPermission,
@@ -105,6 +106,8 @@ interface HookFile {
 interface Track {
   /** When the user last looked at the session. */
   seenAt: number;
+  /** When the user marked the session unread: it waits as a finished turn until they open it again (seen). */
+  unreadAt?: number;
   hooks: Record<'prompt' | 'stop' | 'notification', HookFile | null>;
   rows: MessageRow[];
   /** A task run's guidance its agent hasn't picked up yet. */
@@ -116,6 +119,8 @@ interface Track {
   subagentMetas: SubagentMeta[];
   /** What each subagent's transcript says, read while the window shows the session; a finished one's isn't read again. */
   subagentStats: Map<string, SubagentStats>;
+  /** How background tasks ended that the transcript has no row for: subagents a subagent started. */
+  ended?: NonNullable<MessagesResult['ended']>;
   workflows: WorkflowRun[];
   context?: ChatContext;
   reading: boolean;
@@ -266,12 +271,22 @@ export function subagentsOf(
   rows: MessageRow[],
   stats?: Map<string, SubagentStats>,
   windows?: Record<string, number>,
+  ended?: MessagesResult['ended'],
 ): SubagentInfo[] {
   return metas.map((m) => {
     const row = rows.find((r) => r.toolUseId === m.toolUseId) ?? rows.find((r) => r.agentId === m.agentId || r.background?.id === m.agentId);
     let status: SubagentInfo['status'] = 'running';
     if (row?.background) status = row.background.status === 'running' ? 'running' : row.background.status === 'completed' ? 'done' : 'failed';
     else if (row?.result !== undefined) status = row.resultError ? 'failed' : 'done';
+    else if (!row && ended?.[m.agentId]) {
+      // A subagent a subagent started: its Agent call is in that subagent's transcript, and this one has only its notification.
+      const how = ended[m.agentId];
+      status = how === 'running' ? 'running' : how === 'completed' ? 'done' : 'failed';
+    } else if (!row?.background && !ended?.[m.agentId] && stats?.get(m.agentId)?.stopped) {
+      // Nothing else says how it went, but its own transcript ends on a finished turn: it stopped (agents asked for
+      // by a Code Mode script or started before a compaction have no result row, or one that never came).
+      status = 'done';
+    }
     const s = stats?.get(m.agentId);
     const window = s?.model ? (windows?.[bareId(s.model)] ?? modelWindows.pick(s.model, s.tokens)) : undefined;
     return {
@@ -308,13 +323,6 @@ function replyTimes(cache: Track['cache'], fallback: number | undefined): { last
   };
 }
 
-/** What a permission request asks, in words. */
-function permissionText(tool: string): string {
-  if (tool === 'Bash' || tool === 'PowerShell') return 'Wants to run a command';
-  if (tool === 'Write' || tool === 'Edit' || tool === 'MultiEdit' || tool === 'NotebookEdit') return 'Wants to change a file';
-  return `Wants to use ${tool}`;
-}
-
 /**
  * The Chats window's model: every open chat and Looper terminal session (and
  * each delegated agent's run, and with Show Task Runs on every task run's
@@ -333,6 +341,8 @@ export class SessionHub {
   private polls = 0;
   private lastSent = '';
   private readonly lastActivity = new Map<string, string>();
+  /** Group Chats By None's order, by session id: kept while Looper runs, never saved. */
+  private order: string[] = [];
 
   constructor(private readonly d: SessionHubDeps) {}
 
@@ -375,7 +385,15 @@ export class SessionHub {
   seen(id: string): void {
     const t = this.tracks.get(id);
     if (!t) return;
-    t.seenAt = this.now();
+    t.seenAt = Math.max(this.now(), t.unreadAt ?? 0);
+    this.changed();
+  }
+
+  /** The user marked the session unread: it shows as a finished turn again until they open it. */
+  markUnread(id: string): void {
+    const t = this.tracks.get(id);
+    if (!t) return;
+    t.unreadAt = Math.max(this.now(), t.seenAt + 1);
     this.changed();
   }
 
@@ -405,8 +423,32 @@ export class SessionHub {
     this.watched = next;
   }
 
+  /**
+   * A chat compacted into `to`: the new chat takes its place in Group Chats
+   * By None's order, and what the user has seen of it, as if it were the same chat.
+   */
+  moved(from: string, to: string): void {
+    this.order = this.order.map((id) => (id === from ? to : id));
+    const old = this.tracks.get(from);
+    if (old) {
+      const t = this.track(to, old.seenAt);
+      t.seenAt = old.seenAt;
+      if (old.unreadAt !== undefined) t.unreadAt = old.unreadAt;
+    }
+    this.changed();
+  }
+
+  /** The list's rows dragged into this order with Group Chats By None. */
+  reorder(ids: string[]): void {
+    this.order = [...new Set(ids)];
+    this.changed();
+  }
+
   state(): SessionsState {
-    return { sessions: this.summaries(), limits: { ...this.limits } };
+    const sessions = this.summaries();
+    // A closed session's id goes from the order.
+    this.order = this.order.filter((id) => sessions.some((s) => s.id === id));
+    return { sessions, limits: { ...this.limits }, order: [...this.order] };
   }
 
   /** The watched session's activity as it stands. */
@@ -422,7 +464,7 @@ export class SessionHub {
       ...(entry.kind !== 'chat' && t.commands?.length ? { commands: t.commands } : {}),
       ...(agent ? { agent } : {}),
       background: backgroundOf(t.rows),
-      subagents: subagentsOf(t.subagentMetas, t.rows, t.subagentStats, entry.kind === 'chat' ? entry.chat.modelWindows : undefined),
+      subagents: subagentsOf(t.subagentMetas, t.rows, t.subagentStats, entry.kind === 'chat' ? entry.chat.modelWindows : undefined, t.ended),
       workflows: t.workflows,
     };
   }
@@ -532,12 +574,15 @@ export class SessionHub {
     t.reading = true;
     try {
       const r = await this.d.readRows(e.taskId, e.id);
-      if (r.status === 'ok') t.rows = r.rows.filter((row) => row.kind !== 'raw');
+      if (r.status === 'ok') {
+        t.rows = r.rows.filter((row) => row.kind !== 'raw');
+        t.ended = r.ended;
+      }
       t.pendingGuidance = e.kind === 'run' ? r.pendingGuidance : undefined;
       if (e.kind !== 'chat' && r.commands) t.commands = r.commands;
       if (kind === 'claude-code') t.subagentMetas = await this.d.subagents(e.taskId, e.id);
       if (kind === 'claude-code' && (force || this.watched.has(id))) {
-        for (const a of subagentsOf(t.subagentMetas, t.rows)) {
+        for (const a of subagentsOf(t.subagentMetas, t.rows, undefined, undefined, t.ended)) {
           if (a.status !== 'running' && t.subagentStats.has(a.agentId)) continue;
           const stats = await this.d.subagentStats(e.taskId, e.id, a.agentId);
           if (stats) t.subagentStats.set(a.agentId, stats);
@@ -645,6 +690,9 @@ export class SessionHub {
     if (!waiting && c.status === 'ready' && c.turnEndedAt !== undefined && c.turnEndedAt > t.seenAt) {
       waiting = { reason: 'turn', text: 'Finished its turn', since: c.turnEndedAt };
     }
+    if (!waiting && c.status === 'ready' && t.unreadAt !== undefined && t.unreadAt > t.seenAt) {
+      waiting = { reason: 'turn', text: 'Marked as unread', since: t.unreadAt, unread: true };
+    }
     const background = backgroundOf(t.rows).filter((b) => b.status === 'running').length;
     const limit = c.status === 'ready' ? limitState(c.limit, this.now(), t.seenAt) : undefined;
     return {
@@ -659,6 +707,7 @@ export class SessionHub {
       limitsKey: limitsKey(c.environmentId, c.harnessId),
       status: c.status,
       ...(waiting ? { waiting } : {}),
+      ...(c.muted ? { muted: true } : {}),
       ...(c.permissions.length > 0 ? { permissionId: c.permissions[0].id } : {}),
       ...(latest ? { latest } : {}),
       ...(recent.length ? { recent } : {}),
@@ -690,6 +739,7 @@ export class SessionHub {
       if (t.endedAt! > t.seenAt) waiting = { reason: 'error', text: 'The session ended.', since: t.endedAt! };
     } else waiting = this.notification(t, Math.max(prompt, stop));
     if (!waiting && status === 'ready' && stop > t.seenAt) waiting = { reason: 'turn', text: 'Finished its turn', since: stop };
+    if (!waiting && status === 'ready' && t.unreadAt !== undefined && t.unreadAt > t.seenAt) waiting = { reason: 'turn', text: 'Marked as unread', since: t.unreadAt, unread: true };
     const lastMessage = stopHook?.payload?.last_assistant_message ?? stopHook?.payload?.['last-assistant-message'];
     const latest = status !== 'working' && typeof lastMessage === 'string' && lastMessage.trim() ? oneLine(lastMessage) : latestLine(t.rows);
     const recent = recentMessages(t.rows);

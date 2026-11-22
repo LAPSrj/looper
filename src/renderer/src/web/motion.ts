@@ -1,7 +1,10 @@
 import { DEFAULT_SPRING, SMOOTH, SNAPPY } from './menu-motion';
 
 /**
- * iOS's small motions, for a document of the frame or of a window's page (ios.md: Motion). Components keep
+ * The phone's and tablet's motions, for a document of the frame or of a window's page. On Android only a screen pushed
+ * inside the main window or a window pushed over it moves (Material's own navigation, `swapScreensAndroid`,
+ * `swapWindowsAndroid`); the rest is iOS's small motions
+ * (ios.md: Motion). Components keep
  * drawing their plain states; this watches the document and animates between them:
  *
  * - a segmented control's, a tab bar's and an iPad tab bar's selection slides to the new choice (snappy spring);
@@ -9,8 +12,9 @@ import { DEFAULT_SPRING, SMOOTH, SNAPPY } from './menu-motion';
  *   from within … starting right under your fingertips");
  * - rows a tap inserts (a group opened) grow in, and rows it removes (a group closed, a row deleted) fold away;
  *   a conversation's new last message rises in;
- * - a screen pushed inside the main window (PhoneMain marks it `enter-push` or `enter-pop`) moves the one it
- *   replaces as iOS does: a third of the way out under it, or off the trailing edge over it;
+ * - a screen pushed inside the main window (PhoneMain marks it `enter-push` or `enter-pop`; on a tablet, in the
+ *   detail column) moves the one it replaces as iOS does: a third of the way out under it, or off the trailing edge
+ *   over it;
  * - alerts, banners and the message box's + menu go away with a fade instead of vanishing.
  *
  * What goes away comes back for its animation as an inert copy where it was (`ghost`), so nothing has to wait to
@@ -60,6 +64,9 @@ background:radial-gradient(circle at var(--glow-x) var(--glow-y),rgba(255,255,25
 .motion-ghost{pointer-events:none!important;animation:none!important;transition:none!important}
 .phone-screen.enter-push{position:relative;z-index:1}
 `;
+const ANDROID_STYLE = `
+.motion-ghost{pointer-events:none!important;animation:none!important;transition:none!important}
+`;
 
 const reduced = (): boolean => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const springs = typeof CSS !== 'undefined' && CSS.supports('transition-timing-function', 'linear(0, 1)');
@@ -68,8 +75,10 @@ const ease = (m: { easing: string }, fallback: string): string => (springs ? m.e
 const installed = new WeakSet<Document>();
 
 export function installMotion(doc: Document): void {
-  if (installed.has(doc) || doc.documentElement.dataset.platform !== 'ios') return;
+  const os = doc.documentElement.dataset.platform;
+  if (installed.has(doc) || (os !== 'ios' && os !== 'android')) return;
   installed.add(doc);
+  if (os === 'android') return installAndroid(doc);
   const root = doc.documentElement;
   // The springs for the stylesheets' transitions and keyframes (ios.css, phone.css).
   if (springs) {
@@ -277,34 +286,200 @@ function backdropOf(el: Element): string {
 }
 
 /**
+ * The screen a push or a pop replaced, back as an inert copy over the box the new one fills, under it or over it. The
+ * two are siblings, so the copy goes where the new one's layout box is (offsets leave out the transform its slide
+ * starts with). A tablet's detail column clips both while they move, so neither passes over the list column; the
+ * returned function ends that and removes the copy.
+ */
+function screenCopy(old: HTMLElement, fresh: HTMLElement, over: boolean): { copy: HTMLElement; done: () => void } {
+  const { copy, rescroll } = copyOf(old);
+  const parent = fresh.parentElement;
+  Object.assign(copy.style, { position: 'absolute', left: '0px', top: '0px', width: `${fresh.offsetWidth}px`, height: `${fresh.offsetHeight}px`, margin: '0', zIndex: over ? '2' : '0' });
+  parent?.insertBefore(copy, over ? fresh.nextSibling : fresh);
+  copy.style.left = `${fresh.offsetLeft - copy.offsetLeft}px`;
+  copy.style.top = `${fresh.offsetTop - copy.offsetTop}px`;
+  rescroll();
+  const clipped = parent?.matches('.pg-split-detail') ? parent : null;
+  if (clipped) clipped.style.clipPath = 'inset(0)';
+  return {
+    copy,
+    done: () => {
+      copy.remove();
+      if (clipped && !clipped.querySelector(':scope > .motion-ghost')) clipped.style.clipPath = '';
+    },
+  };
+}
+
+/**
  * The main window's screen changed by a push or a pop: the new one slides in (phone.css) and the old one, back as a
  * copy over the same box, moves a third of the way out under it (push) or slides off over it to the trailing edge (pop).
  */
 function swapScreens(old: HTMLElement, fresh: HTMLElement): void {
   const pop = fresh.classList.contains('enter-pop');
-  const { copy, rescroll } = copyOf(old);
+  // A back the browser already played (Safari's swipe, phone-shell.tsx's data-instant-back) shows at once.
+  if (pop && old.ownerDocument.documentElement.dataset.instantBack !== undefined) return;
+  const { copy, done: remove } = screenCopy(old, fresh, pop);
   const bg = backdropOf(fresh.parentElement ?? fresh);
-  Object.assign(copy.style, {
-    position: 'absolute',
-    left: `${fresh.offsetLeft}px`,
-    top: `${fresh.offsetTop}px`,
-    width: `${fresh.offsetWidth}px`,
-    height: `${fresh.offsetHeight}px`,
-    margin: '0',
-    zIndex: pop ? '2' : '0',
-    background: bg,
-    boxShadow: pop ? '-4px 0 16px rgba(0, 0, 0, 0.12)' : '',
-  });
+  Object.assign(copy.style, { background: bg, boxShadow: pop ? '-4px 0 16px rgba(0, 0, 0, 0.12)' : '' });
   fresh.style.background = bg;
-  fresh.parentElement?.insertBefore(copy, pop ? fresh.nextSibling : fresh);
-  rescroll();
   const spring = pop ? SMOOTH : DEFAULT_SPRING;
   const keys = reduced() ? [{ opacity: 1 }, { opacity: 0 }] : [{ transform: 'none' }, { transform: pop ? 'translateX(100%)' : 'translateX(-30%)' }];
   const done = () => {
-    copy.remove();
+    remove();
     fresh.style.background = '';
   };
   copy.animate(keys, { duration: spring.ms, easing: ease(spring, 'cubic-bezier(0.2, 0.85, 0.25, 1)'), fill: 'forwards' }).finished.then(done, done);
+}
+
+// ---------- Android: Material's navigation between screens ----------
+
+/**
+ * Material's shared axis X (MDC Android's MaterialSharedAxis, docs/theming/Motion.md: "used for transitions between
+ * UI elements that have a spatial or navigational relationship"): both screens move 30 dp along x
+ * (mtrl_transition_shared_axis_slide_distance), the old one fading out over the first 35% and the new one in over
+ * the rest (FadeThroughProvider's 0.35), in motionDurationLong1 (450 ms in M3) on the emphasized easing. Forward, the
+ * new screen comes from the trailing side; back, from the leading side.
+ */
+const AXIS_PX = 30;
+const AXIS_MS = 450;
+const FADE_THROUGH = 0.35;
+/**
+ * Predictive back's commit for a full-screen surface (Android's Predictive back design, Full screen surfaces): the
+ * screen scales from 100% to 90% and the one under it from 110% to 100%, through a fade at 35%, on
+ * (0.1, 0.1, 0, 1), "so the screen quickly exits". The page sees a system back only once it's let go (popstate), so
+ * the preview's part plays as the commit's. The guide gives no duration.
+ */
+const BACK_MS = 350;
+const BACK_EASING = 'cubic-bezier(0.1, 0.1, 0, 1)';
+
+/** An easing given as SVG path cubics from (0, 0) to (1, 1) (Android's path interpolators), as CSS linear() points. */
+export function pathEasing(cubics: readonly (readonly [number, number, number, number, number, number])[], steps = 24): string {
+  const points: string[] = ['0'];
+  let [x0, y0] = [0, 0];
+  for (const [x1, y1, x2, y2, x3, y3] of cubics) {
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const u = 1 - t;
+      const at = (a: number, b: number, c: number, d: number) => u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d;
+      points.push(`${+at(y0, y1, y2, y3).toFixed(4)} ${+(at(x0, x1, x2, x3) * 100).toFixed(2)}%`);
+    }
+    [x0, y0] = [x3, y3];
+  }
+  return `linear(${points.join(', ')})`;
+}
+
+/** M3's emphasized easing (motionEasingEmphasizedInterpolator: "M 0,0 C 0.05, 0, 0.133333, 0.06, 0.166666, 0.4 C 0.208333, 0.82, 0.25, 1, 1, 1"). */
+const EMPHASIZED = springs
+  ? pathEasing([
+      [0.05, 0, 0.133333, 0.06, 0.166666, 0.4],
+      [0.208333, 0.82, 0.25, 1, 1, 1],
+    ])
+  : 'cubic-bezier(0.2, 0, 0, 1)';
+
+function installAndroid(doc: Document): void {
+  const style = doc.createElement('style');
+  style.textContent = ANDROID_STYLE;
+  doc.head.append(style);
+  const startedAt = performance.now();
+  // The frame's document holds the windows (.ph-win); a window's page holds the screens (.phone-screen).
+  installAndroidWindows(doc, () => doc.hidden || performance.now() - startedAt < 800);
+  new MutationObserver((records) => {
+    if (doc.hidden || performance.now() - startedAt < 800) return;
+    const added = new Set<Node>();
+    for (const r of records) for (const n of r.addedNodes) added.add(n);
+    for (const r of records) for (const n of r.removedNodes) if (n instanceof HTMLElement && !n.isConnected && n.classList.contains(SCREEN)) swapWith(r, n, added, swapScreensAndroid);
+  }).observe(doc.body, { subtree: true, childList: true });
+}
+
+/** What a screen does in a shared axis: the keyframes and timing of its part, `enter` or `leave`. */
+function axis(side: 'enter' | 'leave', pop: boolean, system: boolean): { keys: Keyframe[]; timing: KeyframeAnimationOptions } {
+  const still = reduced();
+  const timing = { duration: system ? BACK_MS : AXIS_MS, easing: system ? BACK_EASING : EMPHASIZED };
+  // The effect's easing runs before the keyframes' offsets, so the fade through is at 35% of the eased progress, as in FadeThroughProvider.
+  if (side === 'leave') {
+    const to = system ? 'scale(0.9)' : `translateX(${pop ? AXIS_PX : -AXIS_PX}px)`;
+    return { keys: [{ transform: 'none', opacity: 1 }, { opacity: 0, offset: FADE_THROUGH }, { transform: still ? 'none' : to, opacity: 0 }], timing };
+  }
+  const from = system ? 'scale(1.1)' : `translateX(${pop ? -AXIS_PX : AXIS_PX}px)`;
+  return { keys: [{ transform: still ? 'none' : from, opacity: 0 }, { opacity: 0, offset: FADE_THROUGH }, { transform: 'none', opacity: 1 }], timing };
+}
+
+/**
+ * Windows pushed over the main window or each other (`.ph-win.pres-push`, in the frame's document) move as the screens
+ * inside one do: the new one comes in and the one under it goes out 30 dp (a pop is the same the other way), with
+ * Navigation's predictive back for a system back and nothing for a back Chrome already animated. Dialogs and sheets keep
+ * their own motions (android.css). Does nothing in a document without windows (a window's page).
+ */
+function installAndroidWindows(doc: Document, early: () => boolean): void {
+  const root = doc.documentElement;
+  const isPush = (n: Node): n is HTMLElement => n instanceof HTMLElement && n.classList.contains('ph-win') && n.classList.contains('pres-push');
+  /** The window the push covers or the pop uncovers: the nearest one under it that's drawn. */
+  const under = (win: HTMLElement): HTMLElement | null => {
+    for (let p = win.previousElementSibling; p; p = p.previousElementSibling) {
+      if (p instanceof HTMLElement && p.classList.contains('ph-win') && !p.matches('.leaving, .hidden, .covered')) return p;
+    }
+    return null;
+  };
+  const card = (win: HTMLElement | null) => win?.querySelector<HTMLElement>(':scope > .ph-card') ?? null;
+  const run = (el: HTMLElement | null, a: ReturnType<typeof axis>, fill: FillMode, release: boolean) => {
+    const anim = el?.animate(a.keys, { ...a.timing, fill });
+    // Under a window that's still covering it, the animation ends where it was: let it go so the screen is itself again.
+    if (release) anim?.finished.then(() => anim.cancel(), () => undefined);
+  };
+  const push = (win: HTMLElement) => {
+    run(card(under(win)), axis('leave', false, false), 'forwards', true);
+    run(card(win), axis('enter', false, false), 'backwards', false);
+  };
+  const pop = (win: HTMLElement) => {
+    const system = root.dataset.systemBack !== undefined;
+    delete root.dataset.systemBack;
+    // Chrome played this back: what it closed goes, and what's under it is in place, at once (phone.css).
+    if (root.dataset.instantBack !== undefined) return;
+    run(card(win), axis('leave', true, system), 'forwards', false);
+    run(card(under(win)), axis('enter', true, system), 'backwards', false);
+  };
+  const classes = new MutationObserver((records) => {
+    if (early()) return;
+    for (const r of records) if (isPush(r.target) && r.target.classList.contains('leaving') && !/(^|\s)leaving(\s|$)/.test(r.oldValue ?? '')) pop(r.target);
+  });
+  const watch = (win: HTMLElement) => classes.observe(win, { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+  const ready = doc.querySelector('.ph-root');
+  if (!ready) return;
+  doc.querySelectorAll<HTMLElement>('.ph-win').forEach(watch);
+  new MutationObserver((records) => {
+    for (const r of records) {
+      for (const n of r.addedNodes) {
+        if (!(n instanceof HTMLElement) || !n.classList.contains('ph-win')) continue;
+        watch(n);
+        if (isPush(n) && n.isConnected && !early()) push(n);
+      }
+    }
+  }).observe(ready, { childList: true, subtree: true });
+}
+
+/**
+ * Android's push and pop: shared axis X, forward or back; a system back (the gesture or the back button, which
+ * phone-shell.tsx marks data-system-back) closes with predictive back's commit, as Navigation's predictive pop has a
+ * transition of its own; a back Chrome already animated (data-instant-back) shows at once. Reduce Motion (Remove
+ * animations) keeps only the fade through.
+ */
+function swapScreensAndroid(old: HTMLElement, fresh: HTMLElement): void {
+  const root = old.ownerDocument.documentElement;
+  const pop = fresh.classList.contains('enter-pop');
+  const system = pop && root.dataset.systemBack !== undefined;
+  delete root.dataset.systemBack;
+  if (pop && root.dataset.instantBack !== undefined) return;
+  const { copy, done } = screenCopy(old, fresh, false);
+  const out = axis('leave', pop, system);
+  const into = axis('enter', pop, system);
+  copy.animate(out.keys, { ...out.timing, fill: 'forwards' }).finished.then(done, done);
+  fresh.animate(into.keys, { ...into.timing, fill: 'backwards' });
+}
+
+/** A removed screen and the screen PhoneMain put in its place, under the same parent, marked as a push or a pop. */
+function swapWith(r: MutationRecord, old: HTMLElement, added: Set<Node>, swap: (old: HTMLElement, fresh: HTMLElement) => void): void {
+  const fresh = [...added].find((a): a is HTMLElement => a instanceof HTMLElement && a.isConnected && a.classList.contains(SCREEN) && /\benter-(push|pop)\b/.test(a.className));
+  if (fresh && fresh.parentNode === r.target) swap(old, fresh);
 }
 
 function animateRemoved(records: MutationRecord[], added: Set<Node>, afterTap: boolean): void {
@@ -314,8 +489,7 @@ function animateRemoved(records: MutationRecord[], added: Set<Node>, afterTap: b
     for (const n of r.removedNodes) {
       if (!(n instanceof HTMLElement) || n.isConnected || n.classList.contains('motion-ghost')) continue;
       if (n.classList.contains(SCREEN)) {
-        const fresh = [...added].find((a): a is HTMLElement => a instanceof HTMLElement && a.isConnected && a.classList.contains(SCREEN) && /\benter-(push|pop)\b/.test(a.className));
-        if (fresh && fresh.parentNode === r.target) swapScreens(n, fresh);
+        swapWith(r, n, added, swapScreens);
         continue;
       }
       const leave = LEAVING.find(([sel]) => n.matches(sel));

@@ -20,7 +20,7 @@ export const WINDOWS = [
   { name: 'Menu level', hash: 'menu-level/0', size: [336, 436] },
   { name: 'Rename Chat', hash: 'session-rename/{chat}', size: [420, 240], fits: true },
   { name: 'Watch Task Events', hash: 'watch-events/{chat}/{task}', size: [420, 300], fits: true },
-  { name: 'Settings', hash: 'settings', size: [720, 642], contentSize: true, fits: true },
+  { name: 'Settings', hash: 'settings', size: [720, 707], contentSize: true, fits: true },
   { name: 'Agent Settings', hash: 'agent-settings', size: [900, 680] },
   { name: 'MCP Server', hash: 'mcp-server/{key}', via: 'mcp', size: [560, 560] },
   { name: 'Addons', hash: 'addons', size: [560, 560], fits: true },
@@ -28,6 +28,7 @@ export const WINDOWS = [
   { name: 'Addon screen window', hash: 'addon/{addon}/{addonView}/%7B%7D/Servers', size: [900, 640] },
   { name: 'Engine Log', hash: 'engine-log', size: [1000, 640] },
   { name: 'History', hash: 'history', size: [900, 640] },
+  { name: 'Task History', hash: 'task-history', size: [900, 640] },
   { name: 'Recycle Bin', hash: 'recycle-bin', size: [760, 520] },
   { name: 'Templates', hash: 'templates', size: [620, 520] },
   { name: 'Template picker', hash: 'template-picker', size: [620, 520] },
@@ -56,14 +57,14 @@ export const WINDOWS = [
   { name: 'Rename Project Folder', hash: 'project-folder-rename/{projectFolder}', size: [420, 240], fits: true },
   { name: 'New Project', hash: 'project-new', size: [560, 528], contentSize: true, fits: true },
   { name: 'Edit Project', hash: 'project/{project}', size: [560, 528], contentSize: true, fits: true },
-  { name: 'Run Options', hash: 'run-options/{task}', size: [520, 460] },
+  { name: 'Run Options', hash: 'run-options/{task}', size: [420, 400], contentSize: true, fits: true },
   { name: 'Continue Run', hash: 'continue-run/{task}/{run}', size: [560, 420] },
   { name: 'Send Guidance', hash: 'send-guidance/{task}/{run}', size: [560, 420] },
   { name: 'Run conversation', hash: 'messages/{task}/{run}/-/Run', size: [1000, 720] },
   { name: 'Run report', hash: 'messages/{task}/{run}/-/Run/report', size: [1000, 720] },
   { name: 'Message filter', hash: 'filter/Show%20messages%20containing/', size: [420, 240], fits: true },
   { name: 'Save as Markdown', hash: 'markdown-export/1/1/0', size: [480, 300] },
-  { name: 'Image', hash: 'image/{task}/{run}/-/{imageRow}/Image', size: [900, 700] },
+  { name: 'Preview', hash: 'preview/{task}/{run}/-/{imageRow}/Image', size: [900, 700] },
   { name: 'Environment', hash: 'env-editor/{env}', size: [684, 427], contentSize: true, fits: true },
   { name: 'New Environment', hash: 'env-editor/{env}/new', size: [684, 427], contentSize: true, fits: true },
   { name: 'Harness', hash: 'harness-editor/{env}/{harness}', size: [624, 637], contentSize: true, fits: true },
@@ -81,7 +82,7 @@ export const WINDOWS = [
   { name: 'Remote Access setup', hash: 'remote-access-setup', size: [560, 460], contentSize: true, fits: true },
   { name: 'Remote Access devices', hash: 'remote-access-devices', size: [700, 520] },
   { name: 'Pair a device', hash: 'remote-access-pair', size: [520, 600] },
-  { name: 'Rename device', hash: 'remote-access-rename/{device}', size: [420, 240], fits: true },
+  { name: 'Edit device', hash: 'remote-access-device/{device}', size: [420, 375], contentSize: true, fits: true },
 ];
 
 /** The main window's tabs and the screens inside them, reached by clicks as a person would. */
@@ -101,21 +102,37 @@ export const MAIN_SCREENS = [
 ];
 
 /**
- * A phone's screens, on iOS (WebKit) and Android (Edge), paired over Remote Access: each tab of PHONE_TABS
+ * A phone's and tablet's screens, on every device of PHONES, paired over Remote Access: each tab of PHONE_TABS
  * (phone-nav.ts), and each kind of screen pushed over one (PhoneScreen), reached by tapping the texts in `taps`.
+ * `split`: the screen has a list column beside its detail on a tablet, which phone.mjs checks it draws.
+ * `window`: the screen is a window over the main window, which covers its tabs.
  */
 export const PHONE_SCREENS = [
   { name: 'Dashboard', tab: 'Dashboard' },
-  { name: 'Projects', tab: 'Projects' },
-  { name: 'Tasks', tab: 'Tasks' },
-  { name: 'Chats', tab: 'Chats' },
+  { name: 'Projects', tab: 'Projects', split: true },
+  { name: 'Tasks', tab: 'Tasks', split: true },
+  { name: 'Chats', tab: 'Chats', split: true },
   { name: 'More', tab: 'More' },
-  { name: 'Folder', tab: 'Tasks', push: 'folder', taps: ['Development'] },
-  { name: 'Task', tab: 'Tasks', push: 'task', taps: ['Development', 'Issue triage'] },
-  { name: 'Project', tab: 'Projects', push: 'project', taps: ['Web app'] },
+  { name: 'Folder', tab: 'Tasks', split: true, push: 'folder', taps: ['Development'] },
+  { name: 'Task', tab: 'Tasks', split: true, push: 'task', taps: ['Development', 'Issue triage'] },
+  { name: 'Project', tab: 'Projects', split: true, push: 'project', taps: ['Web app'] },
   { name: 'Advanced', tab: 'More', push: 'list', taps: ['Advanced'] },
-  { name: 'Addon pane', tab: 'More', push: 'addon', taps: ['Servers'] },
-  { name: 'Chat', tab: 'Chats', taps: [/^Chat 0 message 0/] },
+  { name: 'Addon tab', tab: 'More', push: 'addonTab', taps: ['Servers List'] },
+  { name: 'Addon pane', tab: 'More', push: 'addon', taps: ['Servers List', 'web-1'] },
+  { name: 'Chat', tab: 'Chats', split: true, window: true, taps: [/^Chat 0 message 0/] },
 ];
 
-export const PHONES = ['ios', 'android'];
+/** The devices a screen is measured on, by the prefix of its name ("ios: Chat"): the iPhone 15 and iPad Pro 11 in WebKit, the Pixel 7 and a Galaxy Tab S4 in Chromium, slowed to a Pixel 7's speed. */
+export const PHONES = ['ios', 'ipad', 'android', 'android-tablet'];
+
+/** What `--device` takes: `desktop` (the journey, windows and main window), and each of PHONES (`iphone` for `ios`). */
+export const DEVICES = ['desktop', ...PHONES];
+
+/** The devices a `--device a,b` value names (every device when there is none, or it is `all`); throws on a name it doesn't know. */
+export function parseDevices(value) {
+  if (!value || value.trim().toLowerCase() === 'all') return [...DEVICES];
+  const names = value.split(',').map((d) => d.trim().toLowerCase().replace(/^iphone$/, 'ios')).filter(Boolean);
+  const unknown = names.filter((d) => !DEVICES.includes(d));
+  if (unknown.length || !names.length) throw new Error(`--device takes all, or desktop, iphone, ipad, android and android-tablet, separated by commas; not "${unknown.join(', ') || value}"`);
+  return DEVICES.filter((d) => names.includes(d));
+}

@@ -18,8 +18,9 @@ export default defineConfig({
   main: {
     // Bundled: @xterm/headless and pngjs because the terminal and thumbnail workers run from app.asar.unpacked,
     // where app.asar's node_modules can't be resolved; zod because its own build loads all 95 files and 64
-    // languages (100 ms, 10 MB) where the bundle keeps the parts Looper uses.
-    plugins: [inlineFiles(), externalizeDepsPlugin({ exclude: ['@xterm/headless', 'pngjs', 'zod'] })],
+    // languages (100 ms, 10 MB) where the bundle keeps the parts Looper uses. Left out: koffi, a dev dependency
+    // with native code that only the perf scripts' quiet mode loads (platform/perf-quiet.ts).
+    plugins: [inlineFiles(), externalizeDepsPlugin({ include: ['koffi'], exclude: ['@xterm/headless', 'pngjs', 'zod'] })],
     resolve: {
       alias: { '@shared': resolve(__dirname, 'src/shared'), '@engine': resolve(__dirname, 'src/engine') },
     },
@@ -56,6 +57,8 @@ export default defineConfig({
     },
     // A phone page compares this with the server's version to tell it is out of date.
     define: { __LOOPER_VERSION__: JSON.stringify(pkg.version) },
+    // Vite 7's dev server moves @silurus/ooxml's .wasm files out from beside its code, which then can't find them.
+    optimizeDeps: { exclude: ['@silurus/ooxml'] },
     // electron-vite's renderer default is no minification; phones download this bundle.
     // LOOPER_NO_MINIFY=1: readable function names in a CPU profile (scripts/perf/bench.mjs, BENCH_PROFILE).
     build: { minify: process.env.LOOPER_NO_MINIFY ? false : 'esbuild', cssMinify: true },

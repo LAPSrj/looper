@@ -1,7 +1,7 @@
-import { attentionKey, type AttentionRow, type RunningRow } from '@shared/dashboard';
+import { attentionKey, runStepText, type AttentionRow, type RunningRow } from '@shared/dashboard';
 import { fmtClock, formatDuration, resultLabel } from '../../format';
 import type { MainWindow } from '../../useMainWindow';
-import { STEP_LABELS, StatusIcon, TRIGGER_LABELS, dashboardOpeners, needAt, needRows, needTitle, showNeedMenu } from '../Dashboard';
+import { StatusIcon, TRIGGER_LABELS, dashboardOpeners, needAt, needRows, needTitle, showNeedMenu } from '../Dashboard';
 import { Elapsed } from '../Live';
 import { showTaskMenu } from '../row-menus';
 import { Section } from '../Section';
@@ -57,7 +57,7 @@ export function RunningGroup({ m, rows }: { m: MainWindow; rows: RunningRow[] })
         <Row
           key={r.runId}
           title={r.task.name}
-          sub={`${STEP_LABELS[r.run.state]} · ${TRIGGER_LABELS[r.run.trigger]} · ${fmtClock(r.run.startedAt, now)}`}
+          sub={`${runStepText(r.run)} · ${TRIGGER_LABELS[r.run.trigger]} · ${fmtClock(r.run.startedAt, now)}`}
           value={<span className="live-only"><Elapsed since={r.run.startedAt} /></span>}
           chevron
           onOpen={() => opens.running(r)}

@@ -4,6 +4,7 @@ import React, { lazy, Suspense } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { isLooperFileName } from '@shared/files';
+import { startClippedTitles } from './clipped-title';
 import { setAppLocale } from './format';
 import './styles.css';
 import { WindowContextMenu, WindowMenuBar } from './components/MenuBar';
@@ -47,7 +48,7 @@ const SessionNameApp = lazy(() => import('./SessionNameApp').then((m) => ({ defa
 const WatchEventsApp = lazy(() => import('./WatchEventsApp').then((m) => ({ default: m.WatchEventsApp })));
 const FolderNoteApp = lazy(() => import('./FolderNoteApp').then((m) => ({ default: m.FolderNoteApp })));
 const MoveToFolderApp = lazy(() => import('./MoveToFolderApp').then((m) => ({ default: m.MoveToFolderApp })));
-const ImageApp = lazy(() => import('./ImageApp').then((m) => ({ default: m.ImageApp })));
+const PreviewApp = lazy(() => import('./PreviewApp').then((m) => ({ default: m.PreviewApp })));
 const MarkdownExportApp = lazy(() => import('./MarkdownExportApp').then((m) => ({ default: m.MarkdownExportApp })));
 const MessagesApp = lazy(() => import('./MessagesApp').then((m) => ({ default: m.MessagesApp })));
 const NoteEditorApp = lazy(() => import('./NoteEditorApp').then((m) => ({ default: m.NoteEditorApp })));
@@ -58,7 +59,7 @@ const ProjectEditorApp = lazy(() => import('./ProjectEditorApp').then((m) => ({ 
 const RemoteHelpersApp = lazy(() => import('./RemoteHelpersApp').then((m) => ({ default: m.RemoteHelpersApp })));
 const RemoteAccessDevicesApp = lazy(() => import('./RemoteAccessApps').then((m) => ({ default: m.RemoteAccessDevicesApp })));
 const RemoteAccessPairApp = lazy(() => import('./RemoteAccessApps').then((m) => ({ default: m.RemoteAccessPairApp })));
-const RemoteAccessRenameApp = lazy(() => import('./RemoteAccessApps').then((m) => ({ default: m.RemoteAccessRenameApp })));
+const RemoteAccessDeviceApp = lazy(() => import('./RemoteAccessApps').then((m) => ({ default: m.RemoteAccessDeviceApp })));
 const RemoteAccessSettingsApp = lazy(() => import('./RemoteAccessApps').then((m) => ({ default: m.RemoteAccessSettingsApp })));
 const RemoteAccessSetupApp = lazy(() => import('./RemoteAccessApps').then((m) => ({ default: m.RemoteAccessSetupApp })));
 const RunOptionsApp = lazy(() => import('./RunOptionsApp').then((m) => ({ default: m.RunOptionsApp })));
@@ -89,7 +90,7 @@ const modelEditorMatch = /^model-editor\/([^/]+)\/([^/]+)\/(new|copy-\d+|\d+)$/.
 const modelUpdateMatch = /^model-update(?:\/([^/]+)\/([^/]+))?$/.exec(hash);
 const runOptionsMatch = /^run-options\/([^/]+)$/.exec(hash);
 const messagesMatch = /^messages\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)(\/report)?$/.exec(hash);
-const imageMatch = /^image\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)(?:\/([^/]+))?$/.exec(hash);
+const previewMatch = /^preview\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)(?:\/([^/]+))?$/.exec(hash);
 const filterMatch = /^filter\/([^/]*)\/(.*)$/.exec(hash);
 const markdownExportMatch = /^markdown-export\/([01])\/([01])\/([01])$/.exec(hash);
 const noteEditorMatch = /^note-editor\/([^/]+)$/.exec(hash);
@@ -103,7 +104,7 @@ const folderNewMatch = /^folder-new(?:\/([^/]+))?$/.exec(hash);
 const projectFolderNewMatch = /^project-folder-new(?:\/([^/]+))?$/.exec(hash);
 const projectFolderRenameMatch = /^project-folder-rename\/([^/]+)$/.exec(hash);
 const terminalMatch = /^terminal\/([^/]+)\/([^/]+)$/.exec(hash);
-const sessionsMatch = /^sessions(?:\/([^/]+)(\/window)?)?$/.exec(hash);
+const sessionsMatch = /^sessions(?:\/([^/]+)(\/window|\/terminal)?)?$/.exec(hash);
 const sendToSessionsMatch = /^send-to-sessions(?:\/([^/]+))?$/.exec(hash);
 const remoteHelperMatch = /^remote-helper\/([^/]+)(\/new)?$/.exec(hash);
 const addonWindowMatch = /^addon\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash);
@@ -111,7 +112,7 @@ const addonWindowMatch = /^addon\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(hash
 const viewMatch = /^view\/(.+)$/.exec(hash);
 const itemMatch = /^item\/(task|project)\/(.+)$/.exec(hash);
 const addonEditMatch = /^addon-edit\/([^/]+)$/.exec(hash);
-const remoteAccessRenameMatch = /^remote-access-rename\/([^/]+)$/.exec(hash);
+const remoteAccessDeviceMatch = /^remote-access-device\/([^/]+)$/.exec(hash);
 const mcpServerMatch = /^mcp-server\/([^/]+)$/.exec(hash);
 const menuLevelMatch = /^menu-level\/(\d+)$/.exec(hash);
 
@@ -140,7 +141,7 @@ function pickRoot() {
   if (hash === 'remote-access-setup') return <RemoteAccessSetupApp />;
   if (hash === 'remote-access-devices') return <RemoteAccessDevicesApp />;
   if (hash === 'remote-access-pair') return <RemoteAccessPairApp />;
-  if (remoteAccessRenameMatch) return <RemoteAccessRenameApp id={decodeURIComponent(remoteAccessRenameMatch[1])} />;
+  if (remoteAccessDeviceMatch) return <RemoteAccessDeviceApp id={decodeURIComponent(remoteAccessDeviceMatch[1])} />;
   if (remoteHelperMatch) return <RemoteHelperEditorApp id={decodeURIComponent(remoteHelperMatch[1])} isNew={!!remoteHelperMatch[2]} />;
   if (hash === 'project-new') return <ProjectEditorApp />;
   if (projectMatch) return <ProjectEditorApp id={decodeURIComponent(projectMatch[1])} />;
@@ -161,9 +162,18 @@ function pickRoot() {
     );
   }
   if (hash === 'builder-setup') return <BuilderSetupApp />;
-  if (sessionsMatch) return <SessionsApp initial={sessionsMatch[1] ? decodeURIComponent(sessionsMatch[1]) : undefined} single={!!sessionsMatch[2]} />;
+  if (sessionsMatch) {
+    return (
+      <SessionsApp
+        initial={sessionsMatch[1] ? decodeURIComponent(sessionsMatch[1]) : undefined}
+        single={sessionsMatch[2] === '/window'}
+        terminal={sessionsMatch[2] === '/terminal'}
+      />
+    );
+  }
   if (sendToSessionsMatch) return <SendToSessionsApp group={sendToSessionsMatch[1] ? decodeURIComponent(sendToSessionsMatch[1]) : undefined} />;
   if (hash === 'history') return <HistoryApp />;
+  if (hash === 'task-history') return <HistoryApp runs />;
   if (hash === 'select-window') return <SelectWindowApp />;
   if (terminalMatch) {
     return <TerminalSessionApp id={decodeURIComponent(terminalMatch[1])} title={decodeURIComponent(terminalMatch[2])} />;
@@ -261,15 +271,15 @@ function pickRoot() {
       />
     );
   }
-  if (imageMatch) {
+  if (previewMatch) {
     return (
-      <ImageApp
-        taskId={decodeURIComponent(imageMatch[1])}
-        runId={decodeURIComponent(imageMatch[2])}
-        agentId={imageMatch[3] === '-' ? undefined : decodeURIComponent(imageMatch[3])}
-        rowId={decodeURIComponent(imageMatch[4])}
-        title={decodeURIComponent(imageMatch[5])}
-        siblings={imageMatch[6] ? (JSON.parse(decodeURIComponent(imageMatch[6])) as string[]) : undefined}
+      <PreviewApp
+        taskId={decodeURIComponent(previewMatch[1])}
+        runId={decodeURIComponent(previewMatch[2])}
+        agentId={previewMatch[3] === '-' ? undefined : decodeURIComponent(previewMatch[3])}
+        rowId={decodeURIComponent(previewMatch[4])}
+        title={decodeURIComponent(previewMatch[5])}
+        siblings={previewMatch[6] ? (JSON.parse(decodeURIComponent(previewMatch[6])) as string[]) : undefined}
       />
     );
   }
@@ -416,5 +426,6 @@ if (platform !== 'electron' && window === window.top) {
   bootWindow(frame.ready);
 } else {
   startDesktopPerf();
+  startClippedTitles();
   bootWindow();
 }

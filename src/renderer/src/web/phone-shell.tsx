@@ -3,9 +3,10 @@ import type { MenuItemSpec } from '../../../shared/remote-access';
 import { appleDevice } from './device-name';
 import { useOverlay, type ShellController } from './controller';
 import { AxisDrag, EDGE_WIDTH, LongPress } from './gestures';
+import { DEFAULT_SPRING } from './menu-motion';
 import { editingIn, keyboardUp, tallestTracker } from './keyboard-up';
 import { actionMenu, composeMore, type MoreMenu } from './more-menu';
-import { BackStack, coversScreen, isTablet, presentation, type PhoneOs, type Presentation, type ScreenSize } from './nav-stack';
+import { BackStack, drawnScreens, isTablet, presentation, type PhoneOs, type Presentation, type ScreenSize } from './nav-stack';
 import { noMnemonic } from '../../../shared/commands/command';
 import { barModel, dismissFor, type BarModel, type PageNavAction } from './nav-bar-model';
 import { slideCard, useDragToDismiss } from './sheet-drag';
@@ -129,8 +130,10 @@ export interface Screen {
   depth: number;
   nav: PageNav | null;
   isTop: boolean;
-  /** Drawn: the top screen, what shows around a sheet, and the one under the top (for the back swipe). */
+  /** Drawn: the top screen, what shows around a sheet, and the one under the top while the top slides in. */
   visible: boolean;
+  /** Under a screen that covers it: drawn only while a back swipe uncovers it (the root's data-peek, setDrag). */
+  covered: boolean;
   /** Directly under a phone's page sheet: iOS shrinks it back. */
   behind: boolean;
   leaving: boolean;
@@ -140,6 +143,8 @@ export interface Screen {
 
 /** Long enough for iOS's leaving spring (ios.css, --spring-smooth) to come within a pixel of its end. */
 const LEAVE_MS = 450;
+/** How long a new top screen takes to slide in (iOS's default spring; Android's is 0.3 s), with the screen under it drawn. */
+const ARRIVE_MS = DEFAULT_SPRING.ms + 50;
 
 /** Closed windows stay a moment, for their exit animation, at their place in the page (moving an iframe reloads it). */
 function useScreens(s: ShellState, os: PhoneOs, size: ScreenSize, navs: Map<string, PageNav>): { screens: Screen[]; top: Screen | undefined } {
@@ -151,6 +156,7 @@ function useScreens(s: ShellState, os: PhoneOs, size: ScreenSize, navs: Map<stri
   const live = new Set(s.windows.map((w) => w.w));
   const presOf = (win: WebWindow) => presentation(os, win, win === main, size);
   const last = useRef(new Map<string, { win: WebWindow; pres: Presentation; depth: number }>());
+  const arrived = useRef<{ w: string; at: number } | null>(null);
 
   const now = Date.now();
   for (const [w, info] of last.current) {
@@ -159,24 +165,28 @@ function useScreens(s: ShellState, os: PhoneOs, size: ScreenSize, navs: Map<stri
   for (const [w, l] of leaving.current) if (l.until <= now || live.has(w)) leaving.current.delete(w);
   last.current = new Map(stack.map((win, depth) => [win.w, { win, pres: presOf(win), depth }]));
 
+  const topIndex = stack.length - 1;
+  const top = stack[topIndex];
+  if (top && arrived.current?.w !== top.w) arrived.current = { w: top.w, at: now };
+  const arriving = !!top && now - (arrived.current?.at ?? 0) < ARRIVE_MS;
+
   useEffect(() => {
-    if (!leaving.current.size) return;
-    const t = setTimeout(() => tick((n) => n + 1), LEAVE_MS + 20);
+    const waits = [leaving.current.size ? LEAVE_MS + 20 : 0, arriving ? (arrived.current?.at ?? now) + ARRIVE_MS - Date.now() + 20 : 0].filter((ms) => ms > 0);
+    if (!waits.length) return;
+    const t = setTimeout(() => tick((n) => n + 1), Math.min(...waits));
     return () => clearTimeout(t);
   });
 
   const keep = new Set([...live, ...leaving.current.keys()]);
   domOrder.current = [...domOrder.current.filter((w) => keep.has(w)), ...s.windows.map((x) => x.w).filter((w) => !domOrder.current.includes(w))];
 
-  const topIndex = stack.length - 1;
-  // Drawn: from the top down to the first screen that covers everything, and always the one right under the top.
-  const visible = new Set<string>();
-  for (let i = topIndex; i >= 0; i--) {
-    visible.add(stack[i].w);
-    if (i < topIndex && coversScreen(presOf(stack[i]))) break;
-  }
-  if (topIndex > 0) visible.add(stack[topIndex - 1].w);
-  const top = stack[topIndex];
+  // Drawn: from the top down to the first screen that covers everything. A full screen hides what's under it (a chat
+  // over the main window's tab bar and its glass kept every frame of the chat waiting on WebKit's blur): what's under it
+  // is drawn while it slides in, and while a back swipe uncovers it, from the one right under it down to the first
+  // that covers everything again.
+  const drawn = drawnScreens(stack.map(presOf), arriving);
+  const visible = new Set(stack.filter((_, i) => drawn.visible[i]).map((x) => x.w));
+  const covered = new Set(stack.filter((_, i) => drawn.covered[i]).map((x) => x.w));
   const topPres = top ? presOf(top) : 'root';
   const tablet = isTablet(size);
 
@@ -192,6 +202,7 @@ function useScreens(s: ShellState, os: PhoneOs, size: ScreenSize, navs: Map<stri
         nav: navs.get(w) ?? null,
         isTop: depth === topIndex,
         visible: visible.has(w),
+        covered: covered.has(w),
         // iOS 27 only dims a screen under a page sheet; a page sheet under another narrows (the kit's stacked sheets).
         behind: os === 'ios' && !tablet && depth === topIndex - 1 && topPres === 'page-sheet' && presOf(win) === 'page-sheet',
         leaving: false,
@@ -200,7 +211,7 @@ function useScreens(s: ShellState, os: PhoneOs, size: ScreenSize, navs: Map<stri
       continue;
     }
     const l = leaving.current.get(w);
-    if (l) screens.push({ win: l.win, pres: l.pres, depth: l.depth + 0.5, nav: null, isTop: false, visible: true, behind: false, leaving: true });
+    if (l) screens.push({ win: l.win, pres: l.pres, depth: l.depth + 0.5, nav: null, isTop: false, visible: true, covered: false, behind: false, leaving: true });
   }
   return { screens, top: screens.find((x) => x.isTop) };
 }
@@ -210,9 +221,17 @@ function useScreens(s: ShellState, os: PhoneOs, size: ScreenSize, navs: Map<stri
 /** One thing Back closes, bottom to top. */
 export type BackLayer = () => void;
 
-function useBack(layers: BackLayer[]): { goBack: () => void } {
+/**
+ * `browserBack`: a back the browser did on its own (its back gesture or button, not the frame's Back) closes layers
+ * through it instead of the usual way.
+ */
+function useBack(layers: BackLayer[], browserBack?: (close: () => void, e: PopStateEvent) => void): { goBack: () => void } {
   const latest = useRef(layers);
   latest.current = layers;
+  const viaBrowser = useRef(browserBack);
+  viaBrowser.current = browserBack;
+  /** The frame's own Back went through the history: the popstate it brings is ours. */
+  const ours = useRef(false);
   const stack = useMemo(
     () =>
       new BackStack(
@@ -236,7 +255,11 @@ function useBack(layers: BackLayer[]): { goBack: () => void } {
       const d = (e.state as { looperDepth?: number } | null)?.looperDepth;
       const steps = stack.popped(typeof d === 'number' ? d : 0);
       if (steps > 0) {
-        runTop(Math.min(steps, latest.current.length));
+        const close = () => runTop(Math.min(steps, latest.current.length));
+        const browser = !ours.current && viaBrowser.current;
+        ours.current = false;
+        if (browser) browser(close, e);
+        else close();
         setTimeout(() => stack.sync(latest.current.length), stack.holdRemaining() + 10);
       }
     };
@@ -244,7 +267,12 @@ function useBack(layers: BackLayer[]): { goBack: () => void } {
     return () => window.removeEventListener('popstate', onPop);
   }, [stack, runTop]);
   useEffect(() => stack.sync(layers.length));
-  return { goBack: () => void (stack.back() || runTop(1)) };
+  return {
+    goBack: () => {
+      if (stack.back()) ours.current = true;
+      else runTop(1);
+    },
+  };
 }
 
 // ---------- the pages' documents ----------
@@ -532,6 +560,20 @@ export function setDrag(root: HTMLElement | null, w: string, axis: 'x' | 'y', of
   slideCard(under, offset === null ? null : (offset - card.clientWidth) * 0.3, 'x');
 }
 
+/**
+ * A back swipe shows what's under the screen it moves: the screens covered there, which aren't drawn otherwise. It
+ * stops once `settling` (the card under, on its way back) ends its move, or after `offAfter` ms.
+ */
+let peekToken = 0;
+function setPeek(root: HTMLElement | null, on: boolean, offAfter = 0, settling?: HTMLElement | null): void {
+  if (!root) return;
+  const token = ++peekToken;
+  if (on) return void (root.dataset.peek = '');
+  const off = () => token === peekToken && delete root.dataset.peek;
+  settling?.addEventListener('transitionend', off, { once: true });
+  setTimeout(off, offAfter);
+}
+
 const SWIPE_FINISH_MS = 300;
 
 /**
@@ -630,7 +672,44 @@ export function usePhoneShell<P extends MenuPlace = MenuPlace>(controller: Shell
     );
   }
   for (const m of s.menus) layers.push(() => controller.dismissMenu(m.menuId));
-  const { goBack: historyBack } = useBack(layers);
+  // iOS: Safari's own back swipe (from the edge, or across the content where nothing else takes a sideways drag) has
+  // already slid the page away over its picture of the screen under it: WebKit starts it whenever there's an entry
+  // to go back to, before the page sees the touch (ViewGestureController::canSwipeInDirection). What it asked to
+  // close goes at once, without the frame or the page playing the back again (data-instant-back, until the top
+  // screen has changed: a window closes when the computer answers).
+  const instant = useRef<{ top: string | undefined; roots: HTMLElement[]; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const endInstant = () => {
+    const was = instant.current;
+    if (!was) return;
+    instant.current = null;
+    clearTimeout(was.timer);
+    for (const r of was.roots) delete r.dataset.instantBack;
+  };
+  // Android: a back Chrome animated itself (its back gesture's transition, PopStateEvent.hasUAVisualTransition) goes at
+  // once too. Any other back from outside the page (the system's gesture or button) is marked data-system-back for its
+  // page, whose screen closes with predictive back's commit rather than the in-app Back's (web/motion.ts).
+  const browserBack = (close: () => void, e: PopStateEvent) => {
+    const roots = [document.documentElement, ...screens.map((x) => controller.frameOf(x.win.w)?.contentDocument?.documentElement)].filter((r): r is HTMLElement => !!r);
+    if (os === 'android' && !(e as PopStateEvent & { hasUAVisualTransition?: boolean }).hasUAVisualTransition) {
+      for (const r of roots) r.dataset.systemBack = '';
+      close();
+      // Read by the screen the back changes, which renders at once; nothing else reads it.
+      setTimeout(() => roots.forEach((r) => delete r.dataset.systemBack), 1000);
+      return;
+    }
+    endInstant();
+    for (const r of roots) r.dataset.instantBack = '';
+    instant.current = { top: topW, roots, timer: setTimeout(endInstant, 3000) };
+    close();
+  };
+  useEffect(() => {
+    if (instant.current && instant.current.top !== topW) {
+      clearTimeout(instant.current.timer);
+      instant.current.timer = setTimeout(endInstant, LEAVE_MS + 100);
+    }
+    // The top screen as it changes.
+  }, [topW]);
+  const { goBack: historyBack } = useBack(layers, browserBack);
 
   // A hardware keyboard's Escape closes what the shell has open (a menu, a sheet, an alert), never a screen.
   const overlays = useRef<BackLayer[]>([]);
@@ -657,8 +736,15 @@ export function usePhoneShell<P extends MenuPlace = MenuPlace>(controller: Shell
       const sc = screens.find((x) => x.win.w === w);
       // A page's own deeper screen has nothing of the frame's under it to show.
       const moves = sc?.pres === 'push' && !sc.nav?.back;
-      if (moves && dx === null && commit) finishBackSwipe(rootRef.current, w, speed);
-      else if (moves) setDrag(rootRef.current, w, 'x', dx);
+      if (moves && dx === null && commit) {
+        finishBackSwipe(rootRef.current, w, speed);
+        setPeek(rootRef.current, false, LEAVE_MS + 1000);
+      } else if (moves) {
+        // Let go short of going back: the screen under it moves back on the default spring (ios.css) before it hides.
+        const under = dx === null ? rootRef.current?.querySelector<HTMLElement>(`.ph-win[data-under="${CSS.escape(w)}"] > .ph-card`) : null;
+        setPeek(rootRef.current, dx !== null, ARRIVE_MS * 3, under);
+        setDrag(rootRef.current, w, 'x', dx);
+      }
       if (dx === null && commit) historyBack();
     },
   };
@@ -761,7 +847,7 @@ export function PhoneWindows({ shell, controller, renderBar, dragToDismiss }: Wi
             key={sc.win.w}
             data-w={sc.win.w}
             data-under={sc.win.w === under ? shell.top?.win.w : undefined}
-            className={`ph-win pres-${sc.pres}${sc.visible ? '' : ' hidden'}${sc.leaving ? ' leaving' : ''}${sc.behind ? ' behind' : ''}${sc.isTop ? ' top' : ''}`}
+            className={`ph-win pres-${sc.pres}${sc.covered ? ' covered' : sc.visible ? '' : ' hidden'}${sc.leaving ? ' leaving' : ''}${sc.behind ? ' behind' : ''}${sc.isTop ? ' top' : ''}`}
             style={style}
             inert={!sc.isTop || sc.leaving || blockedByShell}
             aria-hidden={!sc.isTop || undefined}

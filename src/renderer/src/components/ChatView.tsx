@@ -126,9 +126,10 @@ function useDockHeight(sectionRef: RefObject<HTMLElement | null>, on: boolean): 
 /**
  * A chat in the Sessions window: the conversation, its queue, and the message box.
  * `embedded`: one of several on the dashboard, so it doesn't take the focus when it
- * opens, and Esc stops its agent only while the focus is in it.
+ * opens, and Esc stops its agent only while the focus is in it. `box` false: no
+ * message box (a Focus dashboard's side card).
  */
-export function ChatView({ state, embedded = false }: { state: ChatState; embedded?: boolean }) {
+export function ChatView({ state, embedded = false, box = true }: { state: ChatState; embedded?: boolean; box?: boolean }) {
   const id = state.id;
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
@@ -318,12 +319,14 @@ export function ChatView({ state, embedded = false }: { state: ChatState; embedd
           ))}
           <ChatStatus state={state} />
         </Conversation>
-        <Composer
-          ref={composer}
-          state={state}
-          embedded={embedded}
-          onSent={() => conversation.current?.toEnd()}
-        />
+        {box && (
+          <Composer
+            ref={composer}
+            state={state}
+            embedded={embedded}
+            onSent={() => conversation.current?.toEnd()}
+          />
+        )}
       </section>
     </div>
   );

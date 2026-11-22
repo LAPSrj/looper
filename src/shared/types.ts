@@ -5,7 +5,10 @@ import { z } from 'zod';
 z.config({ jitless: true });
 import { AddonLocalRunSchema } from './addons';
 import { CLI_LEVELS } from './cli-levels';
+import { PREVIEW_NETWORKS } from './preview';
 import type { BuilderState } from './builder';
+import type { CommandPrompt } from './bash-mode';
+import { AUTO_COMPACT_MAX, AUTO_COMPACT_MIN } from './auto-compact';
 import type { ChatState } from './chat';
 import type { ClaudeLogin } from './logins';
 import type { RemoteState } from './remote';
@@ -306,6 +309,14 @@ export const AgentSchema = z
     idleGraceMin: z.number().positive().default(3),
     onIdleTimeout: z.enum(['finish', 'hold']).default('finish'),
     /**
+     * Minutes the run stays open after `looper-done` before it completes.
+     * What comes for it meanwhile goes to the same agent as a new turn, and the
+     * wait starts again after that turn: the user's guidance, and the task's
+     * trigger events (with trigger.sendRelatedEvents, only those with the
+     * run's looper_related_id). Claude Code and Codex only; 0 = no wait.
+     */
+    waitAfterDoneMin: z.number().nonnegative().default(0),
+    /**
      * The agent may ask the user a question with `looper-ask`, as a last
      * resort. The command waits up to `waitMin` for the answer; without one,
      * the agent goes on and picks the run's final status itself.
@@ -520,7 +531,21 @@ export const SidebarPaneSchema = TaskListOptionsSchema.extend({
 export type SidebarPane = z.infer<typeof SidebarPaneSchema>;
 
 export const ViewSchema = z.object({
-  toolbar: z.boolean().default(true),
+  /** The main window's toolbars (shared/toolbars.ts MAIN_TOOLBARS): whether each one shows (View → Toolbars). */
+  toolbars: z
+    .object({
+      new: z.boolean().default(true),
+      projects: z.boolean().default(true),
+      tasks: z.boolean().default(true),
+      chats: z.boolean().default(true),
+      /**
+       * The toolbar rows from the top, each its toolbars from the left, as their grips dragged them: a toolbar's id
+       * (shared/toolbars.ts) and the width its edge was dragged to (0: its buttons' width). A toolbar no row lists goes
+       * at the end of the first.
+       */
+      rows: z.array(z.array(z.object({ id: z.string().min(1), width: z.number().min(0).default(0) }))).default([]),
+    })
+    .prefault({}),
   statusBar: z.boolean().default(true),
   /** The main window's tabs: below the toolbar, down its left side, or above the status bar. */
   tabs: z
@@ -582,8 +607,22 @@ export const ViewSchema = z.object({
       /** A single chat's window shows the status bar. */
       windowStatusBar: z.boolean().default(true),
       collapsed: z.array(z.string()).default([]),
+      /** View → Group Chats By: each project, the Projects tab's folder each project is in, or no groups (rows dragged into any order). */
+      groupBy: z.enum(['project', 'folder', 'none']).default('project'),
       /** The dashboard's cards shown at twice their size, by session id. */
       bigCards: z.array(z.string()).default([]),
+      /** The chats a card's Hide from Dashboard took off the dashboard, by session id. */
+      hiddenCards: z.array(z.string()).default([]),
+      /** Dashboard Filter → Show Hidden Chats: the hidden ones show too. */
+      showHiddenCards: z.boolean().default(false),
+      /** Dashboard Filter → Only Chats Shown in the List: the chats in closed groups are left out. */
+      cardsListedOnly: z.boolean().default(false),
+      /** View → Dashboard Layout: an entry of DASHBOARD_LAYOUTS (shared/card-grid.ts). */
+      layout: z.enum(['grid', 'focus']).default('grid'),
+      /** Focus's large conversation, by session id (unset, or closed: the first card). */
+      focusCard: z.string().optional(),
+      /** Focus's side column's width dragged to, in pixels (0: automatic). */
+      focusSide: z.number().min(0).default(0),
       /** The dashboard's cards in the order they were dragged to, by session id. */
       cardOrder: z.array(z.string()).default([]),
       /** The dashboard's column widths dragged to, from the first column, in pixels (0: automatic); more columns fill the rest. */
@@ -598,8 +637,6 @@ export const ViewSchema = z.object({
   history: z
     .object({
       groupBy: z.enum(['date', 'folder']).default('date'),
-      /** The list shows task runs too. */
-      showRuns: z.boolean().default(true),
     })
     .prefault({}),
 });
@@ -763,6 +800,11 @@ export const SettingsSchema = z.object({
   /** Show a step-selection window before a manual Run Now starts. */
   promptRunOptions: z.boolean().default(false),
   /**
+   * Advanced → Web pages in Preview: whether a previewed HTML file's scripts may load from the internet.
+   * allow = they may; ask = Preview asks for each file; deny = only what's in the file loads.
+   */
+  previewNetwork: z.enum(PREVIEW_NETWORKS).default('allow'),
+  /**
    * Where Open Project in Terminal and Continue in Terminal open the session:
    * looper = a Looper terminal window; system = the system's default terminal.
    */
@@ -819,6 +861,17 @@ export const SettingsSchema = z.object({
         .object({
           enabled: z.boolean().default(false),
           minutes: z.number().positive().default(45),
+        })
+        .prefault({}),
+      /**
+       * At the end of a turn, a chat whose context is past `percent` of its
+       * model's window compacts into a new chat, as Compact into New Chat does.
+       * A chat's own setting (ChatSettings.autoCompact) overrides `enabled`.
+       */
+      autoCompact: z
+        .object({
+          enabled: z.boolean().default(false),
+          percent: z.number().int().min(AUTO_COMPACT_MIN).max(AUTO_COMPACT_MAX).default(90),
         })
         .prefault({}),
       /** What a compacted conversation sends the agent (shared/compact.ts): tokens for tool results, and the most for the whole text. */
@@ -898,6 +951,11 @@ export interface RunSkips {
   agent?: boolean;
 }
 
+/** A manual run's choices in the Run Options window: the steps it skips, and the harness of the task's environment it runs on, for that run only (unset: the task's). */
+export interface RunOptions extends RunSkips {
+  harnessId?: string;
+}
+
 /** One cycle of a task that is in flight; a task may have up to `maxConcurrentRuns` of them. */
 export interface ActiveRun {
   runId: string;
@@ -910,6 +968,8 @@ export interface ActiveRun {
   permission?: { id: string; tool: string; input: unknown };
   startedAt: number;
   trigger: 'timer' | 'manual' | 'watcher';
+  /** Run Options' Harness: the harness this run's agent runs on instead of the task's. */
+  harnessId?: string;
   /** The related events this run handles (trigger.sendRelatedEvents): later ones with this id go to its agent. */
   relatedId?: string;
   /** A delegated agent (TaskRuntime.children): the run whose agent started it. */
@@ -1113,6 +1173,8 @@ export type EngineEvent =
   | { type: 'agent:data'; taskId: string; runId: string; data: string }
   /** A running "!" command of a chat or a task run (`chatId`, the run's id for a run): what its terminal printed since the last batch. */
   | { type: 'chat:command'; chatId: string; id: string; data: string }
+  /** A running "!" command asks for something (sudo's password), or no longer does (`prompt` null: answered, or the command ended); `chatId` as in chat:command. */
+  | { type: 'chat:command-prompt'; chatId: string; id: string; prompt: CommandPrompt | null }
   /** problem: the run ended with an error or warning; a click opens its run window on the report. */
   | { type: 'notify'; taskId: string; runId: string; kind: NotifyKind; title: string; body: string; problem?: boolean }
   | { type: 'tasks'; tasks: Task[] }
@@ -1130,6 +1192,8 @@ export type EngineEvent =
   | { type: 'builder:data'; id: string; data: string }
   /** A task chat's conversation, status or permission requests changed. */
   | { type: 'chat'; state: ChatState }
+  /** A chat compacted into a new one (Compact into New Chat, auto compact, or a context that filled up): the windows showing `from` show `to`. */
+  | { type: 'chat:compacted'; from: string; to: string }
   /** Output of a terminal session in a Looper terminal window, and its end. */
   | { type: 'terminal:data'; id: string; data: string }
   | { type: 'terminal:end'; id: string }

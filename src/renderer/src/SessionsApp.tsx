@@ -1,41 +1,32 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import {
-  autoRowHeight,
-  columnTracks,
-  columnWidths,
-  gapBars,
-  placeCards,
-  resetSize,
-  rowCount,
-  rowHeights,
-  sizeColumn,
-  sizeRow,
-  type GapBar,
-} from '@shared/card-grid';
+import { CARD_MIN_WIDTH, FOCUS_SIDE_MIN, focusSideWidth, layoutDashboard, resetSize, sizeColumn, sizeRow, type GapBar } from '@shared/card-grid';
 import { CHAT_WINDOW_VIEWS, CHATS_WINDOW_VIEWS } from '@shared/commands/build';
 import type { CommandContext } from '@shared/commands/context';
 import { chatInteractive, type ChatState } from '@shared/chat';
 import type { MessageRow } from '@shared/messages';
 import type { SessionActivity, SessionSummary, SlashCommand, UsageLimits } from '@shared/sessions';
 import { tabStatus } from '@shared/workflows';
-import { canStop, dashboardOrder, liveCards, showsConversation } from '@shared/sessions';
+import { canStop, dashboardCards, dashboardOrder, listOrder, liveCards, showsConversation, type ChatGroup } from '@shared/sessions';
 import type { EngineEvent } from '@shared/types';
 import { ActivityPanel, type ActivityTab } from './components/ActivityPanel';
+import { ActivityAgentConversation } from './components/ActivityAgent';
 import { fmtClock } from './format';
 import { MINUTE, useNow } from './useNow';
 import { StatusBar } from './components/StatusBar';
 import { Toolbar } from './components/Toolbar';
-import { commandToolbar, phoneNav } from './components/command-surfaces';
+import { commandToolbar, phoneNav, popupViewOptions } from './components/command-surfaces';
 import { useCommandMenu, useCommandState } from './components/useCommands';
 import { ChatView } from './components/ChatView';
 import { PermissionButtons } from './components/PermissionCard';
 import { useDragResize } from './components/hooks';
+import { Splitter } from './components/SplitPane';
 import { atEnd, useStayAtEnd } from './components/newest-first';
 import { Inspector, useInspector } from './components/Inspector';
 import { ListDetail } from './components/ListDetail';
 import { Composer } from './components/Composer';
 import type { MessageBoxStop } from './components/MessageBox';
 import { QueuedGuidanceActions, RunGuidance, SubagentConversation, TranscriptView } from './components/Transcript';
+import { ChatStatus } from './components/Conversation';
 import { reportError } from './report-error';
 import { OverviewSwitch, type OverviewChoice } from './components/phone/OverviewSwitch';
 import { LargeTitle } from './components/phone/PhoneList';
@@ -44,7 +35,7 @@ import { ReorderSheet } from './components/phone/ReorderSheet';
 import { useSplit } from './components/phone/PhoneSplit';
 import { TerminalOverlay } from './components/phone/TerminalOverlay';
 import { UsagePanel } from './components/phone/UsagePanel';
-import { NO_CHATS, SessionIcon, SessionList, SessionStatus, sessionKind } from './components/SessionList';
+import { NO_CHATS, SessionIcon, SessionList, SessionStatus, sessionKind, unreadSwipe } from './components/SessionList';
 import { EmptyState } from './components/EmptyState';
 import { runningText, subagentTabs } from './components/subagents';
 import { SubagentTabs } from './components/SubagentIcon';
@@ -103,6 +94,9 @@ export function SessionsStatusBar({ summary, chat, limits, children }: { summary
   );
 }
 
+/** What the dashboard says when Dashboard Filter leaves out every chat. */
+const FILTERED_OUT = 'Dashboard Filter hides every chat.';
+
 /** A card's messages: those since the user's last one, following the newest unless scrolled up, on a phone as on the desktop. */
 function CardMessages({ s }: { s: SessionSummary }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -130,11 +124,13 @@ function CardMessages({ s }: { s: SessionSummary }) {
   );
 }
 
-/** A desktop dashboard card's size: twice the normal one, or back; `area` is where it goes in the dashboard's grid. */
+/** A dashboard card's size: `area` is where it goes in the dashboard's grid; `onToggle` makes it twice its size, or back (Grid's Double Size). */
 interface CardSize {
   big: boolean;
-  onToggle: () => void;
+  onToggle?: () => void;
   area: React.CSSProperties;
+  /** Its role in the layout, as a class: ' focus-main' for Focus's large conversation. */
+  cls?: string;
 }
 
 /** A desktop dashboard card dragged by its title to another place; `mark` shows where a dragged card would go. */
@@ -151,7 +147,7 @@ function CardTitle({ s, size, drag }: { s: SessionSummary; size?: CardSize; drag
       <div className="overview-head" draggable={!!drag} onDragStart={drag?.start} onDragEnd={drag?.end}>
         <SessionIcon s={s} />
         <span className="overview-title">{s.title}</span>
-        {size && (
+        {size?.onToggle && (
           <Toolbar
             inline
             className="overview-tools"
@@ -184,7 +180,7 @@ const stopOf = (s: SessionSummary): MessageBoxStop => ({ enabled: canStop(s), ru
  * messages since the user's last one, and Allow/Deny or the message box at the
  * bottom (a chat's, Send above Stop), whose message is typed into the terminal.
  */
-function TerminalCard({ s, onOpen, size, drag }: { s: SessionSummary; onOpen: (id: string) => void; size?: CardSize; drag?: CardDrag }) {
+function TerminalCard({ s, onOpen, size, drag, box = true }: { s: SessionSummary; onOpen: (id: string) => void; size?: CardSize; drag?: CardDrag; box?: boolean }) {
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   // The skills come with the transcript's first read: asked again as the session goes on.
   useEffect(() => {
@@ -203,7 +199,7 @@ function TerminalCard({ s, onOpen, size, drag }: { s: SessionSummary; onOpen: (i
         <PermissionButtons answer={(allow) => window.looper.chat.answer(s.id, permissionId, allow)} />
       </div>
     );
-  } else if (s.status !== 'ended') {
+  } else if (s.status !== 'ended' && box) {
     // A click in the box stays in the box; anywhere else on the card opens it.
     bottom = (
       <div className="overview-composer" onClick={keep}>
@@ -214,7 +210,7 @@ function TerminalCard({ s, onOpen, size, drag }: { s: SessionSummary; onOpen: (i
   return (
     <div
       data-id={s.id}
-      className={cardClass(s, ' overview-reply') + (drag?.mark ?? '') + (size?.big ? ' big' : '')}
+      className={cardClass(s, ' overview-reply') + (drag?.mark ?? '') + (size?.big ? ' big' : '') + (size?.cls ?? '')}
       style={size?.area}
       onClick={() => onOpen(s.id)}
       onContextMenu={(e) => {
@@ -230,9 +226,17 @@ function TerminalCard({ s, onOpen, size, drag }: { s: SessionSummary; onOpen: (i
   );
 }
 
-/** The Overview on a phone: a summary card per session, in the desktop dashboard's order. */
+/**
+ * The Overview on a phone or tablet: a card per session, in the desktop dashboard's order, laid out
+ * by View → Dashboard Layout. Grid: the cards as a list (columns on a tablet). Focus: the large
+ * conversation with its message box, and the others where there's room for a column beside it, as on
+ * the desktop (an iPad's or Android tablet's detail column: Material's supporting pane), else in a
+ * row of small cards above it that scrolls sideways (an iPhone, or an Android phone's carousel). A tap
+ * on another card puts it in the large spot.
+ */
 export function PhoneOverview({
   sessions,
+  groups,
   shown,
   setShown,
   onOpen,
@@ -240,6 +244,8 @@ export function PhoneOverview({
   onReordered,
 }: {
   sessions: SessionSummary[];
+  /** The list's groups (chatGroups): the cards follow its order, and Dashboard Filter reads its closed groups. */
+  groups: ChatGroup[];
   shown: SessionsWindow['shown'];
   setShown: (patch: Partial<SessionsWindow['shown']>) => void;
   onOpen: (id: string) => void;
@@ -250,33 +256,138 @@ export function PhoneOverview({
   // Only the cards near the screen show their conversation, as on the desktop's dashboard.
   const [root, setRoot] = useState<HTMLElement | null>(null);
   const [inView, track] = useCardsInView(root);
+  // Focus's room decides between a side column and a row of small cards.
+  const [overview, setOverview] = useState<HTMLDivElement | null>(null);
+  const room = useContentSize(overview);
+  const setRefs = useCallback((el: HTMLDivElement | null) => {
+    setOverview(el);
+    setRoot(el?.closest<HTMLElement>('.pg-scroll') ?? null);
+  }, []);
+  const filtered = dashboardCards(groups, shown);
+  // The row of small cards shows when a second card does, and goes with it: the large card's height changes with it.
+  const hasStrip = filtered.length > 1;
+  // Focus on a phone: the large conversation takes what's left of the screen below the cards' row (and the title above),
+  // so its message box shows above the tab bar and home indicator, as a chat's screen does, without scrolling to it.
+  useLayoutEffect(() => {
+    if (!overview || !root || !overview.classList.contains('focus-narrow')) return;
+    const fit = () => {
+      const strip = overview.querySelector<HTMLElement>('.focus-strip');
+      const top = overview.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
+      // The scroller's bottom padding is the tab bar's room plus 24 px; keep 8 px of it as the gap above the bar.
+      const below = Number.parseFloat(getComputedStyle(root).paddingBottom) - 16;
+      const row = strip ? strip.offsetHeight + 10 : 0;
+      overview.style.setProperty('--focus-h', `${Math.max(280, Math.floor(root.clientHeight - top - below - row))}px`);
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(root);
+    const strip = overview.querySelector('.focus-strip');
+    if (strip) ro.observe(strip);
+    return () => ro.disconnect();
+  }, [overview, root, shown.layout, room.width, hasStrip]);
+  // Reorder with no card to move (none open, or Dashboard Filter hides them all) has nothing to show: it ends, instead of
+  // staying set and popping its sheet up once a card shows again.
+  const noCards = sessions.length === 0 || filtered.length === 0;
+  useEffect(() => {
+    if (reordering && noCards) onReordered();
+  }, [reordering, noCards, onReordered]);
   if (sessions.length === 0) return <EmptyState>{NO_CHATS}</EmptyState>;
+  if (filtered.length === 0) return <EmptyState>{FILTERED_OUT}</EmptyState>;
   const big = shown.bigCards;
   const toggleBig = (id: string) => {
     const others = big.filter((x) => x !== id && sessions.some((c) => c.id === x));
     setShown({ bigCards: big.includes(id) ? others : [...others, id] });
   };
+  const all = dashboardOrder(listOrder(groups), shown.cardOrder, false).map((x) => x.id);
+  const cards = dashboardOrder(filtered, shown.cardOrder, shown.waitingFirst);
+  const byId = new Map(cards.map((x) => [x.id, x]));
+  const card = (x: SessionSummary, box = true, onPick?: () => void) => {
+    const size = { big: !onPick && box && shown.layout === 'grid' && big.includes(x.id), onToggle: shown.layout === 'grid' ? () => toggleBig(x.id) : undefined, area: {} };
+    return showsConversation(x) ? (
+      <LiveCard key={x.id} s={x} live={inView.has(x.id)} size={size} track={track} onOpen={onPick ? () => onPick() : onOpen} box={box} onPick={onPick} />
+    ) : (
+      <TerminalCard key={x.id} s={x} onOpen={onPick ? () => onPick() : onOpen} size={size} box={box} />
+    );
+  };
+  let body: React.ReactNode;
+  if (shown.layout === 'focus') {
+    const laid = layoutDashboard('focus', { cards: cards.map((x) => ({ id: x.id, big: false })), width: room.width, height: 0, columns: [], rows: [], focus: shown.focusCard, side: 0 });
+    const main = laid.cards.find((c) => c.box);
+    const others = laid.cards.filter((c) => !c.box).map((c) => byId.get(c.id)!);
+    const pick = (id: string) => () => setShown({ focusCard: id });
+    const wide = room.width >= CARD_MIN_WIDTH + FOCUS_SIDE_MIN;
+    const mainCard = main && card(byId.get(main.id)!);
+    body = (
+      <div className={`sessions-overview layout-focus${wide ? ' focus-wide' : ' focus-narrow'}`} ref={setRefs}>
+        {!wide && others.length > 0 && (
+          <div className="focus-strip">
+            {others.map((x) => (
+              <SmallCard key={x.id} s={x} onPick={pick(x.id)} />
+            ))}
+          </div>
+        )}
+        {mainCard}
+        {wide && others.length > 0 && <div className="focus-side">{others.map((x) => card(x, false, pick(x.id)))}</div>}
+      </div>
+    );
+  } else {
+    body = (
+      <div className="sessions-overview" ref={setRefs}>
+        {cards.map((x) => card(x))}
+      </div>
+    );
+  }
   return (
     <>
-      <div className="sessions-overview" ref={(el) => setRoot(el?.closest<HTMLElement>('.pg-scroll') ?? null)}>
-        {dashboardOrder(sessions, shown.cardOrder, shown.waitingFirst).map((x) => {
-          const size = { big: big.includes(x.id), onToggle: () => toggleBig(x.id), area: {} };
-          return showsConversation(x) ? (
-            <LiveCard key={x.id} s={x} live={inView.has(x.id)} size={size} track={track} onOpen={onOpen} />
-          ) : (
-            <TerminalCard key={x.id} s={x} onOpen={onOpen} size={size} />
-          );
-        })}
-      </div>
+      {body}
       {reordering && (
         <ReorderSheet
           title="Reorder Cards"
-          sections={[{ key: 'cards', items: dashboardOrder(sessions, shown.cardOrder, false).map((x) => ({ key: x.id, title: x.title, sub: x.groupName })) }]}
-          onReorder={(_section, keys) => setShown({ cardOrder: keys })}
+          sections={[{ key: 'cards', items: dashboardOrder(filtered, shown.cardOrder, false).map((x) => ({ key: x.id, title: x.title, sub: x.groupName })) }]}
+          // The cards Dashboard Filter leaves out keep their places after the ones moved.
+          onReorder={(_section, keys) => setShown({ cardOrder: [...keys, ...all.filter((id) => !keys.includes(id))] })}
           onClose={onReordered}
         />
       )}
     </>
+  );
+}
+
+/** A small card in Focus's row above the large conversation on a phone: the session's title, state and latest messages. A tap puts it in the large spot. */
+function SmallCard({ s, onPick }: { s: SessionSummary; onPick: () => void }) {
+  return (
+    <div
+      data-id={s.id}
+      className={cardClass(s, ' overview-small')}
+      role="button"
+      tabIndex={0}
+      onClick={onPick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onPick();
+        }
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        window.looper.sessions.showContextMenu(s.id, true);
+      }}
+    >
+      <CardTitle s={s} />
+      <CardMessages s={s} />
+    </div>
+  );
+}
+
+/** A phone's Reorder for the Chats list grouped by nothing: its rows (`sessions`, in the list's order) move in a sheet. */
+export function ChatsReorderSheet({ sessions, onClose }: { sessions: SessionSummary[]; onClose: () => void }) {
+  return (
+    <ReorderSheet
+      title="Reorder Chats"
+      sections={[{ key: 'chats', items: sessions.map((x) => ({ key: x.id, title: x.title, sub: x.groupName })) }]}
+      onReorder={(_section, keys) => window.looper.sessions.reorder(keys)}
+      onClose={onClose}
+    />
   );
 }
 
@@ -382,7 +493,7 @@ const NO_ROWS: MessageRow[] = [];
  * with Edit and Cancel, the rows' menu quotes into the box, and the box shows
  * Queue while the agent is in a turn.
  */
-function RunConversation({ s, activity, embedded = false }: { s: SessionSummary; activity: SessionActivity | null; embedded?: boolean }) {
+function RunConversation({ s, activity, embedded = false, box = true }: { s: SessionSummary; activity: SessionActivity | null; embedded?: boolean; box?: boolean }) {
   const rows = activity?.rows ?? NO_ROWS;
   return (
     <TranscriptView
@@ -394,13 +505,15 @@ function RunConversation({ s, activity, embedded = false }: { s: SessionSummary;
       waitingText="Waiting for the agent's first message…"
       quote
       embedded={embedded}
+      status={s.harnessKind !== 'custom' && <ChatStatus state={{ harnessKind: s.harnessKind, harnessName: s.harnessName, status: s.status, rows }} />}
+      permission={s.permission}
       footer={
+        box && (
         <RunGuidance
           key={s.id}
           taskId={s.taskId}
           runId={s.id}
           question={s.question ?? null}
-          permission={s.permission}
           recheck={`${s.status}\n${s.latest ?? ''}`}
           stop={stopOf(s)}
           commands={activity?.commands}
@@ -409,6 +522,7 @@ function RunConversation({ s, activity, embedded = false }: { s: SessionSummary;
           queued={!!activity?.pendingGuidance}
           rows={rows}
         />
+        )
       }
     />
   );
@@ -421,7 +535,8 @@ function RunConversation({ s, activity, embedded = false }: { s: SessionSummary;
  * guidance box. Out of view, the card shows the agent's latest messages instead.
  * A phone's card is the desktop's: its conversation scrolls inside it, and the
  * title opens the chat. `drag` only on the desktop, where cards are dragged to
- * another place.
+ * another place. `box` false: no message box (Focus's side cards).
+ * `onPick`: a click anywhere on the card (but a selection) picks it.
  */
 function LiveCard({
   s,
@@ -430,6 +545,8 @@ function LiveCard({
   drag,
   track,
   onOpen,
+  box = true,
+  onPick,
 }: {
   s: SessionSummary;
   live: boolean;
@@ -437,27 +554,29 @@ function LiveCard({
   drag?: CardDrag;
   track: TrackCard;
   onOpen: (id: string) => void;
+  box?: boolean;
+  onPick?: () => void;
 }) {
   const chat = useCardFeed(s.id, live && s.kind === 'chat', readChat, chatEvent);
   const activity = useCardFeed(s.id, live && s.kind === 'run', readActivity, activityEvent);
   // The card's title changes with every status and minute; the conversation only with its own events.
-  const chatView = useMemo(() => chat && <ChatView state={chat} embedded />, [chat]);
+  const chatView = useMemo(() => chat && <ChatView state={chat} embedded box={box} />, [chat, box]);
   const question = s.question ?? null;
   const permissionId = s.permission?.id;
   const recheck = `${s.status}\n${s.latest ?? ''}`;
   const stoppable = canStop(s);
   const runView = useMemo(
-    () => activity && <RunConversation s={s} activity={activity} embedded />,
+    () => activity && <RunConversation s={s} activity={activity} embedded box={box} />,
     // The card's run reads only these of the summary.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activity, s.taskId, s.id, question, permissionId, recheck, stoppable],
+    [activity, s.taskId, s.id, question, permissionId, recheck, stoppable, box],
   );
   const view = chatView ?? runView;
   // Working in a card is looking at it: a finished turn or a notification stops waiting,
   // when the focus comes into the card and when one comes while it's there.
   const cardRef = useRef<HTMLDivElement | null>(null);
   const seen = () => {
-    if (s.waiting && s.waiting.reason !== 'permission') window.looper.sessions.seen(s.id);
+    if (s.waiting && s.waiting.reason !== 'permission' && !s.waiting.unread) window.looper.sessions.seen(s.id);
   };
   const waitKey = s.waiting ? `${s.waiting.reason}:${s.waiting.since}` : '';
   useEffect(() => {
@@ -477,9 +596,10 @@ function LiveCard({
     <div
       ref={ref}
       data-id={s.id}
-      className={cardClass(s, ' overview-chat') + (drag?.mark ?? '') + (size.big ? ' big' : '')}
+      className={cardClass(s, ' overview-chat') + (drag?.mark ?? '') + (size.big ? ' big' : '') + (size.cls ?? '')}
       style={size.area}
       onFocus={seen}
+      onClick={onPick && (() => !window.getSelection()?.toString() && onPick())}
     >
       <div
         className="overview-bar"
@@ -585,13 +705,42 @@ function useGapResize(s: SessionsWindow, rootRef: RefObject<HTMLDivElement | nul
   return { sizes, active, start, reset };
 }
 
+/** Focus's side column's width: the saved one, or the dragged one while its splitter is dragged (saved when the mouse is released). */
+function useFocusSide(s: SessionsWindow) {
+  const saved = s.shown.focusSide;
+  const [draft, setDraft] = useState<number | null>(null);
+  const draftRef = useRef<number | null>(null);
+  // Kept until the settings come back with it, so the dragged width doesn't flick back meanwhile.
+  useEffect(() => {
+    draftRef.current = null;
+    setDraft(null);
+  }, [saved]);
+  return {
+    width: draft ?? saved,
+    drag: (width: number) => {
+      draftRef.current = width;
+      setDraft(width);
+    },
+    end: () => {
+      if (draftRef.current !== null) s.setShown({ focusSide: draftRef.current });
+    },
+    set: (width: number) => s.setShown({ focusSide: width }),
+  };
+}
+
+/** An arrow key moves Focus's splitter this far. */
+const SIDE_STEP = 16;
+
 /**
  * The Chats window's dashboard: a card per session in the order the cards
  * were dragged to (the list's for the others), so cards don't move while you
- * work in them, unless Waiting Chats First puts the waiting ones first. Each
- * chat is a working chat and each task run its conversation with its guidance
- * box; terminal sessions are summaries. Any card can be twice its size. The
- * gaps between the cards are dragged to size the columns and rows.
+ * work in them, unless Waiting Chats First puts the waiting ones first, laid
+ * out by View → Dashboard Layout (layoutDashboard). Each chat is a working chat
+ * and each task run its conversation with its guidance box, where the layout
+ * gives the card its message box; terminal sessions are summaries. Grid: any
+ * card can be twice its size, and the gaps between the cards are dragged to
+ * size the columns and rows. Focus: a click on a side card puts it in the large
+ * spot, and the splitter beside the side column sizes it.
  */
 function ChatsDashboard({ s }: { s: SessionsWindow }) {
   const { sessions } = s.state;
@@ -604,20 +753,33 @@ function ChatsDashboard({ s }: { s: SessionsWindow }) {
   const [inView, track] = useCardsInView(root);
   const box = useContentSize(root);
   const grid = useGapResize(s, rootRef);
+  const side = useFocusSide(s);
   const [dragging, setDragging] = useState<string | null>(null);
   const [drop, setDrop] = useState<{ id: string; after: boolean } | null>(null);
-  const live = liveCards(sessions, inView);
+  // Dashboard Filter's cards, in the list's order (the order they were dragged to first).
+  const filtered = useMemo(() => dashboardCards(s.groups, s.shown), [s.groups, s.shown]);
+  const live = liveCards(filtered, inView);
   const liveKey = live.join('\n');
   // A layout effect, so the window takes the chats' and runs' events before the cards read them.
   useLayoutEffect(() => window.looper.sessions.showCards(live), [liveKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(() => () => window.looper.sessions.showCards([]), []);
   if (sessions.length === 0) return <EmptyState>{NO_CHATS}</EmptyState>;
+  if (filtered.length === 0) return <EmptyState>{FILTERED_OUT}</EmptyState>;
   const big = s.shown.bigCards;
-  const cards = dashboardOrder(sessions, s.shown.cardOrder, s.shown.waitingFirst);
-  const widths = columnWidths(grid.sizes.columns, box.width);
-  const places = placeCards(cards.map((x) => big.includes(x.id)), widths.length);
-  const heights = rowHeights(grid.sizes.rows, rowCount(places), autoRowHeight(box.height));
-  const bars = gapBars(places, widths, heights);
+  const cards = dashboardOrder(filtered, s.shown.cardOrder, s.shown.waitingFirst);
+  const layoutId = s.shown.layout;
+  const layout = layoutDashboard(layoutId, {
+    cards: cards.map((x) => ({ id: x.id, big: big.includes(x.id) })),
+    width: box.width,
+    height: box.height,
+    columns: grid.sizes.columns,
+    rows: grid.sizes.rows,
+    focus: s.shown.focusCard,
+    side: side.width,
+  });
+  const placed = new Map(layout.cards.map((c) => [c.id, c]));
+  // Grid's cards change size; in a layout that places one card with its message box, a click on another puts it there.
+  const sizable = layoutId === 'grid';
   const endDrag = () => {
     setDragging(null);
     setDrop(null);
@@ -637,16 +799,17 @@ function ChatsDashboard({ s }: { s: SessionsWindow }) {
     end: endDrag,
     mark: drop?.id === id ? (drop.after ? ' drop-after' : ' drop-before') : dragging === id ? ' dragging' : '',
   });
+  const split = layout.split;
   return (
     <div
-      className="sessions-overview sessions-dashboard"
+      className={`sessions-overview sessions-dashboard layout-${layoutId}`}
       ref={setRoots}
-      style={{ gridTemplateColumns: columnTracks(grid.sizes.columns, box.width), gridTemplateRows: heights.map((h) => `${h}px`).join(' ') }}
+      style={{ gridTemplateColumns: layout.columns, gridTemplateRows: layout.rows, gap: layout.gap }}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes(CARD_DRAG_TYPE)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
-        // Before or after the card under the pointer, by the half it's in.
+        // Before or after the card under the pointer, by the half it's in: across in a grid, down in a column.
         const card = (e.target as HTMLElement).closest<HTMLElement>('.overview-card');
         const id = card?.dataset.id;
         if (!card || !id || id === dragging) {
@@ -654,7 +817,7 @@ function ChatsDashboard({ s }: { s: SessionsWindow }) {
           return;
         }
         const r = card.getBoundingClientRect();
-        const after = e.clientX > r.left + r.width / 2;
+        const after = sizable ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2;
         setDrop((d) => (d?.id === id && d.after === after ? d : { id, after }));
       }}
       onDrop={(e) => {
@@ -665,25 +828,48 @@ function ChatsDashboard({ s }: { s: SessionsWindow }) {
         endDrag();
       }}
     >
-      {cards.map((x, i) => {
-        const p = places[i];
-        const area = { gridColumn: `${p.col + 1} / span ${p.cols}`, gridRow: `${p.row + 1} / span ${p.rows}` };
-        const size = { big: big.includes(x.id), onToggle: () => s.toggleBig(x.id), area };
+      {cards.map((x) => {
+        const c = placed.get(x.id);
+        if (!c) return null;
+        const p = c.place;
+        const area: React.CSSProperties = {
+          gridColumn: `${p.col + 1} / span ${p.cols}`,
+          gridRow: `${p.row + 1} / span ${p.rows}`,
+          // The large conversation stays in view while the column beside it scrolls.
+          ...(c.stays !== undefined ? { position: 'sticky', top: 0, alignSelf: 'start', height: c.stays } : {}),
+        };
+        const size = { big: sizable && big.includes(x.id), onToggle: sizable ? () => s.toggleBig(x.id) : undefined, area, cls: c.stays !== undefined ? ' focus-main' : '' };
+        const pick = c.box ? undefined : () => s.setShown({ focusCard: x.id });
+        const open = pick ? () => pick() : s.setSelected;
         return showsConversation(x) ? (
-          <LiveCard key={x.id} s={x} live={inView.has(x.id)} size={size} drag={dragOf(x.id)} track={track} onOpen={s.setSelected} />
+          <LiveCard key={x.id} s={x} live={inView.has(x.id)} size={size} drag={dragOf(x.id)} track={track} onOpen={open} box={c.box} onPick={pick} />
         ) : (
-          <TerminalCard key={x.id} s={x} size={size} drag={dragOf(x.id)} onOpen={s.setSelected} />
+          <TerminalCard key={x.id} s={x} size={size} drag={dragOf(x.id)} onOpen={open} box={c.box} />
         );
       })}
-      {bars.map((bar) => (
+      {layout.bars.map((bar) => (
         <div
           key={`${bar.axis}${bar.index}:${bar.from}`}
           className={`card-gap ${bar.axis}${grid.active?.axis === bar.axis && grid.active.index === bar.index ? ' active' : ''}`}
           style={bar.axis === 'x' ? { left: bar.at, top: bar.from, height: bar.length } : { top: bar.at, left: bar.from, width: bar.length }}
-          onMouseDown={(e) => grid.start(e, bar, widths, heights, box.width)}
+          onMouseDown={(e) => grid.start(e, bar, layout.widths, layout.heights, box.width)}
           onDoubleClick={() => grid.reset(bar)}
         />
       ))}
+      {split && (
+        <div className="card-split-cell" style={{ gridColumn: '-2', gridRow: '1 / -1' }}>
+          <Splitter
+            className="card-split"
+            axis="x"
+            label="Side column"
+            value={{ now: split.width, min: split.min, max: split.max }}
+            containerRef={rootRef}
+            onDrag={(pos) => side.drag(focusSideWidth(box.width - pos, box.width))}
+            onDragEnd={side.end}
+            onStep={(dir) => side.set(focusSideWidth(split.width - dir * SIDE_STEP, box.width))}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -725,8 +911,8 @@ function SessionsToolbar({ c, single }: { c: CommandContext; single: boolean }) 
  * agent is doing on the right. `single`: a single chat's window (Open in New
  * Window), the chat panel alone, its activity pane hidden unless the View menu shows it.
  */
-export function SessionsApp({ initial, single = false }: { initial?: string; single?: boolean }) {
-  const s = useSessionsWindow(initial, single);
+export function SessionsApp({ initial, single = false, terminal = false }: { initial?: string; single?: boolean; terminal?: boolean }) {
+  const s = useSessionsWindow(initial, single, undefined, terminal);
   const { state, summary, chat, shown } = s;
   const limits = sessionLimits(state, summary);
   // A window opened on a conversation (a tap on the main window's Chats tab or its Dashboard) is that conversation's screen: Back closes it.
@@ -736,14 +922,23 @@ export function SessionsApp({ initial, single = false }: { initial?: string; sin
   const split = useSplit(!single);
   const [listShow, setListShow] = useState<OverviewChoice>('list');
   const [reordering, setReordering] = useState(false);
-  const reorderGroup = !summary && state.sessions.length > 1 && listShow === 'overview' ? [{ id: 'cards', items: [{ id: 'reorder-cards', label: 'Reorder', run: () => setReordering(true) }] }] : [];
+  // Group Chats By None: the list's rows move in a sheet, as the Overview's cards do.
+  const [reorderingChats, setReorderingChats] = useState(false);
+  const reorderGroup =
+    !summary && state.sessions.length > 1 && listShow === 'overview'
+      ? [{ id: 'cards', items: [{ id: 'reorder-cards', label: 'Reorder', run: () => setReordering(true) }] }]
+      : !summary && state.sessions.length > 1 && shown.groupBy === 'none'
+        ? [{ id: 'chats', items: [{ id: 'reorder-chats', label: 'Reorder', run: () => setReorderingChats(true) }] }]
+        : [];
   const panel = useInspector<ActivityTab>('now', !!split?.inspector);
   const [usage, setUsage] = useState(false);
   useEffect(() => {
+    // A chat that compacted into another goes on with its Activity or Usage sheet open, as the same chat would.
+    if (s.selected !== null && s.selected === s.compactedInto.current) return;
     panel.dismiss();
     setUsage(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [summary?.id]);
+  }, [s.selected]);
   const sheet = panel.sheetOpen || usage;
   // A conversation that isn't listed yet (a new chat or terminal is on its way) shows "Starting…" instead of the list.
   const starting = !summary && !!s.selected && !single;
@@ -856,17 +1051,19 @@ export function SessionsApp({ initial, single = false }: { initial?: string; sin
           <section className="pg-group pg-sessions">
             <SessionList
               sessions={state.sessions}
+              groups={s.groups}
               selected={split ? s.selected : null}
               collapsed={shown.collapsed}
               waitingFirst={shown.waitingFirst}
               onToggle={s.toggleGroup}
               onSelect={s.setSelected}
+              swipe={unreadSwipe}
             />
           </section>
         }
         value={listShow}
         onChange={setListShow}
-        overview={<PhoneOverview sessions={state.sessions} shown={shown} setShown={s.setShown} onOpen={s.setSelected} reordering={reordering} onReordered={() => setReordering(false)} />}
+        overview={<PhoneOverview sessions={state.sessions} groups={s.groups} shown={shown} setShown={s.setShown} onOpen={s.setSelected} reordering={reordering} onReordered={() => setReordering(false)} />}
       />
     </div>
   );
@@ -877,8 +1074,9 @@ export function SessionsApp({ initial, single = false }: { initial?: string; sin
       {bar}
       {!isPhone && (single ? shown.windowToolbar : shown.toolbar) && <SessionsToolbar c={commands} single={single} />}
       {/* A window opened on its conversation never shows the list without a column for it: Back closes the window. */}
-      <SessionsBody s={s} single={single} phone={isPhone ? { split, list: closesWindow && !split ? null : phoneList, panel, back: pageBack, title } : undefined} />
+      <SessionsBody s={s} single={single} menu={commands} phone={isPhone ? { split, list: closesWindow && !split ? null : phoneList, panel, back: pageBack, title } : undefined} />
       {(single ? shown.windowStatusBar : shown.statusBar) && <SessionsStatusBar summary={summary} chat={chat} limits={limits} />}
+      {reorderingChats && <ChatsReorderSheet sessions={s.ordered} onClose={() => setReorderingChats(false)} />}
       {summary && usage && (
         <PhoneSheet title="Usage" onClose={() => setUsage(false)}>
           <UsagePanel summary={summary} chat={chat} limits={limits} />
@@ -945,7 +1143,7 @@ function SessionCenter({ s }: { s: SessionsWindow }) {
  * it. On a phone or tablet (`phone`) the list is a screen and a conversation is pushed over it, or the two are
  * columns side by side; Activity is a sheet or a trailing column; the conversation's agents are pages, not tabs.
  */
-export function SessionsBody({ s, single = false, phone }: { s: SessionsWindow; single?: boolean; phone?: PhoneChats }) {
+export function SessionsBody({ s, single = false, phone, menu }: { s: SessionsWindow; single?: boolean; phone?: PhoneChats; menu?: CommandContext }) {
   const { state, selected, summary, activity, shown, subagents } = s;
   const pane = !!summary && (phone ? phone.panel.open : single ? shown.windowActivityPane : shown.activityPane);
   const starting = !summary && !!selected && !single;
@@ -963,7 +1161,7 @@ export function SessionsBody({ s, single = false, phone }: { s: SessionsWindow; 
 
   return (
     <ListDetail
-      sides={{ storageKey: single ? WINDOW_WIDTHS_KEY : WIDTHS_KEY, left: { initial: 280, min: 200, max: 480 }, right: { initial: 400, min: 280, max: 720 }, minDetail: single ? 0 : 480 }}
+      sides={{ storageKey: single ? WINDOW_WIDTHS_KEY : WIDTHS_KEY, left: { initial: 280, min: 200, max: 480 }, right: { initial: 400, min: 280, max: 720 }, minDetail: single ? 0 : 430 }}
       split={phone?.split}
       open={single || !!summary || starting}
       onClose={phone?.back}
@@ -974,11 +1172,14 @@ export function SessionsBody({ s, single = false, phone }: { s: SessionsWindow; 
         (phone ? phone.list : (
           <SessionList
             sessions={state.sessions}
+            groups={s.groups}
             selected={selected}
             collapsed={shown.collapsed}
             waitingFirst={shown.waitingFirst}
             onToggle={s.toggleGroup}
             onSelect={s.setSelected}
+            onReorder={shown.groupBy === 'none' ? s.reorder : undefined}
+            onEmptyMenu={menu && (() => popupViewOptions(menu, 'chats', ['list']))}
           />
         ))
       }
@@ -995,7 +1196,11 @@ export function SessionsBody({ s, single = false, phone }: { s: SessionsWindow; 
                 rowsAgent={s.watchedAgent}
                 attachments={s.attachments}
                 background={activity?.background ?? []}
+                canStopBackground={summary.kind !== 'terminal'}
                 subagents={subagents}
+                agentConversation={(a) => (
+                  <ActivityAgentConversation key={a.agentId} taskId={summary.taskId} runId={summary.id} agentId={a.agentId} running={a.running} chat={s.chat} subagent={a.subagent} />
+                )}
                 gitProject={s.gitRepo ? summary.projectId : undefined}
                 projectId={summary.projectId}
                 following={s.follow}

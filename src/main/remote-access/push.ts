@@ -1,7 +1,7 @@
 import webpush from 'web-push';
 import type { Logger } from '../../engine/log';
 import { readJson, writeJsonAtomic } from '../../engine/store/fsutil';
-import type { PushPayload, PushSubscribeRequest } from '../../shared/remote-access';
+import type { NotifyTopic, PushPayload, PushSubscribeRequest } from '../../shared/remote-access';
 import { waitingOf, type SessionSummary } from '../../shared/sessions';
 import type { Clock } from './devices';
 
@@ -184,32 +184,71 @@ export class PushSender {
 /** How many sessions waited for the user when each one that `WaitWatcher.next` returned started waiting: the app icon's badge. */
 const badges = new WeakMap<SessionSummary, number>();
 
-/** The reasons a session waits that a push tells the user about: it asks for permission, or its turn is over. */
-const PUSHED_REASONS = new Set(['permission', 'turn']);
+/** The reasons a session waits that a push tells the user about, and the device switch each falls under. */
+const PUSHED_REASONS: Partial<Record<string, NotifyTopic>> = { permission: 'questions', turn: 'turns' };
+
+/** The device switch a waiting session's push falls under. */
+export const waitTopic = (s: SessionSummary): NotifyTopic => PUSHED_REASONS[s.waiting?.reason ?? ''] ?? 'turns';
+
+/**
+ * How long a finished turn waits before it's pushed: one the agent follows at
+ * once with another (a queued message, a background task that ended just
+ * then) isn't news yet.
+ */
+export const TURN_SETTLE_MS = 5_000;
 
 /**
  * The sessions that started waiting for the user since the last state: a new
- * wait (reason and time) on a permission question or a finished turn.
+ * wait (reason and time) on a permission question or a finished turn. A
+ * finished turn counts once it has lasted TURN_SETTLE_MS, whatever runs in the
+ * background, so a chat notifies once at each turn end, not after each message;
+ * a turn that starts before then cancels it. A turn a background task's end
+ * starts is a turn of its own, pushed at its end too. A muted session's waits
+ * are noted, never pushed.
  */
 export class WaitWatcher {
   private seen: Map<string, string> | null = null;
 
-  /** The first call only records what's already waiting. */
-  next(sessions: SessionSummary[]): SessionSummary[] {
-    const now = new Map<string, string>();
+  constructor(private readonly settleMs = TURN_SETTLE_MS) {}
+
+  /** A chat compacted into `to`: its wait was already seen (or pushed) under the old id, so it isn't new under this one. */
+  moved(from: string, to: string): void {
+    const key = this.seen?.get(from);
+    if (key !== undefined) this.seen!.set(to, key);
+  }
+
+  /**
+   * The first call only records what's already waiting. `retryIn`: a finished
+   * turn that will count after this many ms if nothing changes (no new state
+   * comes then, so the caller asks again).
+   */
+  next(sessions: SessionSummary[], now: number): { fresh: SessionSummary[]; retryIn?: number } {
+    const kept = new Map<string, string>();
     const fresh: SessionSummary[] = [];
+    let retryIn: number | undefined;
     const waiting = waitingOf(sessions).length;
     for (const s of sessions) {
-      if (!s.waiting || !PUSHED_REASONS.has(s.waiting.reason)) continue;
+      // Marking a session unread is the user's own doing: no push for it.
+      if (!s.waiting || s.waiting.unread || !PUSHED_REASONS[s.waiting.reason]) continue;
       const key = `${s.waiting.reason}:${s.waiting.since}`;
-      now.set(s.id, key);
-      if (this.seen && this.seen.get(s.id) !== key) {
+      const before = this.seen?.get(s.id);
+      if (this.seen && before !== key && !s.muted && s.waiting.reason === 'turn') {
+        const left = s.waiting.since + this.settleMs - now;
+        if (left > 0) {
+          // Not yet: it stays new until it counts, or until the agent works again.
+          if (before !== undefined) kept.set(s.id, before);
+          retryIn = Math.min(retryIn ?? left, left);
+          continue;
+        }
+      }
+      kept.set(s.id, key);
+      if (this.seen && before !== key && !s.muted) {
         fresh.push(s);
         badges.set(s, waiting);
       }
     }
-    this.seen = now;
-    return fresh;
+    this.seen = kept;
+    return retryIn === undefined ? { fresh } : { fresh, retryIn };
   }
 }
 

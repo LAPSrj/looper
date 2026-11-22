@@ -8,7 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
-import type { HostDirEntry, MessageBoxSpec } from '../../../shared/remote-access';
+import { NOTIFY_TOPICS, type DeviceNotifications, type HostDirEntry, type MessageBoxSpec } from '../../../shared/remote-access';
 import { DataTable, type DataCol } from '../components/DataTable';
 import { Icon } from '../components/Icon';
 import { ICONS } from '../components/icons';
@@ -27,7 +27,7 @@ import { Notifications } from './Notifications';
 import { PathBar } from './PathBar';
 import { CloseButton, TitleBar } from './ws-titlebar';
 import { Tabs } from '../components/Tabs';
-import { CheckboxField, Field } from '../components/ui';
+import { CheckboxField, Field, FormGroup } from '../components/ui';
 import { WindowActions } from '../components/WindowActions';
 import { PLACE_ICONS } from './places';
 import { childStack, frontWindow, isBlocked, mainWindow, topModal, useShellState, windowSrc, type OpenDialog, type PathRequest, type WebWindow } from './store';
@@ -649,6 +649,9 @@ function FileDialog({ controller, dialog }: { controller: ShellController; dialo
 function ThisDeviceWindow({ controller, onClose }: { controller: ShellController; onClose: () => void }) {
   const d = useDeviceForm(controller);
   const [notify, setNotify] = useState<boolean | null>(null);
+  /** The switches as changed here; null: as the computer has them. */
+  const [topics, setTopics] = useState<DeviceNotifications | null>(null);
+  const shownTopics = topics ?? d.notify;
   const named = !!d.nameText.trim();
   const save = () => {
     if (!named || d.busy) return;
@@ -657,6 +660,7 @@ function ThisDeviceWindow({ controller, onClose }: { controller: ShellController
     const next = d.newName();
     void (async () => {
       if (!(await pushing)) return;
+      if (topics && !(await d.saveNotify(topics))) return;
       if (next && !(await d.rename(next))) return;
       onClose();
     })();
@@ -679,7 +683,18 @@ function ThisDeviceWindow({ controller, onClose }: { controller: ShellController
             <span className="field-label">{HOST_COMPUTER}</span>
             <span className="ws-thisdevice-value">{d.computer || '\u00a0'}</span>
           </div>
-          <CheckboxField label="Notifications" note={d.hint} checked={notify ?? d.push === 'on'} disabled={!d.usable || d.busy} onChange={setNotify} />
+          <FormGroup title="Notifications">
+            <CheckboxField label="Allow notifications" note={d.hint} checked={notify ?? d.push === 'on'} disabled={!d.usable || d.busy} onChange={setNotify} />
+            {NOTIFY_TOPICS.map((t) => (
+              <CheckboxField
+                key={t.id}
+                label={t.label}
+                checked={!!shownTopics?.[t.id]}
+                disabled={!shownTopics || d.busy}
+                onChange={(on) => shownTopics && setTopics({ ...shownTopics, [t.id]: on })}
+              />
+            ))}
+          </FormGroup>
           <div className="ws-thisdevice-commands">
             <button type="button" className="btn" onClick={d.unpair}>
               Unpair This Device

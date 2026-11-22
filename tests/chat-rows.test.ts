@@ -189,6 +189,48 @@ describe('a chat opened again', { timeout: 30_000 }, () => {
     const ids = [...history, ...rows].map((r) => r.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  it('shows the newest rows of a long history while it reads all of it, and forks and compacts only once it has', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'looper-chat-rows-'));
+    const dir = mkdtempSync(join(tmpdir(), 'looper-chat-'));
+    const host = detectHost();
+    const settings = loadSettings(dataDir, host);
+    settings.environments = settings.environments.map((e) =>
+      e.id === 'local' ? { ...e, shell: 'bash -c', harnesses: [{ id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir), args: [], env: {} }] } : e,
+    );
+    const task = TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } });
+    let readWhole!: () => void;
+    const whole = new Promise<void>((done) => (readWhole = done));
+    manager = new ChatManager({
+      dataDir,
+      host,
+      settings,
+      log: new Logger(join(dataDir, 'engine.log'), false),
+      emit: () => undefined,
+      runDir: (taskId, runId) => join(dataDir, 'runs', taskId, runId),
+      readHistory: async () => {
+        await whole;
+        return transcriptRows();
+      },
+      readCompactable: async () => [],
+      readNewest: async () => transcriptRows().slice(2),
+      writeInfo: () => undefined,
+      appendRecord: () => undefined,
+      taskVersion: () => undefined,
+      onLimits: () => undefined,
+    });
+    const info = { harnessId: 'fake', harnessKind: 'claude-code' as const, title: 'earlier question', settings: { permissionMode: '' } };
+    const id = manager.start(task, { kind: 'reopen', runId: 'r1', info, sessionId: 's0' }).id;
+    await until(() => manager!.get(id)!.history.length === 2, 'the newest rows');
+    expect(manager.get(id)!.history.map((r) => r.text)).toEqual(['another question', 'another answer']);
+    // Its rows' positions aren't the history's yet, and Compact would leave the start out.
+    expect(() => manager!.fork(task, id, 1)).toThrow('still being read');
+    await expect(manager.compact(task, id)).rejects.toThrow('still being read');
+
+    readWhole();
+    await until(() => manager!.get(id)!.history.length === 4, 'the whole history');
+    expect(manager.fork(task, id, 1).history.map((r) => r.text)).toEqual(['earlier question', 'earlier answer']);
+  });
 });
 
 describe("a Codex chat's agent", () => {

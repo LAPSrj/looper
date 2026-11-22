@@ -29,13 +29,22 @@ export async function shoot(page, name) {
   await page.screenshot({ path: path.join(dir, `${name.replace(/\W+/g, '-')}.png`) }).catch(() => undefined);
 }
 
+/**
+ * Quiet mode (main/platform/perf-quiet.ts), so a run doesn't interrupt whoever uses the computer: the app's windows
+ * open without taking the focus, on another virtual desktop (the last one in Task View that isn't the current one), or
+ * on this one behind the other windows and off the taskbar when there's only one, or with BENCH_QUIET=current.
+ * Off unless asked for, with --quiet or BENCH_QUIET (desktop or current), until it's shown to measure the same.
+ */
+export const QUIET = process.argv.includes('--visible') ? '' : process.env.BENCH_QUIET || (process.argv.includes('--quiet') ? 'desktop' : '');
+
 export async function launch() {
+  const { LOOPER_PERF_QUIET: _visible, ...inherited } = process.env;
   const app = await electron.launch({
     executablePath: createRequire(import.meta.url)('electron'),
     // A window covered by others keeps painting, as the screenshot driver's does, so the numbers don't depend on what's on top.
     args: [`--user-data-dir=${path.join(ROOT, 'profile')}`, '--disable-features=CalculateNativeWinOcclusion', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', ...(process.env.BENCH_ARGS?.split(' ').filter(Boolean) ?? []), APP_DIR],
     // LOOPER_NO_MEMORY_TRIM: the app doesn't hand memory back on its own while measured (main/memory-trim.ts).
-    env: { ...process.env, LOOPER_HOME: DATA, LOOPER_NO_MEMORY_TRIM: '1' },
+    env: { ...inherited, LOOPER_HOME: DATA, LOOPER_NO_MEMORY_TRIM: '1', ...(QUIET ? { LOOPER_PERF_QUIET: QUIET } : {}) },
     timeout: 60_000,
   });
   const page = await app.firstWindow();
@@ -281,7 +290,28 @@ export async function memoryDump(app) {
   }
 }
 
-/** The demo data, with chats open in its projects whose openings are long compacted conversations. */
+/**
+ * BENCH_TRANSCRIPTS: what the chats' transcripts hold. `mixed` (the default) has each size people keep: the first
+ * three with screenshots (the journey's Files tab shows them; the first is about 68 MB, the third medium), the second
+ * with 100 MB of Claude Code's queue records too (about 127 MB, as the largest real ones), a chat in five from the
+ * fifth without a transcript (never started), and the rest small. `small`: every one small, without screenshots.
+ * `large`: the first six with screenshots, and every other one of them with the queue records too.
+ */
+export const TRANSCRIPTS = process.env.BENCH_TRANSCRIPTS || 'mixed';
+if (!['mixed', 'small', 'large'].includes(TRANSCRIPTS)) throw new Error(`BENCH_TRANSCRIPTS is mixed, small or large, not ${TRANSCRIPTS}`);
+
+/** Chat `i`'s transcript as TRANSCRIPTS has it: null for none, or whether it has screenshots and how much of the queue's records. */
+function transcriptOf(i) {
+  if (TRANSCRIPTS === 'small') return { images: false, queuedMb: 0 };
+  if (TRANSCRIPTS === 'large') return { images: i < 6, queuedMb: i < 6 && i % 2 ? 100 : 0 };
+  if (i >= 4 && i % 5 === 4) return null;
+  return { images: i < 3, queuedMb: i === 1 ? 100 : 0 };
+}
+
+/**
+ * The demo data, with chats open in its projects whose conversations are long transcripts (writeTranscript, as
+ * BENCH_TRANSCRIPTS has them), read when Looper opens them again.
+ */
 export async function seed() {
   fs.rmSync(ROOT, { recursive: true, force: true });
   fs.cpSync(path.join(DEMO, 'demo', 'home'), DATA, { recursive: true });
@@ -313,7 +343,22 @@ export async function seed() {
     for (const run of fs.readdirSync(runs)) if (fs.existsSync(path.join(runs, run, 'opening.json'))) openings.push(path.join(runs, run, 'opening.json'));
   }
   if (openings.length < CHAT_SIZES.length) throw new Error(`only ${openings.length} chats were saved`);
-  openings.forEach((file, i) => fs.writeFileSync(file, JSON.stringify(longChat(i, CHAT_SIZES[i], images))));
+  // Each chat becomes a run (chat.json) whose session (session.json) names its transcript in WSL, as a chat's agent writes it.
+  const transcripts = path.join(ROOT, 'transcripts');
+  fs.mkdirSync(transcripts, { recursive: true });
+  openings.forEach((file, i) => {
+    const opening = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const dir = path.dirname(file);
+    const kind = transcriptOf(i);
+    // A chat that never started keeps only its opening.
+    if (!kind) return;
+    writeTranscript(path.join(transcripts, `chat-${i}.jsonl`), i, CHAT_SIZES[i], { images: kind.images ? images : [], queuedMb: kind.queuedMb });
+    const info = { ...(opening.harnessId ? { harnessId: opening.harnessId } : {}), harnessKind: 'claude-code', title: longChat(i, 1).history[0].text, settings: opening.settings ?? { permissionMode: '' } };
+    fs.writeFileSync(path.join(dir, 'chat.json'), JSON.stringify(info));
+    fs.writeFileSync(path.join(dir, 'session.json'), JSON.stringify({ session_id: uuidOf(i, 0), transcript_path: `${home}/looper-demo/transcripts/chat-${i}.jsonl` }));
+    fs.rmSync(file);
+  });
+  execFileSync('wsl.exe', ['-e', 'bash', '-c', 'mkdir -p ~/looper-demo/transcripts && cp "$(wslpath -a "$1")"/*.jsonl ~/looper-demo/transcripts/', '_', transcripts]);
   return openings.map((f) => path.basename(path.dirname(f)));
 }
 
@@ -469,11 +514,91 @@ export function longChat(n, count, images = []) {
 }
 
 /**
+ * longChat's conversation written as the transcript Claude Code keeps of it (JSONL) in `file`, with what large real
+ * transcripts carry beside the rows (measured on them): each tool result's toolUseResult copy (a Read's file, an
+ * Edit's whole original file, a command's output), a hook's progress record per call, the screenshots at `images` the
+ * agent read, as base64 in both (1.4-2 MB, so a 1,000-row chat with them is about 70 MB), and `queuedMb` of Claude Code's
+ * queue-operation records (82% of a 160 MB one). Generated, so no one's conversation is in it. Returns its size.
+ */
+export function writeTranscript(file, n, count, { images = [], queuedMb = 0 } = {}) {
+  const { history } = longChat(n, count, images);
+  let seed = 11 + n * 104729;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const sessionId = uuidOf(n, 0);
+  const base = { isSidechain: false, userType: 'external', cwd: `/home/dev/projects/site-${n}`, sessionId, version: '2.1.330', gitBranch: 'master', slug: 'bench-chat' };
+  const B64 = 'iVBORw0KGgoAAAANSUhEUgAAB4AAAAQ4CAIAAABnsVYUAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAgAElEQVR4nOzdd3gU1f7H8c+mE0ISQgklgPQiRUBpUkRQUVAEERAvKoqiIAJ';
+  const fd = fs.openSync(file, 'w');
+  let size = 0;
+  let uuid = 0;
+  let parent = null;
+  const write = (rec) => {
+    const line = JSON.stringify(rec) + '\n';
+    size += Buffer.byteLength(line);
+    fs.writeSync(fd, line);
+  };
+  const record = (type, ts, rest) => {
+    const id = uuidOf(n, ++uuid);
+    write({ parentUuid: parent, ...base, type, ...rest, uuid: id, timestamp: ts });
+    parent = id;
+    return id;
+  };
+  const assistant = (ts, block) =>
+    record('assistant', ts, {
+      message: { model: 'claude-opus-5-5', id: `msg_${n}_${uuid}`, type: 'message', role: 'assistant', content: [block], stop_reason: null, stop_sequence: null, usage: { input_tokens: 3, cache_creation_input_tokens: 512, cache_read_input_tokens: 90_000, output_tokens: 240, service_tier: 'standard' } },
+      requestId: `req_${n}_${uuid}`,
+    });
+  // Claude Code's message queue: a message typed while the agent works is enqueued, then dequeued, each a record of its own.
+  const queuedPerTurn = queuedMb ? (queuedMb * 2 ** 20) / history.filter((r) => r.kind === 'prompt').length : 0;
+  const queue = (ts) => {
+    for (let left = queuedPerTurn; left > 0; ) {
+      const content = Array.from({ length: 40 + Math.floor(rand() * 60) }, () => history[Math.floor(rand() * history.length)].preview ?? '').join(' ');
+      write({ type: 'queue-operation', operation: rand() < 0.5 ? 'enqueue' : 'dequeue', timestamp: ts, sessionId, content });
+      left -= content.length + 120;
+    }
+  };
+  try {
+    for (const row of history) {
+      if (row.kind === 'prompt') {
+        queue(row.ts);
+        record('user', row.ts, { message: { role: 'user', content: row.text }, permissionMode: 'default' });
+      } else if (row.kind === 'thinking') assistant(row.ts, { type: 'thinking', thinking: row.text, signature: B64.repeat(5) });
+      else if (row.kind === 'agent') assistant(row.ts, { type: 'text', text: row.text });
+      else if (row.kind === 'tool') {
+        const call = assistant(row.ts, { type: 'tool_use', id: row.toolUseId, name: row.tool, input: row.input });
+        write({ parentUuid: call, ...base, type: 'progress', data: { type: 'hook_progress', hookEvent: 'PostToolUse', hookName: 'PostToolUse:' + row.tool, command: 'looper-mod' }, parentToolUseID: row.toolUseId, toolUseID: row.toolUseId, timestamp: row.ts, uuid: uuidOf(n, ++uuid) });
+        let content = row.result;
+        let tur;
+        if (row.tool === 'Read' && row.result === 'Read image') {
+          const data = B64.repeat(Math.floor((1_400_000 + rand() * 600_000) / B64.length));
+          content = [{ type: 'image', source: { type: 'base64', data, media_type: 'image/png' } }];
+          tur = { type: 'image', file: { base64: data, type: 'image/png', originalSize: Math.floor(data.length * 0.75) } };
+        } else if (row.tool === 'Read') {
+          const text = row.result.replace(/^ *\d+\t/gm, '');
+          tur = { type: 'text', file: { filePath: row.file, content: text, numLines: text.split('\n').length, startLine: 1, totalLines: text.split('\n').length } };
+        } else if (row.tool === 'Edit') {
+          tur = { filePath: row.file, oldString: row.input.old_string, newString: row.input.new_string, originalFile: B64.repeat(150 + Math.floor(rand() * 200)), structuredPatch: row.patch, userModified: false, replaceAll: false };
+        } else if (row.tool === 'Write') tur = { type: 'create', filePath: row.file, content: row.input.content, structuredPatch: [], originalFile: null };
+        else if (row.tool === 'Bash') tur = { stdout: row.result, stderr: '', interrupted: false, isImage: false, noOutputExpected: false };
+        else tur = { content: row.result };
+        record('user', row.ts, { message: { role: 'user', content: [{ tool_use_id: row.toolUseId, type: 'tool_result', content }] }, toolUseResult: tur, sourceToolAssistantUUID: call });
+      }
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return size;
+}
+
+const uuidOf = (n, k) => `${String(n).padStart(8, '0')}-0000-4000-8000-${String(k).padStart(12, '0')}`;
+
+/**
  * BENCH_PROFILE=<step name>: a CPU profile of that step, saved in BENCH_ROOT, and the functions with the most
- * self time printed. Build with LOOPER_NO_MINIFY=1 first for readable names.
+ * self time printed. Build with LOOPER_NO_MINIFY=1 first for readable names. BENCH_PROFILE_MAIN=<step name>: the
+ * same of the main process (`main-<step>.cpuprofile`), for a step that holds it (watch's mainFreeze).
  */
 export async function profiled(page, name, fn) {
   if (process.env.BENCH_TRACE === name) return traced(page, name, fn);
+  if (process.env.BENCH_PROFILE_MAIN === name && mainOf.get(page)) return profiledMain(mainOf.get(page), name, fn);
   if (process.env.BENCH_PROFILE !== name) return fn();
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Profiler.enable');
@@ -481,7 +606,35 @@ export async function profiled(page, name, fn) {
   await cdp.send('Profiler.start');
   const out = await fn();
   const { profile } = await cdp.send('Profiler.stop');
-  fs.writeFileSync(path.join(ROOT, `${name.replace(/\W+/g, '-')}.cpuprofile`), JSON.stringify(profile));
+  printProfile(name, profile, `"${name}"`);
+  return out;
+}
+
+/** The main process's CPU profile of a step, taken from inside it with node:inspector. */
+async function profiledMain(app, name, fn) {
+  await app.evaluate(async () => {
+    const session = new (process.getBuiltinModule('node:inspector').Session)();
+    session.connect();
+    const post = (method, params = {}) => new Promise((done, fail) => session.post(method, params, (err, res) => (err ? fail(err) : done(res))));
+    await post('Profiler.enable');
+    await post('Profiler.setSamplingInterval', { interval: 200 });
+    await post('Profiler.start');
+    globalThis.__benchProfiler = { session, post };
+  });
+  const out = await fn();
+  const profile = await app.evaluate(async () => {
+    const { session, post } = globalThis.__benchProfiler;
+    const { profile: p } = await post('Profiler.stop');
+    session.disconnect();
+    return p;
+  });
+  printProfile(`main-${name}`, profile, `"${name}" in the main process`);
+  return out;
+}
+
+/** Save a CPU profile in BENCH_ROOT as `<file>.cpuprofile` and print the functions with the most self time. */
+function printProfile(file, profile, label) {
+  fs.writeFileSync(path.join(ROOT, `${file.replace(/\W+/g, '-')}.cpuprofile`), JSON.stringify(profile));
   const self = new Map();
   const dt = (profile.endTime - profile.startTime) / 1000 / profile.samples.length;
   const byId = new Map(profile.nodes.map((n) => [n.id, n]));
@@ -490,9 +643,8 @@ export async function profiled(page, name, fn) {
     const key = `${f.functionName || '(anonymous)'} ${f.url.split('/').pop()}:${f.lineNumber + 1}`;
     self.set(key, (self.get(key) ?? 0) + dt);
   }
-  console.log(`top self time in "${name}" (ms):`);
+  console.log(`top self time in ${label} (ms):`);
   for (const [k, ms] of [...self].sort((a, b) => b[1] - a[1]).slice(0, 25)) console.log(`  ${ms.toFixed(1).padStart(7)}  ${k}`);
-  return out;
 }
 
 /** BENCH_TRACE=<step name>: the browser's own work in that step (style, layout, paint…), summed by event, with how many objects each layout touched. */
@@ -538,10 +690,13 @@ export async function traced(page, name, fn) {
 }
 
 
-/** The seeded data's chats; BENCH_KEEP=1 reuses the data the last run seeded, when it's there. */
+/** The seeded data's chats; BENCH_KEEP=1 reuses the data the last run seeded, when it's there and has the same BENCH_TRANSCRIPTS. */
 export async function seeded() {
   const file = path.join(ROOT, 'chats.json');
-  const chats = process.env.BENCH_KEEP && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : await seed();
+  const kind = path.join(ROOT, 'transcripts.txt');
+  const same = fs.existsSync(file) && (fs.existsSync(kind) ? fs.readFileSync(kind, 'utf8') : 'mixed') === TRANSCRIPTS;
+  const chats = process.env.BENCH_KEEP && same ? JSON.parse(fs.readFileSync(file, 'utf8')) : await seed();
   fs.writeFileSync(file, JSON.stringify(chats));
+  fs.writeFileSync(kind, TRANSCRIPTS);
   return chats;
 }

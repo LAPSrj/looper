@@ -74,13 +74,18 @@ const isPlain = (v: object): boolean => {
   return proto === Object.prototype || proto === null;
 };
 
-/** Uint8Array → `{ $bytes }` anywhere in the value, undefined → `{ $undefined }` in an array. */
+/**
+ * Uint8Array → `{ $bytes }` anywhere in the value, undefined → `{ $undefined }`
+ * in an array or an object: JSON would drop the key, and a patch such as
+ * `{ model: undefined }` (the Chat menu's Default) would change nothing.
+ */
 export function encodeBytes(v: unknown): unknown {
   if (v instanceof Uint8Array) return { $bytes: bytesToBase64(v) } satisfies EncodedBytes;
+  const mark = (x: unknown) => (x === undefined ? ({ $undefined: true } satisfies EncodedUndefined) : encodeBytes(x));
   // Array.from, not map: map skips holes, which JSON would also turn into null.
-  if (Array.isArray(v)) return Array.from(v, (x: unknown) => (x === undefined ? ({ $undefined: true } satisfies EncodedUndefined) : encodeBytes(x)));
+  if (Array.isArray(v)) return Array.from(v, mark);
   if (v && typeof v === 'object' && isPlain(v)) {
-    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, encodeBytes(x)]));
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, mark(x)]));
   }
   return v;
 }

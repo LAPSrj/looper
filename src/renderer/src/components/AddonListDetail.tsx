@@ -46,7 +46,8 @@ export function AddonListDetail({
   /** The row's detail screen. */
   detail: (row: AddonListRow) => ReactNode;
 }) {
-  const current = listSelection(node.items, node.selected, picked, selectsFirstRow);
+  // Stacked, the detail is always on screen under the list, so a row is selected as on the desktop.
+  const current = listSelection(node.items, node.selected, picked, selectsFirstRow || !!node.stack);
   const asked = useRef('');
   const menu = node.menu ?? [];
   const items = (row: AddonListRow): ListMenuItem[] =>
@@ -65,6 +66,7 @@ export function AddonListDetail({
       panes={{ axis: stack ? 'y' : 'x', initial: stack ? 160 : 360 }}
       tabs={stack || head ? { list: node.label, detail: 'Details', ...(head && node.head ? { head: { label: node.head.label, body: <div className="detail-head">{head}</div> } } : {}) } : undefined}
       open={open}
+      stacked={!!node.stack}
       onClose={() => onPick(null)}
       detailTitle={current?.title}
       backLabel={node.label}
@@ -100,7 +102,7 @@ export function AddonListDetail({
             title: r.title,
             sub: r.subtitle && (r.mono ? <span className="pg-oneline mono">{r.subtitle}</span> : r.subtitle),
             value: r.value,
-            chevron: !!r.detail,
+            chevron: !!r.detail && !node.stack,
           })}
         />
       }

@@ -1,10 +1,11 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref, type RefObject, type UIEvent } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref, type RefObject, type UIEvent } from 'react';
 import { Measured } from '../perf';
 import { isPhone } from '../web/page-nav';
 import { SearchBox } from './SearchBox';
 import { clickSelect, moveSelect, stepIndex, type MultiSelection } from './multi-select';
 import { PhoneRows, useRowKeys, type PhoneRowModel, type Rows } from './RowList';
-import { ResizableColumns, type TableCol } from './ui';
+import { fitColumns, shownWidth } from './fit-columns';
+import { readStoredWidths, ResizableColumns, type TableCol } from './ui';
 
 export { RowList, type PhoneRowModel, type RowListProps } from './RowList';
 
@@ -35,6 +36,8 @@ export interface DataTableProps<T> extends Omit<Rows<T>, 'phoneRow'> {
    * then the row the keyboard is on, and `onSelect` isn't called.
    */
   multiSelect?: { keys: readonly string[]; onChange: (keys: string[], lead: string) => void };
+  /** The desktop: a right-click on the table's empty space (below its rows) shows the list's View options. */
+  onEmptyMenu?: () => void;
 }
 
 /**
@@ -129,7 +132,7 @@ function useRowWindow(wrap: RefObject<HTMLDivElement | null>, spacer: RefObject<
 }
 
 function DesktopTable<T>(props: DataTableProps<T>) {
-  const { cols, rows, rowKey, idPrefix, selected, onOpen, onMenu, empty, note, label, groupOf, storageKey, rowClass, wrapClass, tableRef, onTableScroll, multiSelect } = props;
+  const { cols: allCols, rows, rowKey, idPrefix, selected, onOpen, onMenu, onEmptyMenu, empty, note, label, groupOf, storageKey, rowClass, wrapClass, tableRef, onTableScroll, multiSelect } = props;
   const multi = useMultiSelect(props);
   const onSelect = multi?.select ?? props.onSelect;
   const { index, onKeyDown: listKeys } = useRowKeys({ ...props, onSelect });
@@ -139,6 +142,24 @@ function DesktopTable<T>(props: DataTableProps<T>) {
   const isSelected = (key: string) => (multiSelect ? multiSelect.keys.includes(key) : key === selected);
   const wrap = useRef<HTMLDivElement | null>(null);
   const spacer = useRef<HTMLTableRowElement | null>(null);
+  // A pane too narrow for every column loses the ones at the right, so the table never scrolls sideways.
+  const [room, setRoom] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = wrap.current;
+    if (!el) return;
+    const read = () => setRoom(el.clientWidth);
+    read();
+    const observer = new ResizeObserver(read);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  // Which columns fit counts the widths shown, the dragged ones too; `saved` reads them again after a drag.
+  const [saved, setSaved] = useState(0);
+  const stored = useMemo(() => readStoredWidths(storageKey), [storageKey, saved]);
+  const cols = fitColumns(
+    allCols.map((col) => ({ col, width: shownWidth(col, stored), percent: col.percent })),
+    room,
+  ).map((c) => c.col);
   const windowed = !groupOf && rows.length > WINDOW_FROM;
   const win = useRowWindow(wrap, spacer, rows.length, windowed, index);
   const setWrap = (el: HTMLDivElement | null) => {
@@ -165,9 +186,18 @@ function DesktopTable<T>(props: DataTableProps<T>) {
         if (windowed) win.onScroll();
         onTableScroll?.(e);
       }}
+      onContextMenu={
+        onEmptyMenu &&
+        ((e) => {
+          // A row has its own menu, and the keyboard's menu request (button 0) is the active row's.
+          if (e.button !== 2 || (e.target as Element).closest('tr[data-row]')) return;
+          e.preventDefault();
+          onEmptyMenu();
+        })
+      }
     >
       <table className="runlog-table">
-        <ResizableColumns cols={cols} storageKey={storageKey} />
+        <ResizableColumns key={cols.map((c) => c.label).join('|')} cols={cols} storageKey={storageKey} onSaved={() => setSaved((n) => n + 1)} />
         <tbody>
           {note && (
             <tr>

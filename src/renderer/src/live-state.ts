@@ -1,8 +1,8 @@
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { AddonInfo } from '@shared/addons';
 import type { AppInfo } from '@shared/api';
 import type { RemoteState } from '@shared/remote';
-import type { SessionsState } from '@shared/sessions';
+import type { RunPermission, SessionsState } from '@shared/sessions';
 import type { PreventSleepState, Project, ProjectFolder, RestState, TaskFolder, View } from '@shared/types';
 import { subscribe } from './events';
 import { reportError } from './report-error';
@@ -151,6 +151,20 @@ function watchSessions(onChange: () => void): () => void {
 /** Every chat and terminal session, kept current: read once a page, the first time something asks; null until then. */
 export function useSessionsState(): SessionsState | null {
   return useSyncExternalStore(watchSessions, () => sessions);
+}
+
+/**
+ * The tool call a task run's agent waits for the user to allow, for a page that shows only that run (the Run
+ * conversation window): it renders again when the request changes, not at every chat's status.
+ */
+export function useRunPermission(taskId: string, runId: string): RunPermission | undefined {
+  const last = useRef<RunPermission | undefined>(undefined);
+  return useSyncExternalStore(watchSessions, () => {
+    const p = sessions?.sessions.find((s) => s.kind === 'run' && s.taskId === taskId && s.id === runId)?.permission;
+    // Each event brings new objects: the same request (its id) stays the same object.
+    if (p?.id !== last.current?.id) last.current = p;
+    return last.current;
+  });
 }
 
 /** The installed addons; `loaded` is false until the first list answers, so an empty list before that isn't "no addons". */

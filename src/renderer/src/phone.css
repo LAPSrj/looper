@@ -341,6 +341,63 @@ html.phone-window .pg-swipe-action {
   font-size: calc(15 * var(--u));
   font-weight: 600;
 }
+/* A chat row's swipe to the right (useLeadingSwipe): the row's own children slide aside by --swipe, and the action fills
+   the space they leave, so the row stays a sibling of the others. */
+html.phone-window .session-row.swipeable {
+  position: relative;
+  overflow: clip;
+  touch-action: pan-y;
+}
+html.phone-window .session-row.swipeable > :not(.session-swipe-action) {
+  transform: translateX(var(--swipe, 0px));
+  transition: transform 0.25s ease-out;
+}
+html.phone-window .session-row.swiping > :not(.session-swipe-action) {
+  transition: none;
+}
+html.phone-window .session-swipe-action {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--swipe, 0px);
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  overflow: hidden;
+  background: var(--pg-tint);
+  color: #ffffff;
+  font-size: calc(15 * var(--u));
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* iOS: a 44 high capsule in the action's color, 8 in from the row's start (ios.md: Lists, swipe actions). */
+html.phone-window[data-platform='ios'] .session-swipe-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 8px;
+  background: transparent;
+}
+html.phone-window[data-platform='ios'] .session-swipe-action > span {
+  flex: none;
+  box-sizing: border-box;
+  width: 72px;
+  height: 44px;
+  line-height: 44px;
+  border-radius: 22px;
+  background: var(--pg-tint);
+  text-align: center;
+}
+html.phone-window[data-platform='android'] .session-swipe-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 16px;
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+}
 html.phone-window .pg-chevron {
   flex: none;
   color: var(--pg-label-3);
@@ -694,7 +751,7 @@ html.phone-window[data-platform='ios'] .phone-main.pushed .status-pane {
 html.phone-window[data-platform='ios'] .phone-main.pushed .pg-rows {
   padding-bottom: calc(var(--tabbar-h) + 8px);
 }
-html.phone-window[data-platform='ios'] .phone-main.pushed .phone-screen:not(:has(.status-pane, .pg-rows)) {
+html.phone-window[data-platform='ios'] .phone-main.pushed .phone-screen:not(.pg-split-detail > *):not(:has(.status-pane, .pg-rows)) {
   padding-bottom: calc(var(--tabbar-h) + 8px);
 }
 html.phone-window:not(.tablet)[data-platform='ios'] .tabs-head .tabs-segmented {
@@ -1025,6 +1082,15 @@ html.phone-window .pg-inline-back {
   color: var(--pg-tint, var(--accent));
   font-size: calc(17 * var(--u));
 }
+/* Android: Material's back arrow before the list's name, in the surface's text color. */
+html.phone-window[data-platform='android'] .pg-inline-back {
+  gap: 16px;
+  min-height: 48px;
+  padding: 8px 16px 4px 12px;
+  color: var(--md-on-surface);
+  font-size: calc(16 * var(--u));
+  font-weight: 500;
+}
 /* The main window's sidebar-and-pane windows (an addon pane's own window): the list over the item. */
 html.phone-window .app {
   display: flex;
@@ -1127,9 +1193,14 @@ html.phone-window[data-platform='ios'] .pg-sessions .session-row {
   padding-bottom: 13px;
 }
 html.phone-window[data-platform='ios'] .pg-sessions .session-group + .session-row,
-html.phone-window[data-platform='ios'] .pg-sessions .session-list > .session-row:first-child {
+html.phone-window[data-platform='ios'] .pg-sessions .session-list > .session-row:first-child,
+html.phone-window[data-platform='ios'] .pg-sessions .session-list > [role='group'] + .session-row {
   border-top-left-radius: 26px;
   border-top-right-radius: 26px;
+}
+/* Group Chats By None: the rows without a header, a section's space below Waiting for you. */
+html.phone-window[data-platform='ios'] .pg-sessions .session-list > [role='group'] + .session-row {
+  margin-top: 20px !important;
 }
 html.phone-window[data-platform='ios'] .pg-sessions .session-row:last-child,
 html.phone-window[data-platform='ios'] .pg-sessions .session-row:has(+ .session-group) {
@@ -1158,12 +1229,16 @@ html.phone-window[data-platform='android'] .pg-sessions .session-row + .session-
   margin-top: 2px !important;
 }
 html.phone-window[data-platform='android'] .pg-sessions .session-group + .session-row,
-html.phone-window[data-platform='android'] .pg-sessions .session-list > .session-row:first-child {
+html.phone-window[data-platform='android'] .pg-sessions .session-list > .session-row:first-child,
+html.phone-window[data-platform='android'] .pg-sessions .session-list > [role='group'] + .session-row {
   border-top-left-radius: 16px;
   border-top-right-radius: 16px;
 }
+html.phone-window[data-platform='android'] .pg-sessions .session-list > [role='group'] + .session-row {
+  margin-top: 16px !important;
+}
 html.phone-window[data-platform='android'] .pg-sessions .session-row:last-child,
-html.phone-window[data-platform='android'] .pg-sessions .session-row:has(+ :is(.session-group, div)) {
+html.phone-window[data-platform='android'] .pg-sessions .session-row:has(+ :is(.session-group, [role='group'])) {
   border-bottom-left-radius: 16px;
   border-bottom-right-radius: 16px;
 }
@@ -1255,6 +1330,86 @@ html.phone-window .phone-sessions .overview-meta {
 html.phone-window[data-platform='android'] .phone-sessions .overview-card {
   border-radius: 16px;
   background: var(--pg-container);
+}
+/* Focus (PhoneOverview): the large conversation, with the others in a row of small cards above it, or in a
+   column beside it where there's room (a tablet's detail column), which meets it at a hairline as on the desktop. */
+html.phone-window .phone-sessions .sessions-overview.layout-focus {
+  display: flex;
+  flex-direction: column;
+}
+html.phone-window .phone-sessions .sessions-overview.layout-focus > :is(.overview-chat, .overview-reply),
+html.phone-window .phone-sessions .focus-side {
+  height: min(680px, 75dvh);
+}
+/* The row of small cards above it: the large conversation fills the screen below the row (PhoneOverview sets --focus-h). */
+html.phone-window .phone-sessions .sessions-overview.focus-narrow > :is(.overview-chat, .overview-reply) {
+  height: var(--focus-h, min(680px, 75dvh));
+}
+html.phone-window .phone-sessions .focus-strip {
+  display: flex;
+  gap: 10px;
+  margin: 0 -16px;
+  padding: 0 16px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: 16px;
+  scrollbar-width: none;
+}
+html.phone-window .phone-sessions .focus-strip > .overview-small {
+  flex: none;
+  width: 200px;
+  height: 124px;
+  padding: 10px 14px;
+  gap: 4px;
+  border-radius: 20px;
+  scroll-snap-align: start;
+}
+html.phone-window .phone-sessions .overview-small > .overview-messages {
+  margin: 0;
+  padding: 0;
+  border-top: none;
+  overflow: hidden;
+  font-size: calc(13 * var(--u));
+}
+html.phone-window .phone-sessions .overview-small .overview-title {
+  font-size: calc(15 * var(--u));
+}
+/* Material 3's carousel: its items have the extra-large shape. */
+html.phone-window[data-platform='android'] .phone-sessions .focus-strip > .overview-small {
+  border-radius: 28px;
+}
+html.phone-window .phone-sessions .sessions-overview.focus-wide {
+  flex-direction: row;
+  gap: 0;
+  margin: 0 16px;
+  padding: 0;
+  border-radius: 26px;
+  overflow: hidden;
+  background: var(--pg-cell);
+}
+html.phone-window[data-platform='android'] .phone-sessions .sessions-overview.focus-wide {
+  border-radius: 16px;
+  background: var(--pg-container);
+}
+html.phone-window .phone-sessions .focus-wide > .overview-card {
+  flex: 1;
+  min-width: 0;
+  border-radius: 0;
+}
+html.phone-window .phone-sessions .focus-side {
+  flex: none;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  border-left: 0.5px solid var(--pg-sep);
+}
+html.phone-window .phone-sessions .focus-side > :is(.overview-chat, .overview-reply) {
+  flex: none;
+  height: 280px;
+  border-radius: 0;
+  border-bottom: 0.5px solid var(--pg-sep);
 }
 
 /* ---------- a session's screen ---------- */
@@ -2172,6 +2327,12 @@ html.phone-window .tabs {
 }
 html.phone-window .tabs::-webkit-scrollbar {
   display: none;
+}
+/* No edge fade on an iPhone or iPad: iOS scrolls the strip in a layer of its own, and with the fade's mask on it an
+   Activity sheet with six tabs showed an empty band where its tabs were. */
+html.phone-window[data-platform='ios'] .tabs-scroll {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 html.phone-window .tab {
   flex: none;
@@ -3098,7 +3259,18 @@ html.phone-window .pg-split {
   min-height: 0;
   display: flex;
 }
-html.phone-window .pg-split.one-column > .pg-split-lead {
+html.phone-window .pg-split.stacked {
+  flex-direction: column;
+}
+
+.pg-split.stacked > .pg-split-lead {
+  flex: 0 0 40%;
+  width: auto;
+  border-inline-end: none;
+  border-block-end: 0.5px solid var(--pg-sep);
+}
+
+.pg-split.one-column > .pg-split-lead {
   flex: 1;
   width: auto;
   border-inline-end: none;
@@ -3131,6 +3303,19 @@ html.phone-window .pg-split-inspector .activity-panel {
   min-height: 0;
   background: transparent;
 }
+/* A Code Mode script on Now (ActivityPanel's REPL screen): the console keeps a part of the screen and scrolls itself,
+   and the script's call comes after it at its own height; Now scrolls to it. */
+html.phone-window .now-script-stack {
+  flex: none;
+}
+html.phone-window .now-script-stack > .now-console {
+  max-height: 40dvh;
+}
+html.phone-window .now-script-stack :is(.now-script-now, .now-screen, .now-body) {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+}
 /* The page's own sheets (Activity in portrait, Usage) present as page sheets do on iPad: 704 pt, centered. */
 html.phone-window.tablet[data-platform='ios'] .pg-sheet-scrim {
   justify-content: center;
@@ -3158,8 +3343,9 @@ html.phone-window .pg-split-detail > .phone-sessions {
 html.phone-window[data-platform='ios'] .phone-main.split {
   --tabbar-h: 0px;
 }
-/* The Chats Overview on a tablet: as many columns as fit, at least a desktop card wide; Double Size takes two where there are two. */
-html.phone-window.tablet .phone-sessions .sessions-overview {
+/* The Chats Overview on a tablet: as many columns as fit, at least a desktop card wide; Double Size takes two where there are two.
+   The Focus layout keeps its own (the large card beside its side column, or under its strip). */
+html.phone-window.tablet .phone-sessions .sessions-overview:not(.layout-focus) {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
   align-items: start;
@@ -3323,13 +3509,14 @@ html.phone-window .builder-props dd {
 }
 
 /* ---------- iOS motion (ios.md: Motion; web/motion.ts sets the springs and does what CSS can't) ---------- */
-/* A screen pushed inside the main window slides in from the trailing edge; popped, the one under comes back from a
-   third of the way out (web/motion.ts moves the screen it replaces). */
-html.phone-window[data-platform='ios'] .phone-main > .phone-screen.enter-push {
+/* A screen pushed inside the main window (on iPad, inside the detail column or across the width) slides in from the
+   trailing edge; popped, the one under comes back from a third of the way out (web/motion.ts moves the screen it
+   replaces). */
+html.phone-window[data-platform='ios'] .phone-main .phone-screen.enter-push {
   box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
   animation: pg-screen-push var(--spring-default-ms, 0.42s) var(--spring-default, cubic-bezier(0.2, 0.85, 0.25, 1));
 }
-html.phone-window[data-platform='ios'] .phone-main > .phone-screen.enter-pop {
+html.phone-window[data-platform='ios'] .phone-main .phone-screen.enter-pop {
   animation: pg-screen-under var(--spring-smooth-ms, 0.35s) var(--spring-smooth, cubic-bezier(0.2, 0.8, 0.2, 1));
 }
 @keyframes pg-screen-push {
@@ -3398,7 +3585,7 @@ html.phone-window[data-platform='ios'] details[open] > :not(summary) {
 /* Reduce Motion: fades in place of rising, opening out and sliding, and no bounce (HIG: Accessibility). The fades
    keep a duration of their own over styles.css's rule that ends every animation at once. */
 @media (prefers-reduced-motion: reduce) {
-  html.phone-window[data-platform='ios'] :is(.pg-sheet, .phone-plus-menu, details[open] > :not(summary), .phone-main > .phone-screen.enter-push, .phone-main > .phone-screen.enter-pop) {
+  html.phone-window[data-platform='ios'] :is(.pg-sheet, .phone-plus-menu, details[open] > :not(summary), .phone-main .phone-screen.enter-push, .phone-main .phone-screen.enter-pop) {
     animation-name: pg-fade;
     animation-duration: 0.25s !important;
     animation-timing-function: ease-out;
@@ -3406,6 +3593,11 @@ html.phone-window[data-platform='ios'] details[open] > :not(summary) {
   html.phone-window[data-platform='ios'] .checkbox-field input[type='checkbox']::after {
     transition-timing-function: ease;
   }
+}
+/* A back the browser already played (Safari's swipe, web/phone-shell.tsx's data-instant-back): the screen under shows
+   at once (web/motion.ts doesn't slide the old one off either). */
+html.phone-window[data-instant-back] .phone-main .phone-screen.enter-pop {
+  animation: none !important;
 }
 
 /* A checklist on Android: Material's check boxes, not the switches a single check box is. */

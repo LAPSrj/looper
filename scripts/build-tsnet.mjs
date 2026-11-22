@@ -1,6 +1,6 @@
 // Builds the Tailscale helper (src/tsnet) into out/tsnet/ for Windows and Linux.
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -11,9 +11,11 @@ const targets = [
   { goos: 'windows', file: 'looper-tsnet.exe' },
   { goos: 'linux', file: 'looper-tsnet' }
 ]
+const arch = 'amd64'
+const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 
 function findGo() {
-  const candidates = [process.env.GO, 'go', '/home/leandro/.local/sdk/go/bin/go'].filter(Boolean)
+  const candidates = [process.env.GO, 'go'].filter(Boolean)
   for (const cmd of candidates) {
     const r = spawnSync(cmd, ['version'], { stdio: 'ignore' })
     if (r.status === 0) return cmd
@@ -33,13 +35,26 @@ if (!go) {
 
 mkdirSync(outDir, { recursive: true })
 for (const { goos, file } of targets) {
+  if (goos === 'windows') {
+    // The exe's icon, description and version: a .syso that go build links in.
+    // It is generated here, for this build's version, and isn't committed.
+    const w = spawnSync(
+      go,
+      ['run', './cmd/winres', version, join(root, 'assets', 'icon.ico'), `rsrc_windows_${arch}.syso`, arch],
+      { cwd: srcDir, stdio: 'inherit' }
+    )
+    if (w.status !== 0) {
+      console.error('Generating the helper\'s Windows resources failed.')
+      process.exit(w.status ?? 1)
+    }
+  }
   const r = spawnSync(
     go,
     ['build', '-trimpath', '-ldflags', '-s -w', '-o', join(outDir, file), '.'],
     {
       cwd: srcDir,
       stdio: 'inherit',
-      env: { ...process.env, GOOS: goos, GOARCH: 'amd64', CGO_ENABLED: '0' }
+      env: { ...process.env, GOOS: goos, GOARCH: arch, CGO_ENABLED: '0' }
     }
   )
   if (r.status !== 0) {

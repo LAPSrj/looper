@@ -70,9 +70,11 @@ whether it keeps a Remote Control conversation open. The **Tasks** tab lists
 the tasks that run in the project, in the same kind of table as a task's
 Runs tab, with each task's status, last run, its result and its details; double-click a task (or press Enter) to open it in a window of its own (see [A task or project in its own window](monitoring.md#a-task-or-project-in-its-own-window)). The **Chats** tab lists the
 project's chats, terminal sessions and Remote Control conversations, including
-those that went on from one of its tasks' runs, in a table like a task's Runs
-tab but without a Result column: double-click one for its run window, or right-click it to
-go on with it in a chat or a terminal. When the project's folder is in a git
+those that went on from one of its tasks' runs, newest first and grouped by date
+as the [History window](monitoring.md#the-history-window) lists them, with **Show More**
+at the end. Selecting one shows its conversation beside the list; double-click
+it (or press Enter) to go on with it in a chat, or right-click it to go on with
+it in a chat, a terminal or compacted. When the project's folder is in a git
 repository, a **Git** tab shows it (see [below](#the-git-tab)).
 
 Right-clicking a project opens a menu with New Chat, New Terminal, New Task…,

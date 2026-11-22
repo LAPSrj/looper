@@ -1,6 +1,6 @@
 // The home-screen app: the head tags every served page gets, the manifest and the service worker.
 import crypto from 'node:crypto';
-import { PWA_ICONS, type PwaIconName } from '../../shared/remote-access';
+import { FRAME_PAGE, PWA_ICONS, type PwaIconName } from '../../shared/remote-access';
 import { STARTUP_SIZES, startupName } from './startup-bitmap';
 
 /** The bars' color (Material 3 surface from Looper's blue), light and dark. */
@@ -23,12 +23,20 @@ const TOP_EDGE_STYLE =
   '.ios-top-edge{position:fixed;top:0;left:0;right:0;height:12px;z-index:2147483647;pointer-events:none;' +
   `background-color:${IOS_GROUPED_LIGHT};-webkit-background-clip:text;background-clip:text;transition:background-color .3s}`;
 
-const MOBILE_HEAD = [
+/** The tags a window's frame (FRAME_PAGE, index.html as the server serves it to a frame) needs too. */
+const FRAME_HEAD = [
   '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">',
   '<meta name="color-scheme" content="light dark">',
   // Before the stylesheet arrives an iPhone shows its own grouped background, not the desktop gray.
   `<style>.ios-top-edge{display:none}@supports (-webkit-touch-callout: none){html{background:${IOS_GROUPED_LIGHT}}${TOP_EDGE_STYLE}` +
     `@media (prefers-color-scheme: dark){html{background:${IOS_GROUPED_DARK}}.ios-top-edge{background-color:${IOS_GROUPED_DARK}}}}</style>`,
+].join('');
+
+/**
+ * What only the page a phone or browser opens reads (the bars' color, the home-screen app's name, icons, launch
+ * screens and manifest): a window's frame leaves them out, so each frame's head doesn't hold a link per launch screen.
+ */
+const HOME_SCREEN_HEAD = [
   `<meta name="theme-color" content="${THEME_LIGHT}" media="(prefers-color-scheme: light)">`,
   `<meta name="theme-color" content="${THEME_DARK}" media="(prefers-color-scheme: dark)">`,
   '<meta name="mobile-web-app-capable" content="yes">',
@@ -42,13 +50,16 @@ const MOBILE_HEAD = [
   '<link rel="manifest" href="/manifest.webmanifest">',
 ].join('');
 
-/** index.html as a phone gets it: the viewport and home-screen tags go at the top of <head>, the top edge strip at the top of <body>. The file on disk (Electron's) has neither. */
-export function withMobileHead(html: string): string {
+/**
+ * index.html as a phone gets it: the viewport and home-screen tags go at the top of <head>, the top edge strip at the
+ * top of <body>; a window's frame (`frame`) gets no home-screen tags. The file on disk (Electron's) has neither.
+ */
+export function withMobileHead(html: string, frame = false): string {
   if (/<meta\s+name="viewport"/i.test(html)) return html;
   const head = /<head[^>]*>/i.exec(html);
   if (!head) return html;
   const at = head.index + head[0].length;
-  const out = html.slice(0, at) + MOBILE_HEAD + html.slice(at);
+  const out = html.slice(0, at) + FRAME_HEAD + (frame ? '' : HOME_SCREEN_HEAD) + html.slice(at);
   const body = /<body[^>]*>/i.exec(out);
   if (!body) return out;
   const bodyAt = body.index + body[0].length;
@@ -106,7 +117,8 @@ self.addEventListener('activate', (e) => e.waitUntil(
 const kept = (cache, request) => cache.match(request, { ignoreVary: true });
 async function page(request) {
   const cache = await caches.open(CACHE);
-  return (await kept(cache, '/index.html')) || fetch(request);
+  const shell = new URL(request.url).pathname === ${JSON.stringify(FRAME_PAGE)} ? ${JSON.stringify(FRAME_PAGE)} : '/index.html';
+  return (await kept(cache, shell)) || fetch(request);
 }
 async function asset(request) {
   const cache = await caches.open(CACHE);
@@ -130,7 +142,8 @@ self.addEventListener('fetch', (e) => {
   const { request } = e;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
-  if (url.origin !== self.location.origin || url.pathname.startsWith('/api/') || url.pathname === '/sw.js') return;
+  // A previewed HTML file's page (/preview-frame/) is never the app's own page, cached or not.
+  if (url.origin !== self.location.origin || url.pathname.startsWith('/api/') || url.pathname.startsWith('/preview-frame/') || url.pathname === '/sw.js') return;
   if (request.mode === 'navigate') e.respondWith(page(request));
   else if (url.pathname.startsWith('/assets/')) e.respondWith(asset(request));
   else if (url.pathname.startsWith('/icons/') || url.pathname.startsWith('/startup/') || url.pathname === '/manifest.webmanifest') e.respondWith(revalidate(e));

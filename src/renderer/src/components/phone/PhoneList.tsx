@@ -260,6 +260,107 @@ export function SwipeRow({ action, className, children }: { action?: { label: st
   );
 }
 
+/** An action behind a row's start, which a swipe to the right shows (iOS Mail's Unread, Material's leading action). */
+export interface LeadingSwipe {
+  label: string;
+  run: () => void;
+}
+
+/**
+ * What a row needs for a leading swipe without being wrapped (a list's styles depend on its rows being siblings): the
+ * handlers and style for the row, its class, and the action to draw as its last child. The row's other children slide
+ * aside by `--swipe` (phone.css, .swipeable), and the action fills the space they leave. Let go past a third of
+ * SWIPE_OPEN_EXTENT it stays open as a button; a swipe across 60% of the row runs it, as SwipeRow's does.
+ */
+export function useLeadingSwipe(swipe: LeadingSwipe): {
+  className: string;
+  props: Pick<React.HTMLAttributes<HTMLDivElement>, 'onPointerDown' | 'onPointerMove' | 'onPointerUp' | 'onPointerCancel' | 'onClickCapture' | 'style'>;
+  action: ReactNode;
+} {
+  const [offset, setOffset] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const host = useRef<HTMLElement | null>(null);
+  const drag = useRef(new AxisDrag('x', 1));
+  /** The click ending this touch belongs to the swipe, not to the row. */
+  const swallowClick = useRef(false);
+  const open = offset > 0 && !dragging;
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => {
+      if (!host.current?.contains(e.target as Node)) setOffset(0);
+    };
+    document.addEventListener('pointerdown', close, true);
+    return () => document.removeEventListener('pointerdown', close, true);
+  }, [open]);
+  return {
+    className: ` swipeable${dragging ? ' swiping' : ''}`,
+    props: {
+      style: { '--swipe': `${offset}px` } as React.CSSProperties,
+      onPointerDown: (e) => {
+        host.current = e.currentTarget;
+        swallowClick.current = false;
+        if (open) {
+          // A touch anywhere but the action closes it, and isn't a click on the row.
+          if (!(e.target as Element).closest('.session-swipe-action')) {
+            swallowClick.current = true;
+            setOffset(0);
+          }
+          return;
+        }
+        drag.current.begin(e.clientX, e.clientY, e.timeStamp);
+      },
+      onPointerMove: (e) => {
+        const moved = drag.current.move(e.clientX, e.clientY, e.timeStamp);
+        if (!moved) return;
+        if (!dragging) {
+          setDragging(true);
+          swallowClick.current = true;
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }
+        setOffset(moved.offset);
+      },
+      onPointerUp: (e) => {
+        // A tap (on the open action, or on the row) isn't the end of a swipe: the action's own click comes next.
+        if (!dragging) {
+          drag.current.end(SWIPE_OPEN_EXTENT);
+          return;
+        }
+        const full = offset > e.currentTarget.clientWidth * SWIPE_FULL;
+        const stays = drag.current.end(SWIPE_OPEN_EXTENT);
+        setDragging(false);
+        setOffset(stays && !full ? SWIPE_ACTION_WIDTH : 0);
+        if (full) swipe.run();
+      },
+      onPointerCancel: () => {
+        drag.current.end(SWIPE_OPEN_EXTENT);
+        setDragging(false);
+        setOffset(0);
+      },
+      onClickCapture: (e) => {
+        if (!swallowClick.current) return;
+        swallowClick.current = false;
+        e.preventDefault();
+        e.stopPropagation();
+      },
+    },
+    action: offset > 0 && (
+      <button
+        type="button"
+        className="session-swipe-action"
+        tabIndex={-1}
+        onClick={(e) => {
+          // Not a click on the row, which would open it.
+          e.stopPropagation();
+          setOffset(0);
+          swipe.run();
+        }}
+      >
+        <span>{swipe.label}</span>
+      </button>
+    ),
+  };
+}
+
 /** On a phone or tablet, a tree list (Chats, History) as a scrolling list section; on the desktop the list scrolls itself. */
 export function TreeListSection({ children }: { children: ReactNode }) {
   if (platform !== 'ios' && platform !== 'android') return <>{children}</>;

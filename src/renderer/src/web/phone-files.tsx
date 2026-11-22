@@ -4,7 +4,7 @@ import { ZoomImage, type ZoomSwipe } from '../components/ZoomImage';
 import { fmtDateTime, fmtSize } from '../format';
 import { groupPlaces } from './dialog-flows';
 import type { FileView, HostBrowser } from './file-flows';
-import { FileViewContent, viewerLayout } from './file-view';
+import { FileViewContent, viewerLayout, type ViewOptions } from './file-view';
 import type { PhoneOs } from './nav-stack';
 import { PlaceGlyph } from './places';
 
@@ -43,7 +43,7 @@ export interface ViewSteps {
  * image fit to the screen that zooms (and swipes to a message's other images),
  * a PDF's pages, code in its syntax colors, Markdown formatted, or text.
  */
-export function FileViewBody({ view, name, steps }: { view: FileView; name: string; steps?: ViewSteps | null }) {
+export function FileViewBody({ view, name, steps, options }: { view: FileView; name: string; steps?: ViewSteps | null; options?: ViewOptions }) {
   const swipe: ZoomSwipe | undefined = steps
     ? {
         can: (step) => steps.index + step >= 0 && steps.index + step < steps.count,
@@ -52,8 +52,8 @@ export function FileViewBody({ view, name, steps }: { view: FileView; name: stri
       }
     : undefined;
   return (
-    <div className={`ph-viewer ph-scroll${viewerLayout(view)}`}>
-      <FileViewContent view={view} name={name} classes={{ note: 'ph-viewer-note', text: 'ph-viewer-text' }} image={(url) => <ZoomImage src={url} alt={name} swipe={swipe} />} />
+    <div className={`ph-viewer ph-scroll${viewerLayout(view, options)}`}>
+      <FileViewContent view={view} name={name} classes={{ note: 'ph-viewer-note', text: 'ph-viewer-text' }} image={(url) => <ZoomImage src={url} alt={name} swipe={swipe} />} options={options} />
     </div>
   );
 }

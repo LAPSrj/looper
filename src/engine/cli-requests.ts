@@ -75,8 +75,9 @@ export type Live =
 
 export const named = (t: Live) => `${t.kind === 'terminal' ? 'terminal session' : t.kind} "${t.title}"`;
 
-/** An open chat or terminal session, or a task run in progress. */
-export function liveOf(engine: Engine, id: string): Live | undefined {
+/** An open chat or terminal session, or a task run in progress; a compacted chat's id is the chat it went on in. */
+export function liveOf(engine: Engine, asked: string): Live | undefined {
+  const id = engine.liveSessionId(asked);
   const listed = engine.sessionsState().sessions.find((s) => s.id === id);
   const chat = engine.getChat(id);
   if (chat) return { kind: 'chat', id, taskId: chat.taskId, title: chat.title ?? listed?.title ?? chat.taskName, chat };
@@ -243,7 +244,7 @@ export function cliRequests(engine: Engine): Record<string, RequestHandler> {
       const reason = optText(p, 'reason');
       const t = live(id);
       if (t?.kind === 'chat' || t?.kind === 'terminal') {
-        await engine.closeSession(id);
+        await engine.closeSession(t.id);
         return `Closed the ${named(t)}.`;
       }
       if (t?.kind === 'run') {
@@ -262,7 +263,7 @@ export function cliRequests(engine: Engine): Record<string, RequestHandler> {
     interrupt: async (p) => {
       const t = mustLive(text(p, 'id'));
       await engine.stopSession(t.id);
-      return `Stopped the turn of the ${named(t)}.`;
+      return t.kind === 'run' ? `Stopped the ${named(t)}.` : `Stopped the turn of the ${named(t)}.`;
     },
 
     'send-now': async (p) => {
@@ -316,22 +317,27 @@ export function cliRequests(engine: Engine): Record<string, RequestHandler> {
       const effort = optText(p, 'effort');
       if (model) patch.model = model;
       if (effort) patch.effort = effort;
+      const autoCompact = optText(p, 'autoCompact');
+      if (autoCompact !== undefined) {
+        if (autoCompact !== 'on' && autoCompact !== 'off' && autoCompact !== 'default') throw new Error('auto compact is on, off or default');
+        patch.autoCompact = autoCompact === 'default' ? undefined : autoCompact === 'on';
+      }
       // These let an agent raise a chat's permissions, its own included.
       const permissionMode = optText(p, 'permissionMode');
       const harnessId = optText(p, 'harnessId');
       if (permissionMode !== undefined || harnessId) need('unrestricted');
       if (permissionMode !== undefined) patch.permissionMode = permissionMode;
-      if (!Object.keys(patch).length && !harnessId) throw new Error('give a model, an effort, a permission mode or a harness');
+      if (!Object.keys(patch).length && !harnessId) throw new Error('give a model, an effort, auto compact, a permission mode or a harness');
       if (harnessId) await engine.setChatHarness(t.id, harnessId);
       if (Object.keys(patch).length) await engine.configureChat(t.id, patch);
-      const changed = [...Object.keys(patch).map((k) => (k === 'permissionMode' ? 'permission mode' : k)), ...(harnessId ? ['harness'] : [])];
+      const changed = [...Object.keys(patch).map((k) => (k === 'permissionMode' ? 'permission mode' : k === 'autoCompact' ? 'auto compact' : k)), ...(harnessId ? ['harness'] : [])];
       return `Set the ${changed.join(' and ')} of the ${named(t)}.`;
     },
 
     compact: async (p) => {
       const id = safeId(p, 'id');
       const chat = live(id);
-      const next = chat?.kind === 'chat' ? await engine.compactChat(id) : await engine.compactRun(await taskOfRun(id), id);
+      const next = chat?.kind === 'chat' ? await engine.compactChat(chat.id) : await engine.compactRun(await taskOfRun(id), id);
       return `${next.id}\nStarted a chat from the messages of ${chat ? named(chat) : `the run ${id}`}.`;
     },
 
@@ -347,6 +353,13 @@ export function cliRequests(engine: Engine): Record<string, RequestHandler> {
       const on = flag(p, 'on');
       engine.setChatAutoContinue(t.id, on);
       return `The ${named(t)} ${on ? 'continues' : "doesn't continue"} when its usage limit resets.`;
+    },
+
+    mute: (p) => {
+      const t = mustChat(text(p, 'id'));
+      const on = flag(p, 'on');
+      engine.setChatMuted(t.id, on);
+      return `The ${named(t)} ${on ? 'sends no notifications' : 'sends notifications again'}.`;
     },
 
     'continue-anyway': (p) => {
@@ -729,12 +742,21 @@ export function cliRequests(engine: Engine): Record<string, RequestHandler> {
 
     history: async (p) => {
       const project = optText(p, 'project');
-      const list = await engine.historyList({ fresh: false, limit: whole(p, 'limit', 50), showRuns: flag(p, 'runs'), folder: project ? `project:${project}` : '' });
+      const task = optText(p, 'task');
+      const result = optText(p, 'result');
+      // Task History's list: the runs only, with its filters. A task or a result means the runs.
+      const runs = flag(p, 'runs') || !!task || !!result;
+      const list = await engine.historyList({
+        fresh: false,
+        limit: whole(p, 'limit', 50),
+        folder: project ? `project:${project}` : '',
+        ...(runs ? { runs: { taskId: task ?? '', result: result ?? '', hideSkipped: flag(p, 'hideSkipped'), hideNoAction: flag(p, 'hideNoAction') } } : {}),
+      });
       const search = optText(p, 'search');
       const hits = search ? new Set(await engine.historySearch(search, list.items.map((i) => i.id))) : undefined;
       return list.items
         .filter((i) => !hits || hits.has(i.id))
-        .map((i) => ({ id: i.id, title: i.title, folder: i.folder, source: i.source, harness: i.harnessKind, lastActive: new Date(i.lastActive).toISOString(), taskId: i.taskId, ...(i.runId ? { runId: i.runId } : {}) }));
+        .map((i) => ({ id: i.id, title: i.title, folder: i.folder, source: i.source, harness: i.harnessKind, lastActive: new Date(i.lastActive).toISOString(), taskId: i.taskId, ...(i.runId ? { runId: i.runId } : {}), ...(i.result ? { result: i.result } : {}) }));
     },
     'history-show': async (p): Promise<Transcript> => {
       const id = text(p, 'id');

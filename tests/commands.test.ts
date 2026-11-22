@@ -121,7 +121,7 @@ describe('a task on every surface', () => {
     const bar = (taskSelected: boolean) => commandToolbar(mainToolbarViews('tasks'), context({ task: task(), tab: 'tasks', taskSelected, selectTask: select }));
     const [first, second] = bar(false);
     expect(first.id).toBe('new');
-    expect(second.items.map((i) => [i.label, i.pressed])).toEqual([['Dashboard', true], ['Recycle Bin', undefined]]);
+    expect(second.items.map((i) => [i.label, i.pressed])).toEqual([['Dashboard', true], ['Task History', undefined], ['Recycle Bin', undefined]]);
     expect(bar(true)[1].items[0].pressed).toBe(false);
     bar(true)[1].items[0].run!();
     expect(select).toHaveBeenCalledWith(null);
@@ -206,14 +206,14 @@ describe('the menu bar', () => {
   it('keeps its order, and shows a Chat menu only with a chat', () => {
     const none = context({ tab: 'chats', chats: undefined });
     expect(menuBar(mainWindowViews('chats'), none).map((m) => m.key)).toEqual(['file', 'edit', 'view', 'tools', 'advanced', 'window', 'help']);
-    const chat = { id: 'c', status: 'idle', queued: [], history: [], rows: [], models: [], harnessId: 'h', harnesses: [{ id: 'h', name: 'Claude Code' }], settings: { permissionMode: 'default' }, permissions: [], harnessKind: 'claude-code' };
+    const chat = { id: 'c', status: 'idle', queued: [], history: [], rows: [], models: [], harnessId: 'h', harnesses: [{ id: 'h', name: 'Claude Code' }], settings: { permissionMode: 'default' }, autoCompactDefault: { enabled: false, percent: 90 }, permissions: [], harnessKind: 'claude-code' };
     const summary = { id: 'c', kind: 'chat', taskId: 't', status: 'idle' };
     const withChat = context({ tab: 'chats', chats: { single: false, tab: true, selected: 'c', summary, chat, sessions: [summary], shown: {} } as never });
     expect(menuBar(mainWindowViews('chats'), withChat).map((m) => m.key)).toEqual(['file', 'edit', 'view', 'chat', 'tools', 'advanced', 'window', 'help']);
   });
 
   it('orders the Window menu from windows to this window’s panes to the chats in its list', () => {
-    const chat = { id: 'c', status: 'idle', queued: [], history: [], rows: [], models: [], harnessId: 'h', harnesses: [{ id: 'h', name: 'Claude Code' }], settings: { permissionMode: 'default' }, permissions: [], harnessKind: 'claude-code' };
+    const chat = { id: 'c', status: 'idle', queued: [], history: [], rows: [], models: [], harnessId: 'h', harnesses: [{ id: 'h', name: 'Claude Code' }], settings: { permissionMode: 'default' }, autoCompactDefault: { enabled: false, percent: 90 }, permissions: [], harnessKind: 'claude-code' };
     const summary = { id: 'c', kind: 'chat', taskId: 't', status: 'idle' };
     const c = context({ tab: 'chats', chats: { single: false, tab: true, selected: 'c', summary, chat, sessions: [summary], shown: {} } as never });
     expect(labels(menu(mainWindowViews('chats'), 'window', c))).toEqual([
@@ -401,7 +401,7 @@ describe('a phone', () => {
           runId: 'r',
           title: 'x',
           workFolder: true,
-          canContinue: { chat: true, terminal: true, guidance: true, compact: true },
+          canContinue: { chat: true, terminal: true, guidance: true, compact: true, start: false },
           raw: false,
           rawOutput: false,
           autoScroll: false,
@@ -461,6 +461,35 @@ describe('a phone', () => {
     expect(last(HISTORY_VIEWS)).toBe('Close Window');
     expect(last(['run'], { run: runContext('details', false, 'desktop').run })).toBe('Close Window');
     expect(last(mainWindowViews('tasks', true), { tab: 'tasks', fixed: true })).toBe('Close Window');
+  });
+
+  it('gives Task History its Task, Result and Task Runs filters, and the History window none of them', () => {
+    const settings = SettingsSchema.parse({});
+    const history = (kind: 'chats' | 'runs') =>
+      ({ kind, selected: null, commands: {}, shown: settings.view.history, setShown: () => undefined, folder: '', setFolder: () => undefined, tasks: [{ id: 't1', name: 'Nightly' }], task: '', setTask: () => undefined, result: '', setResult: () => undefined, activity: false, setActivity: () => undefined, refresh: () => undefined, find: () => undefined }) as never;
+    const view = (kind: 'chats' | 'runs') => menu(HISTORY_VIEWS, 'view', context({ settings, history: history(kind) }));
+    expect(labels(view('runs'))).toEqual(expect.arrayContaining(['Task', 'Result', 'Task Runs']));
+    expect(labels(view('chats'))).not.toEqual(expect.arrayContaining(['Task']));
+    expect(labels(view('chats'))).not.toContain('Result');
+    expect(labels(view('chats'))).not.toContain('Task Runs');
+    expect(labels(view('chats'))).not.toContain('Show Task Runs');
+    const keys = view('runs')
+      .filter((i) => i.type !== 'separator')
+      .map((i) => /&([^&])/.exec(i.label ?? '')?.[1]?.toLowerCase());
+    expect(keys).not.toContain(undefined);
+    expect(new Set(keys).size).toBe(keys.length);
+    const submenu = (name: string) => view('runs').find((i) => noMnemonic(i.label ?? '') === name)?.submenu ?? [];
+    expect(labels(submenu('Task'))).toEqual(['All Tasks', '-', 'Nightly']);
+    expect(labels(submenu('Result')).slice(0, 3)).toEqual(['All Results', '-', 'Error']);
+    expect(labels(submenu('Task Runs'))).toEqual(['Show Skipped Runs', 'Show Runs with No Action']);
+  });
+
+  it('opens Task History from View on the main window and from the Tasks toolbar', () => {
+    const c = context({ settings: SettingsSchema.parse({}), tab: 'tasks' });
+    expect(labels(menu(mainWindowViews('tasks'), 'view', c))).toContain('Task History');
+    const item = commandToolbar(mainToolbarViews('tasks'), c).flatMap((g) => g.items).find((i) => i.label === 'Task History');
+    item!.run!();
+    expect(c.calls).toContain('looper.history.openTasks');
   });
 
   it('gives each File item its own access key in every window', () => {
@@ -527,7 +556,7 @@ describe('a phone', () => {
 describe('Chat → Watch Task Events', () => {
   const summary = { id: 'c', kind: 'chat', taskId: 't', status: 'idle' };
   const withTasks = (watchTasks: unknown, here: CommandContext['here'] = 'desktop') => {
-    const chat = { id: 'c', status: 'ready', queued: [], history: [], rows: [], models: [], harnessId: 'h', harnesses: [{ id: 'h', name: 'Claude Code' }], settings: { permissionMode: 'default' }, permissions: [], harnessKind: 'claude-code', watchTasks };
+    const chat = { id: 'c', status: 'ready', queued: [], history: [], rows: [], models: [], harnessId: 'h', harnesses: [{ id: 'h', name: 'Claude Code' }], settings: { permissionMode: 'default' }, autoCompactDefault: { enabled: false, percent: 90 }, permissions: [], harnessKind: 'claude-code', watchTasks };
     return context({ tab: 'chats', chats: { single: false, tab: true, selected: 'c', summary, chat, sessions: [summary], shown: {} } as never }, here);
   };
   const own = { own: true, folders: [] };
@@ -880,5 +909,96 @@ describe('no command outside the list', () => {
       const text = fs.readFileSync(file, 'utf8');
       expect(text, file).not.toMatch(/\bshowTaskContextMenu|\breportSelection|\bshowNewMenu|\bshowSettingMenu\(state\.id/);
     }
+  });
+});
+
+describe('Mark as Unread', () => {
+  const chatState = { id: 'c', status: 'ready', queued: [], history: [], rows: [], models: [], harnessId: 'h', harnesses: [{ id: 'h', name: 'Claude Code' }], settings: { permissionMode: 'default' }, permissions: [], harnessKind: 'claude-code', autoCompactDefault: { enabled: false, percent: 80 } };
+  const inChats = (summary: Record<string, unknown>, here: CommandContext['here'] = 'desktop', chatOver: Record<string, unknown> = {}) => {
+    const s = { id: 'c', kind: 'chat', taskId: 't', status: 'ready', ...summary };
+    return context({ settings: SettingsSchema.parse({}), chats: { single: false, tab: true, selected: 'c', summary: s, chat: s.kind === 'chat' ? { ...chatState, ...chatOver } : null, sessions: [s], shown: {} } as never }, here);
+  };
+  const item = (c: CommandContext) => menu(CHATS_WINDOW_VIEWS, 'chat', c).find((i) => i.key === 'markUnread');
+
+  it('is the Chat menu’s Mark as Unread on a chat that is read and ready', () => {
+    const i = item(inChats({}));
+    expect([noMnemonic(i?.label ?? ''), i?.enabled]).toEqual(['Mark as Unread', true]);
+  });
+
+  it('reads Mark as Read on a chat that is unread, and marks it seen', () => {
+    for (const waiting of [{ reason: 'turn', text: 'Finished its turn', since: 1 }, { reason: 'turn', text: 'Marked as unread', since: 1, unread: true }, { reason: 'error', text: 'x', since: 1 }, { reason: 'notification', text: 'x', since: 1 }]) {
+      const c = inChats({ waiting });
+      const i = item(c);
+      expect([noMnemonic(i?.label ?? ''), i?.enabled]).toEqual(['Mark as Read', true]);
+      runCommand('markUnread', c);
+      expect((c as unknown as { calls: string[] }).calls).toEqual(['looper.sessions.seen']);
+    }
+  });
+
+  it('marks a read chat unread through the sessions API', () => {
+    const c = inChats({});
+    runCommand('markUnread', c);
+    expect((c as unknown as { calls: string[] }).calls).toEqual(['looper.sessions.markUnread']);
+  });
+
+  it('is off while the agent works, starts or has ended, and while a permission request waits, and then does nothing', () => {
+    for (const over of [{ status: 'working' }, { status: 'starting' }, { status: 'ended' }, { status: 'working', waiting: { reason: 'permission', text: 'x', since: 1 } }]) {
+      const c = inChats(over);
+      expect(item(c)?.enabled, JSON.stringify(over)).toBe(false);
+      runCommand('markUnread', c);
+      expect((c as unknown as { calls: string[] }).calls).toEqual([]);
+    }
+  });
+
+  it('is in the Chat menu of the Chats window, a chat’s own window and the main window’s Chats tab, after Watch Task Events', () => {
+    const c = inChats({});
+    for (const views of [CHATS_WINDOW_VIEWS, CHAT_WINDOW_VIEWS, mainWindowViews('chats')]) {
+      const l = labels(menu(views, 'chat', c));
+      expect(l, String(views)).toContain('Mark as Unread');
+      expect(l.indexOf('Mark as Unread')).toBe(l.indexOf('Watch Task Events') + 1);
+    }
+    expect(labels(contextMenu('conversation', c))).toContain('Mark as Unread');
+  });
+
+  it('gives every item of the Chat menu its own access key, in each window, muted or not, read or unread (Win32: unique keys in a menu)', () => {
+    const waiting = { reason: 'turn', text: 'x', since: 1 };
+    for (const views of [CHATS_WINDOW_VIEWS, CHAT_WINDOW_VIEWS, mainWindowViews('chats')]) {
+      for (const c of [inChats({}), inChats({ waiting }), inChats({}, 'desktop', { muted: true }), inChats({ waiting }, 'desktop', { muted: true })]) {
+        const keys = menu(views, 'chat', c).filter((i) => i.type !== 'separator').map((i) => ({ label: i.label ?? '', key: /&([^&])/.exec(i.label ?? '')?.[1]?.toLowerCase() }));
+        const dup = keys.filter((k) => k.key && keys.some((o) => o !== k && o.key === k.key)).map((k) => k.label);
+        expect(dup, 'items sharing an access key').toEqual([]);
+        expect(keys.filter((k) => !k.key).map((k) => k.label)).toEqual([]);
+      }
+    }
+  });
+
+  it('keeps Mark as Unread on d and Mute Notifications on f', () => {
+    const labelsOf = (c: CommandContext) => menu(CHATS_WINDOW_VIEWS, 'chat', c).map((i) => i.label);
+    expect(labelsOf(inChats({}))).toEqual(expect.arrayContaining(['Mark as Unrea&d', 'Mute Noti&fications']));
+    expect(labelsOf(inChats({}, 'desktop', { muted: true }))).toContain('Unmute Noti&fications');
+  });
+
+  it('leaves a terminal session’s Chat menu alone (it has none), and a task run’s everything', () => {
+    expect(item(inChats({ kind: 'terminal' }))).toBeUndefined();
+    expect(item(inChats({ kind: 'run' }))).toBeUndefined();
+  });
+
+  it('is in a phone’s More menu for a chat and a terminal session, not for a task run', () => {
+    const more = (kind: string, over: Record<string, unknown> = {}) => labels(phoneMore(['conversation'], inChats({ kind, ...over }, 'mobile')));
+    expect(more('chat')).toContain('Mark as Unread');
+    expect(more('chat', { waiting: { reason: 'turn', text: 'Finished its turn', since: 1 } })).toContain('Mark as Read');
+    expect(more('terminal')).toContain('Mark as Unread');
+    expect(more('run')).not.toContain('Mark as Unread');
+  });
+});
+
+describe('a task run’s right-click menu in the list', () => {
+  it('keeps Stop Run… and leaves the immediate Stop to the button beside the run’s box', () => {
+    const ipc = src('main', 'ipc.ts');
+    const at = ipc.indexOf("ipc.on('context-menu:session'");
+    const menu = ipc.slice(at, ipc.indexOf("ipc.on('context-menu:session-group'"));
+    const runItems = menu.slice(menu.indexOf('...(run'), menu.indexOf('\n        : ['));
+    expect(runItems).toContain("'Stop Run…'");
+    expect(runItems).not.toMatch(/label: 'Stop'/);
   });
 });

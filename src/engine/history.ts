@@ -1,19 +1,18 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import readline from 'node:readline';
 import { chatTitle, type ChatInfo, type TerminalInfo } from '../shared/chat';
 import { compactRows } from '../shared/compact';
 import { resolveEnvironment, resolveHarness } from '../shared/environments';
-import { RECENT_CHATS, inFolderFilter, type HistoryConversation, type HistoryFolderFilter, type HistoryItem, type HistoryList, type HistoryListOptions, type HistorySource } from '../shared/history';
+import { RECENT_CHATS, inFolderFilter, type HistoryConversation, type HistoryFolderFilter, type HistoryItem, type HistoryList, type HistoryListOptions, type HistoryRunFilter, type HistorySource } from '../shared/history';
 import type { MessageRow } from '../shared/messages';
 import { FOLDER_TASK_PREFIX, normalizeFolder, projectIdOf, projectTaskId, sameFolder } from '../shared/projects';
-import type { RunSummary } from '../shared/runs';
-import type { Environment, Project, Settings, Task } from '../shared/types';
+import { runShown, type RunSummary } from '../shared/runs';
+import type { Environment, Harness, Project, Settings, Task } from '../shared/types';
 import { envPrefix, envSide, runProbe } from './discover-models';
 import type { HostKind } from './host';
 import { errMsg, type Logger } from './log';
-import { CodexAccumulator, TranscriptAccumulator, codexHomeOfRollout, codexThreadName, transcriptHostPath, type SubagentMeta } from './messages';
+import { TranscriptReader, codexHomeOfRollout, codexThreadName, transcriptHostPath, type SubagentMeta, type TranscriptAccumulator } from './messages';
 import { readSubagentStats, type SubagentStats } from './context';
 import { subagentsOf } from './sessions';
 import { writeJsonAtomicAsync } from './store/fsutil';
@@ -171,14 +170,6 @@ interface CodexHead {
   subagent: boolean;
 }
 
-async function eachLine(file: string, fn: (line: string) => void): Promise<void> {
-  const rl = readline.createInterface({ input: fs.createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
-  for await (const raw of rl) {
-    const line = raw.trim();
-    if (line) fn(line);
-  }
-}
-
 /** The first line of a file, up to `max` bytes. */
 async function firstLine(file: string, max = 4 * 1024 * 1024): Promise<string> {
   const fh = await fs.promises.open(file, 'r');
@@ -212,11 +203,10 @@ const lastTime = (rows: MessageRow[]): number => {
 
 const said = (rows: MessageRow[]) => rows.filter((r) => r.kind === 'prompt' || r.kind === 'agent').length;
 
-/** A transcript's rows. */
+/** A transcript's rows, read as a chat's are (TranscriptReader: a chunk at a time, without the records nothing reads). */
 async function readTranscript(file: string, format: 'claude' | 'codex'): Promise<{ acc: TranscriptAccumulator; extra: { cwd?: string } }> {
-  const acc = format === 'codex' ? new CodexAccumulator() : new TranscriptAccumulator();
   const extra: { cwd?: string } = {};
-  await eachLine(file, (line) => {
+  const reader: TranscriptReader = new TranscriptReader(file, {}, format, (line) => {
     if (format === 'claude' && extra.cwd === undefined) {
       const m = CWD_RE.exec(line);
       if (m) {
@@ -227,9 +217,10 @@ async function readTranscript(file: string, format: 'claude' | 'codex'): Promise
         }
       }
     }
-    acc.addLine(line);
+    reader.acc.addLine(line);
   });
-  return { acc, extra };
+  await reader.read();
+  return { acc: reader.acc, extra };
 }
 
 /** A transcript's title, last activity and message count, from one pass over it. */
@@ -288,26 +279,38 @@ export interface ConfigDirs {
  */
 export async function probeConfigDirs(env: Environment, host: HostKind): Promise<ConfigDirs> {
   const side = envSide(env, host);
-  const scripts = {
-    'claude-code': side === 'posix' ? `printf '%s\\n' "\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"` : "if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }",
-    codex: side === 'posix' ? `printf '%s\\n' "\${CODEX_HOME:-$HOME/.codex}"` : "if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }",
-  };
-  const probes = new Map<string, 'claude-code' | 'codex'>();
+  // Harnesses of a kind with the same variables keep the same folder: each is asked once.
+  const probes = new Map<string, Harness>();
   for (const h of env.harnesses) {
-    if (h.kind === 'custom') continue;
-    probes.set(envPrefix(side, h.env) + scripts[h.kind], h.kind);
+    if (h.kind !== 'custom') probes.set(envPrefix(side, h.env) + h.kind, h);
   }
   const out: ConfigDirs = { claude: [], codex: [] };
   await Promise.all(
-    [...probes].map(async ([script, kind]) => {
-      const printed = await runProbe(env, host, script).catch(() => '');
-      const target = printed.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop();
-      const dir = target ? await transcriptHostPath(target, host, env.kind === 'wsl' ? env.distro : undefined) : undefined;
-      const list = kind === 'claude-code' ? out.claude : out.codex;
+    [...probes.values()].map(async (h) => {
+      const dir = await probeHarnessHome(env, h, host).catch(() => undefined);
+      const list = h.kind === 'claude-code' ? out.claude : out.codex;
       if (dir && !list.includes(dir)) list.push(dir);
     }),
   );
   return out;
+}
+
+/**
+ * Where a harness keeps its conversations, as a host path: Claude Code's
+ * config folder (CLAUDE_CONFIG_DIR, else ~/.claude) or Codex's home
+ * (CODEX_HOME, else ~/.codex), asked in the environment with the harness's
+ * variables. Undefined for a custom harness, or a folder the host can't reach.
+ */
+export async function probeHarnessHome(env: Environment, harness: Harness, host: HostKind): Promise<string | undefined> {
+  if (harness.kind === 'custom') return undefined;
+  const side = envSide(env, host);
+  const scripts = {
+    'claude-code': side === 'posix' ? `printf '%s\\n' "\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"` : "if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }",
+    codex: side === 'posix' ? `printf '%s\\n' "\${CODEX_HOME:-$HOME/.codex}"` : "if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }",
+  };
+  const printed = await runProbe(env, host, envPrefix(side, harness.env) + scripts[harness.kind]);
+  const target = printed.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop();
+  return target ? transcriptHostPath(target, host, env.kind === 'wsl' ? env.distro : undefined) : undefined;
 }
 
 // ---------- the service ----------
@@ -335,6 +338,8 @@ export interface HistoryDeps {
   runDir: (taskId: string, runId: string) => string;
   readChatInfo: (taskId: string, runId: string) => Promise<ChatInfo | null>;
   readTerminalInfo: (taskId: string, runId: string) => Promise<TerminalInfo | null>;
+  /** The harness Run Options put a task run on instead of the task's; null when it ran on the task's. */
+  readRunHarness: (taskId: string, runId: string) => Promise<string | null>;
   /** The runs that are Remote Control's own conversations. */
   remoteRuns: () => Set<string>;
   /** A run's conversation (a subagent's with `agentId`). */
@@ -404,6 +409,8 @@ interface RunInfo {
   result: string;
   chat: ChatInfo | null;
   term: TerminalInfo | null;
+  /** A task run Run Options put on another harness: that harness. */
+  harnessId: string | null;
 }
 
 /** What the list is built from: Looper's runs by task, and every transcript file found. */
@@ -413,6 +420,12 @@ interface HistoryIndex {
 }
 
 const LEDGER_SOURCES: Partial<Record<LedgerKind, HistorySource>> = { chat: 'chat', terminal: 'terminal', remote: 'remote', run: 'run' };
+
+/** Whether a task run passes Task History's filters. */
+export function runPasses(item: Pick<HistoryItem, 'taskId' | 'result'>, f: HistoryRunFilter): boolean {
+  const result = item.result ?? '';
+  return (!f.taskId || item.taskId === f.taskId) && (!f.result || result === f.result) && runShown({ result }, f);
+}
 
 /** Files read at a time: a stat or a transcript over \\wsl.localhost waits on the network more than the disk. */
 const STAT_AT_ONCE = 32;
@@ -460,9 +473,8 @@ export class HistoryService {
   /** Tasks whose runs changed since the index read them. */
   private changed = new Set<string>();
   private changeTimer: NodeJS.Timeout | null = null;
-  /** The Recent menus' lists, by `showRuns|folder`, ready before a menu asks. */
+  /** The Recent menus' lists, by folder, ready before a menu asks. */
   private recentLists = new Map<string, HistoryItem[]>();
-  private recentShowRuns = true;
   private recentRun: Promise<void> | null = null;
   private recentAgain = false;
   /** Each chat's and terminal session's info, by `taskId/runId`. */
@@ -533,9 +545,11 @@ export class HistoryService {
     return projects.find((p) => p.environmentId === task.environmentId && sameFolder(p.cwd, task.cwd));
   }
 
-  private taskKind(task: Task): 'claude-code' | 'codex' | null {
+  /** `harnessId`: the harness Run Options put the run on, else the task's. */
+  private taskKind(task: Task, harnessId?: string | null): 'claude-code' | 'codex' | null {
     try {
-      const kind = resolveHarness(task, resolveEnvironment(task, this.d.settings)).kind;
+      const env = resolveEnvironment(task, this.d.settings);
+      const kind = (harnessId ? env.harnesses.find((h) => h.id === harnessId) : undefined)?.kind ?? resolveHarness(task, env).kind;
       return kind === 'custom' ? null : kind;
     } catch {
       return null;
@@ -588,11 +602,12 @@ export class HistoryService {
       for (const r of refs[i]) known.push(r.sessionId);
       const { chat, term } = infos[i];
       if (chat?.resumedSession) known.push(chat.resumedSession);
-      const kind = chat?.harnessKind ?? term?.harnessKind ?? this.taskKind(task);
+      const kind = chat?.harnessKind ?? term?.harnessKind ?? this.taskKind(task, infos[i].harnessId);
       const sessionId = kind ? (refs[i].find((r) => r.own)?.sessionId ?? null) : null;
-      // No conversation to show: a run that stopped at its check, or a folder retention took.
-      if (!kind || !sessionId) return;
       const source: HistorySource = s.result === 'chat' ? 'chat' : s.result === 'terminal' ? (remote.has(s.runId) ? 'remote' : 'terminal') : 'run';
+      // No conversation to show: a chat's or terminal session's folder retention took. A task run that stopped at its check
+      // is still a run in Task History, with nothing to read.
+      if (source !== 'run' && (!kind || !sessionId)) return;
       const title = (chat?.title || term?.title || (source === 'run' ? s.details : '') || task.name || 'Untitled chat').trim();
       runs.push({
         item: {
@@ -603,11 +618,11 @@ export class HistoryService {
           environmentId: task.environmentId,
           title,
           lastActive: Date.parse(s.endTs) || Date.parse(s.startTs) || 0,
-          harnessKind: kind,
-          sessionId,
+          harnessKind: kind ?? 'claude-code',
+          ...(sessionId ? { sessionId } : {}),
           taskId,
           runId: s.runId,
-          ...(source === 'run' ? { taskName: task.name } : {}),
+          ...(source === 'run' ? { taskName: task.name, result: s.result } : {}),
         },
       });
     });
@@ -623,14 +638,20 @@ export class HistoryService {
       result: s.result,
       chat: s.result === 'chat' ? await this.d.readChatInfo(taskId, s.runId) : null,
       term: s.result === 'terminal' ? await this.d.readTerminalInfo(taskId, s.runId) : null,
+      harnessId: s.result === 'chat' || s.result === 'terminal' ? null : await this.d.readRunHarness(taskId, s.runId),
     };
     this.infos.set(key, info);
     return info;
   }
 
-  /** The index's runs, every task's. */
+  /** The index's runs, every task's: the chats and terminal sessions of Looper's, and the task runs. */
   private allRuns(index: HistoryIndex): Entry[] {
     return [...index.tasks.values()].flatMap((t) => t.runs);
+  }
+
+  /** The conversations of Looper's own in the index: the task runs are Task History's. */
+  private conversationRuns(index: HistoryIndex): Entry[] {
+    return this.allRuns(index).filter((e) => e.item.source !== 'run');
   }
 
   /** The session ids Looper's run folders hold, whose transcripts aren't listed again. */
@@ -778,17 +799,11 @@ export class HistoryService {
 
   /**
    * The Recent menus' list for `folder` ('' or `project:<id>`), ready at once; undefined until it has been worked out
-   * (the first seconds after start, or after View › Show Runs changes). Asking starts a rescan of the agents' folders
+   * (the first seconds after start). Asking starts a rescan of the agents' folders
    * when the last is over a minute old, so a conversation from outside Looper shows from the next menu.
    */
-  recent(folder: HistoryFolderFilter, showRuns: boolean): HistoryItem[] | undefined {
+  recent(folder: HistoryFolderFilter): HistoryItem[] | undefined {
     if (this.index && !this.scanning && Date.now() - this.scannedAt > RESCAN_AFTER_MS) void this.rescanQuietly();
-    if (showRuns !== this.recentShowRuns) {
-      this.recentShowRuns = showRuns;
-      this.recentLists.clear();
-      void this.refreshRecent();
-      return undefined;
-    }
     const list = this.recentLists.get(folder);
     // A project added since the lists were worked out.
     if (!list && this.index) void this.refreshRecent();
@@ -796,8 +811,7 @@ export class HistoryService {
   }
 
   /** Builds the index and the Recent menus' lists from Looper's runs and the cache; the first menu starts the agents' folders' rescan. */
-  async warm(showRuns: boolean): Promise<void> {
-    this.recentShowRuns = showRuns;
+  async warm(): Promise<void> {
     await this.currentIndex();
     await this.refreshRecent();
   }
@@ -821,9 +835,7 @@ export class HistoryService {
       try {
         do {
           this.recentAgain = false;
-          const showRuns = this.recentShowRuns;
-          const lists = await this.recentListsOf(showRuns);
-          if (showRuns === this.recentShowRuns) this.recentLists = lists;
+          this.recentLists = await this.recentListsOf();
         } while (this.recentAgain);
       } catch (err) {
         this.d.log.warn(`history: cannot work out the Recent menus: ${errMsg(err)}`);
@@ -839,7 +851,7 @@ export class HistoryService {
    * first, each added to the all list and its project's while they have room. A transcript is read only while a list it
    * could be in has room, so a project with few conversations doesn't read the others'.
    */
-  private async recentListsOf(showRuns: boolean): Promise<Map<string, HistoryItem[]>> {
+  private async recentListsOf(): Promise<Map<string, HistoryItem[]>> {
     await this.loadCache();
     const index = await this.currentIndex();
     const known = this.allKnown(index);
@@ -854,7 +866,8 @@ export class HistoryService {
     let projectsWithRoom = projects.length;
     const wanted = (f: FileRef) => room('') || (f.format === 'claude' ? (byDir.get(f.dir ?? '') ?? []).some(room) : projectsWithRoom > 0);
     const add = (e: Entry) => {
-      if (!showRuns && e.item.source === 'run') return;
+      // A task run whose folder retention took is Task History's, not a conversation to continue.
+      if (e.item.source === 'run') return;
       if (room('')) lists.get('')!.push(e);
       const key = e.item.projectId ? `project:${e.item.projectId}` : '';
       if (key && room(key)) {
@@ -863,7 +876,7 @@ export class HistoryService {
       }
     };
     const candidates: { ts: number; run?: Entry; file?: FileRef }[] = [
-      ...this.allRuns(index).map((run) => ({ ts: run.item.lastActive, run })),
+      ...this.conversationRuns(index).map((run) => ({ ts: run.item.lastActive, run })),
       ...index.files.map((file) => ({ ts: file.mtimeMs, file })),
     ].sort((a, b) => b.ts - a.ts);
     let at = 0;
@@ -964,7 +977,8 @@ export class HistoryService {
     const projects = this.d.projects();
     let index: HistoryIndex;
     await this.loadCache();
-    if (o.fresh) {
+    // Task runs are all in the index, which keeps current as their records are written: no folders to read.
+    if (o.fresh && !o.runs) {
       index = await this.rescan();
       // The Recent menus, once worked out, get what the History window's refresh found.
       if (this.recentLists.size > 0) void this.refreshRecent();
@@ -975,11 +989,13 @@ export class HistoryService {
     if (o.folder.startsWith('project:') && !project) return { items: [], more: false };
     // Claude files a folder of their own: a project's are in its folder's (the exact folder is checked once read).
     const projectDir = project ? claudeProjectFolder(project.cwd) : undefined;
-    const passes = (e: Entry) => (o.showRuns || e.item.source !== 'run') && inFolderFilter(e.item, o.folder);
+    const runs = o.runs;
+    // The conversations are the chats, terminal sessions and transcripts; Task History's are the task runs.
+    const passes = (e: Entry) => (runs ? e.item.source === 'run' && runPasses(e.item, runs) : e.item.source !== 'run') && inFolderFilter(e.item, o.folder);
     type Candidate = { ts: number; run?: Entry; file?: FileRef };
     const candidates: Candidate[] = [
       ...this.allRuns(index).filter(passes).map((run) => ({ ts: run.item.lastActive, run })),
-      ...index.files.filter((f) => !projectDir || f.format !== 'claude' || f.dir === projectDir).map((file) => ({ ts: file.mtimeMs, file })),
+      ...(runs ? [] : index.files.filter((f) => !projectDir || f.format !== 'claude' || f.dir === projectDir).map((file) => ({ ts: file.mtimeMs, file }))),
     ].sort((a, b) => b.ts - a.ts);
 
     const found: Entry[] = [];
@@ -1039,9 +1055,9 @@ export class HistoryService {
     if (!transcript) return null;
     if (agentId !== undefined) {
       const file = path.join(transcript.path.replace(/\.jsonl$/i, ''), 'subagents', `agent-${agentId}.jsonl`);
-      const acc = new TranscriptAccumulator({ sidechain: true });
-      await eachLine(file, (l) => acc.addLine(l)).catch(() => undefined);
-      return { rows: acc.rows, subagents: [] };
+      const reader = new TranscriptReader(file, { sidechain: true });
+      await reader.read().catch(() => undefined);
+      return { rows: reader.acc.rows, subagents: [] };
     }
     const { acc } = await readTranscript(transcript.path, transcript.format);
     const metas = transcript.format === 'claude' ? await this.d.subagentsAt(transcript.path) : [];

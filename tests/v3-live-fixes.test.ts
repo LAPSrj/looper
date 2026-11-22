@@ -27,6 +27,15 @@ describe('V3 live check fixes', () => {
     expect(read('components/EmptyState.tsx')).toMatch(/list === 'tree' \? 'treeitem'[\s\S]{0,300}aria-disabled=\{at === 'row' \? true/);
   });
 
+  it('an iOS tab strip that scrolls has no edge-fade mask (iOS drew the masked scroller blank)', () => {
+    const phone = read('phone.css');
+    const start = phone.indexOf("html.phone-window[data-platform='ios'] .tabs-scroll {");
+    expect(start).toBeGreaterThan(0);
+    const rule = phone.slice(start, phone.indexOf('}', start));
+    expect(rule).toContain('-webkit-mask-image: none');
+    expect(rule).toContain('mask-image: none');
+  });
+
   it('the phone segmented control has one Tab stop and arrow keys, like Tabs', () => {
     const list = read('components/phone/PhoneList.tsx');
     expect(list).toContain('tabKeyTarget(ids, value, e)');

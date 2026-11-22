@@ -59,15 +59,16 @@ bottom of this page).
 | `looper engine-log [-n, --lines <n>] [--follow]` | print the end of the app's engine log (default 50 lines); `--follow` keeps printing what the app adds |
 | `looper sessions [--json]` | list the open chats, terminal sessions and task runs with their ids, kinds, status (and what each waits on), project and title |
 | `looper send <ids> [message...] [--message-file <file>] [--file <path...>]` | send a message to one or more chats (queued while one works), terminal sessions (typed in), task runs (as guidance) or task builders, ids separated by commas; `--file` attaches files. Every id is checked before anything is sent |
-| `looper interrupt <id>` | end the agent's turn in a chat, terminal session or task run (**Stop**); the conversation goes on with the next message |
+| `looper interrupt <id>` | end the agent's turn in a chat or terminal session, and the whole run of a task run (**Stop**); a chat goes on with the next message, and its background subagents, workflows and commands keep running |
 | `looper send-now <id>` | send a chat's queued messages, or a run's waiting guidance, at once, ending the agent's turn (**Send Now**) |
 | `looper queue <id> [--cancel [messageId]] [--json]` | list a chat's queued messages or a run's waiting guidance; `--cancel` takes one back |
 | `looper restart <id>` | start a chat's or terminal session's agent again on the same conversation (**Restart Agent**) |
 | `looper rename <id> [name...]` | rename a chat or terminal session; no name gives it back its automatic one |
-| `looper configure <chatId> [--model <m>] [--effort <e>] [--permission-mode <mode>] [--harness <id>]` | change a chat's model, effort, permission mode or harness (a harness only before anything was said) |
-| `looper compact <id>` | start a new chat from a chat's or run's messages without its tool calls (**Compact into New Chat**, **Continue Compacted**); prints the new chat's id |
+| `looper configure <chatId> [--model <m>] [--effort <e>] [--auto-compact on\|off\|default] [--permission-mode <mode>] [--harness <id>]` | change a chat's model, effort, auto compact (**Chat → Auto Compact**; `default` follows Settings → Chats), permission mode or harness (once the conversation has started, only a harness of its kind) |
+| `looper compact <id>` | start a new chat from a compacted copy of a chat's or run's conversation: its messages, the latest session's tool calls and the results that fit, without thinking or errors (**Compact into New Chat**, **Continue Compacted**). A chat's new chat takes its place, keeping its name, settings and place in the list, and the old chat's id reaches the new one in every command; prints the new chat's id |
 | `looper fork <chatId> --at <row>` | start a new chat from the conversation up to a row (**Fork from Here**); `looper transcript --json` lists the rows, counted from 0 |
 | `looper auto-continue <chatId> on\|off` | turn **Continue When Limit Resets** on or off for a chat |
+| `looper mute <chatId> on\|off` | turn **Mute Notifications** on or off for a chat: while it's on, no paired device gets a push when the chat finishes its turn or asks for permission |
 | `looper continue-anyway <chatId>` | let a chat continue even though the prompt-cache rule in Settings → Chats would stop it (**Continue Anyway**) |
 | `looper watch <chatId> <taskId> [--event <id>] [--stop]` | send the chat's agent the task's run ends and trigger events (**Watch Task Events**); `--event` keeps it to the events related to that id, `--stop` stops it |
 | `looper transcript <id> [--agent <agentId>] [--raw] [--no-thinking] [--no-tools] [--plain] [--json]` | print a chat's, run's or task builder's conversation as Markdown (**Save as Markdown**); `--agent` prints a subagent's, `--raw` every record of the transcript |
@@ -94,14 +95,15 @@ bottom of this page).
 | `looper models <harnessId> [--env <id>] [--json]` | list the models a harness offers |
 | `looper settings [key]` | print the settings as JSON, or one of them by its dotted key, such as `chats.confirmClose` |
 | `looper logins [--json]`, `looper login <harnessId> [--env <id>]` | list the Claude Code logins the harnesses use, or open **Log In** for one on the desktop |
-| `looper history [--search <text>] [--project <id>] [-n, --limit <n>] [--runs] [--json]` | list the newest conversations, Looper's and Claude Code's and Codex's from outside it (**History**) |
+| `looper history [--search <text>] [--project <id>] [-n, --limit <n>] [--json]` | list the newest conversations, Looper's and Claude Code's and Codex's from outside it (**History**) |
+| `looper history --runs [--task <id>] [--result <result>] [--project <id>] [--hide-skipped] [--hide-no-action] [--search <text>] [-n, --limit <n>] [--json]` | list the newest task runs instead, with a result column (**Task History**); `--task` and `--result` (such as `success`, `error`, `noop`, `skipped`) imply `--runs`, and the two `--hide` options are View → Task Runs' Show Skipped Runs and Show Runs with No Action turned off |
 | `looper history show <id> [--agent <agentId>] [--no-thinking] [--no-tools] [--plain] [--json]`, `looper history continue <id> [--compact] [--terminal]` | print a conversation from the history, or continue it in a chat (**Continue in Chat**, **Continue Compacted**) or a terminal session |
 | `looper open <id>` | show a chat, terminal session, task or run on the desktop |
 | `looper remote [--json]`, `looper remote stop <id>`, `looper remote restart <id>` | list the **Remote Control** conversations, end one, or continue one in a new session |
 | `looper rest [on\|off]` | turn **Rest Mode** on or off, or print its state |
 | `looper prevent-sleep [30\|60\|120\|until-off\|off]` | keep the computer awake for that many minutes or until turned off, turn it off, or print its state (**Prevent Sleep**) |
 | `looper addons [--json]`, `looper addons install <file>`, `looper addons enable\|disable\|restart\|remove <id>` | list the addons, install a `.looperaddon` (the desktop asks first, as for a double-click), or turn one on or off, restart it or remove it |
-| `looper devices [--json]`, `looper devices rename <id> <name...>`, `looper devices remove <id>`, `looper devices pair` | list the devices paired with **Remote Access**, rename one, unpair one, or print a code to pair a new one |
+| `looper devices [--json]`, `looper devices rename <id> <name...>`, `looper devices remove <id>`, `looper devices notify <id> [--turns on\|off] [--questions on\|off] [--runs on\|off] [--warnings on\|off]`, `looper devices pair` | list the devices paired with **Remote Access**, rename one, unpair one, choose what one is notified of (chat turn ends, questions and permission requests, task runs, login and usage warnings; with no option it prints them), or print a code to pair a new one |
 | `looper environments add <file>`, `looper environments edit <id> <file>`, `looper environments remove <id>` | add an environment from a JSON file of its fields (`-` reads stdin), change one (the file's fields replace its own), or remove one (not the last) |
 | `looper harnesses add <environmentId> <file>`, `looper harnesses edit <environmentId> <id> <file>`, `looper harnesses remove <environmentId> <id>` | the same for an environment's harnesses |
 | `looper projects add <folder> [--name] [--env] [--harness] [--model] [--effort] [--permission-mode] [--mode]`, `looper projects edit <id> [--folder <folder>] [the same options]` | add a project (the folder as its environment sees it) or change one |

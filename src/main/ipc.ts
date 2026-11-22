@@ -6,7 +6,7 @@ import path from 'node:path';
 import type { Engine } from '../engine/engine';
 import { convertWslPath, detectedDefaultWslDistro, detectWslMountPrefix, listWslDistros, loadSystemLocale } from '../engine/host';
 import { withoutEnvironment, withoutHarness } from '../shared/environments';
-import { REMOTE_CHANNELS, type HostFileView } from '../shared/remote-access';
+import { REMOTE_CHANNELS, parseDeviceNotifications, type HostFileView } from '../shared/remote-access';
 import { copyIntoFolder, listDir, makeDir, type Flavor, type HostFilesDeps } from './platform/host-files';
 import { discoverHarnessModels } from '../engine/discover-models';
 import { FILE_KINDS, wrapLooperFile, type LooperFileKind } from '../shared/files';
@@ -14,8 +14,12 @@ import { folderSubtree } from '../shared/folders';
 import { NOT_MOBILE } from '../shared/ui-platform';
 import { perfLine } from '../shared/perf';
 import { projectTaskId } from '../shared/projects';
-import { canStop, sessionGroupKey } from '../shared/sessions';
+import { canToggleUnread, inChatGroup, isUnread } from '../shared/sessions';
 import { SENT_IMAGE_RE, fileImageId, fileImageKey, type MessageImage, type SentFileInfo } from '../shared/messages';
+import { languageOf } from '../renderer/src/components/code-languages';
+import { VIEWER_MAX_BYTES, viewerKind } from '../renderer/src/web/dialog-flows';
+import type { PreviewNetwork } from '../shared/preview';
+import { addPreviewFrame, inPreviewPage } from './preview-frames';
 
 /** The most of a Code Mode script's tool calls one runs:scriptCalls hands over. */
 const SCRIPT_CALLS_MAX = 200;
@@ -23,9 +27,9 @@ const SCRIPT_CALLS_MAX = 200;
 import type { AppInfo, UiEvent } from '../shared/api';
 import type { BuilderSetup } from '../shared/builder';
 import { commandAttachment, commandFrom } from '../shared/bash-mode';
-import { attachmentName, type Attachment, type AttachmentInput, type ChatSettings, type ChatState } from '../shared/chat';
+import { attachmentName, chatInteractive, type Attachment, type AttachmentInput, type ChatSettings, type ChatState } from '../shared/chat';
 import { ChatEncoder } from '../shared/chat-delta';
-import { HISTORY_COMMANDS, HISTORY_PAGE, type HistoryCommand, type HistoryList, type HistoryListOptions } from '../shared/history';
+import { HISTORY_COMMANDS, HISTORY_PAGE, type HistoryCommand, type HistoryList, type HistoryListOptions, type HistoryRunFilter } from '../shared/history';
 import type { RunFilter } from '../shared/runs';
 import { TailnetHostnameSchema, type EngineEvent, type Task } from '../shared/types';
 import {
@@ -62,6 +66,8 @@ import { specTemplate } from './command-menu';
 import { entriesMenu } from '../shared/commands/build';
 import type { HostCommand } from '../shared/commands/context';
 import { watchTaskMenu } from '../shared/commands/list';
+import { chatSettingEntries } from '../shared/chat-settings';
+import type { LooperApi } from '../shared/api';
 import type { MenuItemSpec, PopupButton } from '../shared/remote-access';
 import type { RemoteAccess } from './remote-access';
 
@@ -141,12 +147,22 @@ export interface IpcHost {
   confirmChatSend: (chatId: string, from: AppWindow | null) => Promise<boolean>;
   /** Restart Agent: the session's harness starts again on its conversation, asking first (over `from`) when it's working. Rejects with the reason. */
   restartSession: (sessionId: string, from: AppWindow | null) => Promise<void>;
-  /** Close All Conversations in a list group (sessionGroupKey), asking first over `from`. */
+  /** Continue in Terminal on an open chat: it closes, asking first (over `from`) when it's working, and its conversation goes on in a terminal. Rejects with the reason. */
+  continueChatInTerminal: (chatId: string, from: AppWindow | null) => Promise<void>;
+  /** Open in Terminal on a chat: its Terminal tab, after it becomes interactive when it's headless (a Codex chat: Continue in Terminal). Rejects with the reason. */
+  openChatTerminal: (chatId: string, from: AppWindow | null) => Promise<void>;
+  /** Open in Terminal on a task run: its conversation goes on in a terminal, after asking (over `from`) and stopping it when it's going. Rejects with the reason. */
+  openRunInTerminal: (taskId: string, runId: string, from: AppWindow | null) => Promise<void>;
+  /** Continue Run on a run stopped before its agent started: a new run starts the agent on its events. Rejects with the reason. */
+  continueStoppedRun: (taskId: string, runId: string) => Promise<void>;
+  /** Close All Conversations in a list group (ChatGroup.key), asking first over `from`. */
   closeSessionGroup: (group: string, from: AppWindow | null) => Promise<void>;
-  /** Send to Chats; `group` (sessionGroupKey): with that list group's chats checked. */
+  /** Send to Chats; `group` (ChatGroup.key): with that list group's chats checked. */
   openSendToSessions: (group?: string) => void;
   /** The History window, opened or brought forward. */
   openHistory: () => void;
+  /** The Task History window, opened or brought forward. */
+  openTaskHistory: () => void;
   /** That History window shows this conversation now (null: none): its menus act on it. */
   /** A History window's command on a conversation, asking first over `from` when it may still be open elsewhere. Rejects with the reason. */
   historyRun: (from: AppWindow | null, id: string, command: HistoryCommand) => Promise<void>;
@@ -178,7 +194,8 @@ export interface IpcHost {
   /** Remote Access, once it's created (after the engine). */
   remoteAccess: () => RemoteAccess | null;
   openRemoteAccessPair: (parent: AppWindow | null) => void;
-  openRemoteAccessRename: (deviceId: string, parent: AppWindow | null) => void;
+  /** Edit Device: a paired device's name and notifications. */
+  openRemoteAccessDevice: (deviceId: string, parent: AppWindow | null) => void;
   /** Set Up's Finish: save the sources and machine name, turn Remote Access on, and with `pair` open Pair Device once it runs. */
   finishRemoteAccessSetup: (choice: { sources?: unknown; hostname?: unknown }, pair: boolean) => Promise<void>;
   /** A device's click on a task notification: what a click on the desktop's toast opens, on that device. */
@@ -366,8 +383,9 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('runs:output', (_e, id: string, runId: string, raw?: boolean) => engine.readOutput(id, runId, undefined, raw));
   ipc.handle('runs:openDir', (_e, id: string, runId: string) => openPath(engine.runDir(id, runId)));
   ipc.handle('runs:clear', (_e, id: string) => engine.clearRuns(id));
-  ipc.handle('runs:messages', (_e, id: string, runId: string, agentId?: string, raw?: boolean) =>
-    engine.readMessages(id, runId, agentId, raw),
+  // `known`: the version of a subagent's transcript the page holds; an unchanged one answers without its rows.
+  ipc.handle('runs:messages', (_e, id: string, runId: string, agentId?: string, raw?: boolean, known?: unknown) =>
+    engine.readMessages(id, runId, agentId, raw, typeof known === 'string' ? known : undefined),
   );
   ipc.handle('runs:messageImage', async (_e, id: string, runId: string, rowId: string, agentId?: string) => {
     // An image file the agent sent (SendUserFile) is read from disk; any other row's image is in the transcript.
@@ -467,11 +485,16 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('chat:stopCommand', (_e, id: string, commandId: string) => engine.stopChatCommand(String(id), String(commandId ?? '')));
   ipc.handle('command:screen', (_e, ownerId: string, commandId: string) => engine.commandScreen(String(ownerId), String(commandId)));
   ipc.on('command:write', (_e, ownerId: string, commandId: string, data: string) => engine.writeCommand(String(ownerId), String(commandId), String(data ?? '')));
+  ipc.handle('command:prompt', (_e, ownerId: string, commandId: string) => engine.commandPrompt(String(ownerId), String(commandId)));
+  ipc.on('command:answer', (_e, ownerId: string, commandId: string, promptId: string, answer: unknown) =>
+    engine.answerCommand(String(ownerId), String(commandId), String(promptId), typeof answer === 'string' ? answer : null),
+  );
   ipc.on('command:resize', (_e, ownerId: string, commandId: string, cols: number, rows: number) =>
     engine.resizeCommand(String(ownerId), String(commandId), Number(cols), Number(rows)),
   );
   ipc.on('chat:answer', (_e, id: string, requestId: string, allow: boolean) => engine.answerChat(id, requestId, !!allow));
   ipc.on('chat:setAutoContinue', (_e, id: string, on: boolean) => engine.setChatAutoContinue(String(id), !!on));
+  ipc.on('chat:setMuted', (_e, id: string, on: boolean) => engine.setChatMuted(String(id), !!on));
   ipc.on('chat:continueAnyway', (_e, id: string) => engine.setChatContinueAnyway(String(id)));
   ipc.on('chat:setWatch', (_e, id: string, taskId: string, eventId: string, on: boolean) => engine.setChatWatch(String(id), String(taskId), String(eventId ?? ''), !!on));
   ipc.on('chat:openWatch', (e, id: string, taskId: string) => host.openWatchEvents(String(id), String(taskId), windowOf(e)));
@@ -488,6 +511,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       textLabel?: string;
       result?: string;
       file?: string;
+      /** `file` is one the agent sent (SendUserFile): a relative path is the session's folder's, and the menu has Save As…. */
+      sent?: boolean;
       resend?: { text: string; attachments: Attachment[] };
       fork?: number;
       selectText?: string;
@@ -522,7 +547,9 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         {
           label: 'Open File',
           click: () =>
-            void openTargetPath(info.taskId, file).catch((err: unknown) => {
+            void previewFile(info.taskId, String(info.chatId), file)
+              .then((shown) => (shown ? undefined : info.sent ? openSentFile(info.taskId, file) : openTargetPath(info.taskId, file)))
+              .catch((err: unknown) => {
               void showMessageBox(sender, {
                 type: 'error',
                 title: 'Looper',
@@ -534,6 +561,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
               });
             }),
         },
+        ...(info.sent ? [{ label: 'Save As…', click: () => void saveSentFile(sender, info.taskId, file).catch((err: unknown) => fail(sender, err)) }] : []),
         { label: 'Copy Path', click: () => writeClipboard(file) },
       ]);
     }
@@ -599,9 +627,12 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('sessions:commands', (_e, id: string) => engine.sessionCommands(String(id)));
   ipc.on('sessions:show', (e, id: string | null) => host.showSession(windowOf(e), typeof id === 'string' ? id : null));
   ipc.on('sessions:seen', (_e, id: string) => engine.seenSession(String(id)));
+  ipc.on('sessions:markUnread', (_e, id: string) => engine.markSessionUnread(String(id)));
+  ipc.on('sessions:reorder', (_e, ids: unknown) => engine.reorderSessions(Array.isArray(ids) ? ids.map(String) : []));
   ipc.handle('sessions:close', (e, id: string) => host.closeSession(String(id), windowOf(e)));
   ipc.handle('sessions:stop', (_e, id: string) => engine.stopSession(String(id)));
   ipc.handle('sessions:restart', (e, id: string) => host.restartSession(String(id), windowOf(e)));
+  ipc.handle('sessions:continueInTerminal', (e, id: string) => host.continueChatInTerminal(String(id), windowOf(e)));
   ipc.on('sessions:openSend', () => host.openSendToSessions());
   ipc.on('sessions:openRename', (e, id: string) => {
     const kind = engine.sessionKind(String(id));
@@ -615,6 +646,12 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const opts = (o ?? {}) as Partial<HistoryListOptions>;
     const folder = typeof opts.folder === 'string' && (opts.folder === '' || opts.folder === 'other' || opts.folder.startsWith('project:')) ? opts.folder : '';
     const limit = typeof opts.limit === 'number' && Number.isFinite(opts.limit) ? Math.max(1, Math.floor(opts.limit)) : HISTORY_PAGE;
+    // Task History's filters: unset lists the conversations.
+    const r = opts.runs as Partial<HistoryRunFilter> | undefined;
+    const runs: HistoryRunFilter | undefined =
+      r && typeof r === 'object'
+        ? { taskId: typeof r.taskId === 'string' ? r.taskId : '', result: typeof r.result === 'string' ? r.result : '', hideSkipped: r.hideSkipped === true, hideNoAction: r.hideNoAction === true }
+        : undefined;
     // The list so far goes to the window as it's read, tagged with the window's own number for the request.
     const request = typeof opts.request === 'number' ? opts.request : undefined;
     const sender = windowOf(e);
@@ -624,7 +661,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         : (list: HistoryList) => {
             if (!sender.isDestroyed()) sender.webContents.send('ui:event', { type: 'history-progress', request, list } satisfies UiEvent);
           };
-    return engine.historyList({ fresh: opts.fresh === true, limit, showRuns: opts.showRuns !== false, folder }, progress);
+    return engine.historyList({ fresh: opts.fresh === true, limit, folder, ...(runs ? { runs } : {}) }, progress);
   });
   ipc.handle('history:search', (_e, query: unknown, ids: unknown) =>
     engine.historySearch(String(query ?? ''), Array.isArray(ids) ? ids.filter((i): i is string => typeof i === 'string') : []),
@@ -637,6 +674,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   });
   ipc.on('context-menu:history', (e, id: unknown) => host.historyMenu(windowOf(e), String(id)));
   ipc.on('history:open', () => host.openHistory());
+  ipc.on('history:openTasks', () => host.openTaskHistory());
   ipc.on('context-menu:history-recent', (e, x: unknown, y: unknown) => {
     void host.showHistoryMenu(windowOf(e), Math.round(Number(x) || 0), Math.round(Number(y) || 0)).catch((err) => fail(windowOf(e), err));
   });
@@ -651,7 +689,10 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.on('sessions:send', (_e, ids: unknown, text: string, attachments?: unknown) => {
     engine.sendToSessions(Array.isArray(ids) ? ids.map(String) : [], String(text ?? ''), takeAttachments(attachments));
   });
-  ipc.handle('sessions:backgroundOutput', (_e, id: string, taskId: string) => engine.backgroundOutput(String(id), String(taskId)));
+  ipc.handle('sessions:backgroundOutput', (_e, id: string, taskId: string, known?: unknown) =>
+    engine.backgroundOutput(String(id), String(taskId), typeof known === 'number' && Number.isSafeInteger(known) && known >= 0 ? known : undefined),
+  );
+  ipc.handle('sessions:stopBackground', (_e, id: string, taskId: string) => engine.stopBackground(String(id), String(taskId)));
   ipc.on('sessions:cards', (e, ids: unknown) => host.showCards(windowOf(e), Array.isArray(ids) ? ids.map(String) : []));
   // A session's right-click menu in the list, or on its dashboard card (`card`). A task run can't be closed from here.
   ipc.on('context-menu:session', (e, id: string, card?: unknown) => {
@@ -668,6 +709,12 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       const bigCards = view.sessions.bigCards.filter((x) => x !== s.id && listed.some((l) => l.id === x));
       engine.updateSettings({ view: { ...view, sessions: { ...view.sessions, bigCards: big ? bigCards : [...bigCards, s.id] } } });
     };
+    // Hide from Dashboard, and Show on Dashboard while Show Hidden Chats shows it; the closed sessions' ids go too.
+    const hidden = view.sessions.hiddenCards.includes(s.id);
+    const hide = () => {
+      const hiddenCards = view.sessions.hiddenCards.filter((x) => x !== s.id && listed.some((l) => l.id === x));
+      engine.updateSettings({ view: { ...view, sessions: { ...view.sessions, hiddenCards: hidden ? hiddenCards : [...hiddenCards, s.id] } } });
+    };
     const restartable = engine.canRestartSession(id);
     const chat = s.kind === 'chat' ? engine.getChat(id) : undefined;
     const watch =
@@ -679,11 +726,26 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
           stop: (taskId, eventId) => engine.setChatWatch(id, taskId, eventId, false),
         }),
       );
+    // Session Type, as the Chat menu lists it; only a pick of its radio items reaches these two calls.
+    const sessionType =
+      chat &&
+      entriesMenu(
+        'mode',
+        chatSettingEntries(chat, {
+          chat: { configure: (chatId: string, patch: Partial<ChatSettings>) => engine.configureChat(chatId, patch) },
+          showError: (message: string) => fail(sender, new Error(message)),
+        } as unknown as LooperApi)['mode'],
+      );
     const items: Electron.MenuItemConstructorOptions[] = [
       ...(run
         ? [
             { label: 'Send Guidance…', enabled: engine.canGuideRun(s.taskId, s.id), click: () => host.openSendGuidance(s.taskId, s.id) },
-            { label: 'Stop', destructive: true as const, enabled: canStop(s), click: () => void engine.stopSession(id).catch((err) => fail(sender, err)) },
+            {
+              label: 'Open in Terminal',
+              enabled: engine.canOpenRunInTerminal(s.taskId, s.id),
+              click: () => void host.openRunInTerminal(s.taskId, s.id, sender).catch((err) => fail(sender, err)),
+            },
+            // Stop Run… asks first; the immediate Stop is the button beside the run's message box.
             { label: s.startedBy !== undefined ? 'Stop Agent…' : 'Stop Run…', destructive: true as const, click: () => void stopRun(id, sender).catch((err) => fail(sender, err)) },
             { type: 'separator' } as const,
           ]
@@ -696,18 +758,39 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
             },
             { type: 'separator' } as const,
           ]),
-      ...(card === true ? [{ label: big ? 'Normal Size' : 'Double Size', click: resize }, { type: 'separator' } as const] : []),
+      ...(card === true
+        ? [{ label: big ? 'Normal Size' : 'Double Size', click: resize }, { label: hidden ? 'Show on Dashboard' : 'Hide from Dashboard', click: hide }, { type: 'separator' } as const]
+        : []),
       ...(run
         ? []
         : [
             { label: 'Rename…', accelerator: 'F2', registerAccelerator: false, click: () => host.openRenameSession(id, sender) },
             ...(chat
-              ? [{ label: 'Continue When Limit Resets', type: 'checkbox' as const, checked: chat.autoContinue, click: (item: Electron.MenuItem) => engine.setChatAutoContinue(id, item.checked) }]
+              ? [
+                  { label: 'Continue When Limit Resets', type: 'checkbox' as const, checked: chat.autoContinue, click: (item: Electron.MenuItem) => engine.setChatAutoContinue(id, item.checked) },
+                  { label: chat.muted ? 'Unmute Notifications' : 'Mute Notifications', click: () => engine.setChatMuted(id, !chat.muted) },
+                ]
               : []),
             ...(watch ? [{ label: 'Watch Task Events', submenu: specTemplate(watch.items, watch.pick) }] : []),
+            ...(sessionType ? [{ label: 'Session Type', submenu: specTemplate(sessionType.items, sessionType.pick) }] : []),
+            { label: isUnread(s) ? 'Mark as Read' : 'Mark as Unread', enabled: canToggleUnread(s), click: () => (isUnread(s) ? engine.seenSession(id) : engine.markSessionUnread(id)) },
+            ...(chat
+              ? [
+                  {
+                    label: 'Open in Terminal',
+                    // A headless chat turns interactive, which waits for the end of its turn; a Codex chat goes on in a terminal session.
+                    enabled:
+                      chatInteractive(chat) ||
+                      (chat.harnessKind === 'claude-code' ? s.status !== 'ended' && s.status !== 'working' && s.waiting?.reason !== 'permission' : !!harnessSession),
+                    click: () => void host.openChatTerminal(id, sender).catch((err) => fail(sender, err)),
+                  },
+                  { label: 'Continue in Terminal', enabled: !!harnessSession, click: () => void host.continueChatInTerminal(id, sender).catch((err) => fail(sender, err)) },
+                ]
+              : []),
             { type: 'separator' } as const,
           ]),
       ...(s.kind === 'terminal' ? [] : [{ label: 'Open in New Window', platforms: NOT_MOBILE, click: () => host.openChatWindow(id) }]),
+      ...(s.projectId ? [{ label: 'Edit Project…', click: () => host.openProjectEditor(s.projectId!) }] : []),
       { label: 'Open Working Directory', click: () => void openTargetPath(s.taskId, engine.workFolder(s.taskId, s.id) ?? '').catch(() => undefined) },
       { label: 'Copy Session ID', enabled: !!harnessSession, click: () => harnessSession && writeClipboard(harnessSession) },
       ...(run ? [] : [{ type: 'separator' } as const, { label: 'Close Conversation', click: () => void host.closeSession(id, sender) }]),
@@ -718,7 +801,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.on('context-menu:session-group', async (e, group: string) => {
     const sender = windowOf(e);
     const key = String(group);
-    const listed = engine.sessionsState().sessions.filter((s) => s.kind !== 'run' && sessionGroupKey(s) === key);
+    const places = { projects: engine.listProjects(), folders: engine.listProjectFolders(), layout: {} };
+    const listed = engine.sessionsState().sessions.filter((s) => s.kind !== 'run' && inChatGroup(s, key, places));
     if (!sender) return;
     const items: Electron.MenuItemConstructorOptions[] = [];
     if (engine.getProject(key)) {
@@ -726,6 +810,8 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       items.push(
         { label: 'New &Chat', click: () => void projectChat(key, sender) },
         { label: 'Open &Recent Chat', enabled: recent.length > 0, submenu: recent },
+        { type: 'separator' },
+        { label: '&Edit Project…', click: () => host.openProjectEditor(key) },
       );
     }
     if (listed.length > 0) {
@@ -743,7 +829,61 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('sessions:fileThumbnail', async (_e, taskId: string, p: string) => {
     const file = String(p);
     if (!/\.(png|jpe?g|gif|webp)$/i.test(file)) return null;
-    return thumbnail(await targetToHost(String(taskId), file));
+    return thumbnail(await sentFileHostPath(String(taskId), file));
+  });
+  /** A file the agent sent opens in its default app (a remote device gets its file viewer). */
+  const openSentFile = async (taskId: string, file: string): Promise<void> => {
+    const err = await openPath(await sentFileHostPath(taskId, file));
+    if (err) throw new Error(err);
+  };
+  /**
+   * A file the agent sent, read or wrote (a path in the session's own form) opens in the Preview window when
+   * it's a kind the window shows and small enough to read whole; false when it isn't, or a remote device
+   * asked (its own viewer shows the file). `images`: the message's images, which the window steps through.
+   */
+  const previewFile = async (taskId: string, runId: string, file: string, images?: string[]): Promise<boolean> => {
+    if (caller()) return false;
+    const name = path.basename(file.replace(/\\/g, '/'));
+    const kind = viewerKind(name, (n) => languageOf(n) !== undefined);
+    if (!kind) return false;
+    const st = await fs.promises.stat(await sentFileHostPath(taskId, file)).catch(() => null);
+    if (!st?.isFile() || st.size > VIEWER_MAX_BYTES[kind]) return false;
+    const many = !!images && images.length > 1 && images.includes(file);
+    host.openMessageImage(taskId, runId, fileImageKey(file), undefined, name, many ? images.map(fileImageKey) : undefined);
+    return true;
+  };
+  /**
+   * Save As… on a file the agent sent: pick where (a remote device's dialog hands back a path to deliver the file
+   * from), then copy it there from where the agent runs, read the way Open File reaches it.
+   */
+  const saveSentFile = async (win: AppWindow | null, taskId: string, file: string): Promise<void> => {
+    const hostPath = await sentFileHostPath(taskId, file);
+    const st = await fs.promises.stat(hostPath).catch(() => null);
+    if (!st?.isFile()) throw new Error('The file can’t be found.');
+    const r = await showSaveDialog(win, { title: 'Save File As', defaultPath: path.basename(file.replace(/\\/g, '/')) });
+    if (r.canceled || !r.filePath) return;
+    await fs.promises.copyFile(hostPath, r.filePath);
+  };
+  ipc.handle('sessions:saveFile', (e, taskId: string, p: string) => saveSentFile(windowOf(e), String(taskId), String(p)));
+  ipc.handle('sessions:openFileDefault', (_e, taskId: string, p: string) => openSentFile(String(taskId), String(p)));
+  /**
+   * An HTML file for Preview's frame, served as a page of its own: looper-preview://<token>/ on the computer,
+   * /preview-frame/<token> on the device that asked. `load`: the Ask setting's Load was chosen for it.
+   */
+  ipc.handle('sessions:previewPage', (_e, html: string, load: boolean): { url: string; network: PreviewNetwork } => {
+    const network = engine.settings.previewNetwork;
+    const device = !!caller();
+    const token = addPreviewFrame(String(html ?? ''), network === 'ask' && load ? 'allow' : network, device);
+    return { url: device ? `/preview-frame/${token}` : `looper-preview://${token}/`, network };
+  });
+  /**
+   * Looper's preload in a frame of a window asks whether it's a previewed page or a frame inside one, and then sends
+   * the web and mail links the user clicks in it, which open in the browser. Only a frame of a window on the computer
+   * has a senderFrame; a remote device's call has none.
+   */
+  ipc.handle('preview:inPage', (e) => inPreviewPage(e.senderFrame));
+  ipc.on('preview:open', (e, url: unknown) => {
+    if (typeof url === 'string' && inPreviewPage(e.senderFrame)) void openExternal(url);
   });
   /** A file the agent sent (SendUserFile): its size, and a thumbnail when it's an image; null when it's gone. */
   ipc.handle('sessions:sentFile', async (_e, taskId: string, p: string): Promise<SentFileInfo | null> => {
@@ -760,13 +900,18 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const thumbnail = SENT_IMAGE_RE.test(file) ? await sentThumbnail(hostPath, size).catch(() => null) : null;
     return { size, ...(thumbnail ? { thumbnail } : {}) };
   });
-  /** A file the agent sent, whole, for Now to show it. */
-  ipc.handle('sessions:readSentFile', async (_e, taskId: string, p: string, maxBytes: number): Promise<{ data: string } | { error: string }> => {
+  /**
+   * A file the agent sent, whole, for Now and Preview to show it: its bytes to a window on the computer, and to a
+   * device a download it fetches, streamed by the server. Neither is encoded here: base64 and a phone's JSON of a
+   * 50 MB deck held this thread about 100 ms.
+   */
+  ipc.handle('sessions:readSentFile', async (_e, taskId: string, p: string, maxBytes: number): Promise<{ data: Uint8Array } | { url: string } | { error: string }> => {
     const hostPath = await sentFileHostPath(String(taskId), String(p));
     const st = await fs.promises.stat(hostPath).catch(() => null);
     if (!st?.isFile()) return { error: 'The file can’t be found.' };
     if (st.size > Number(maxBytes)) return { error: 'The file is too large to show here.' };
-    return { data: (await fs.promises.readFile(hostPath)).toString('base64') };
+    if (caller()) return { url: `/api/download/${encodeURIComponent(remoteAccess().offerDownload(hostPath, path.basename(hostPath)))}` };
+    return { data: await fs.promises.readFile(hostPath) };
   });
   /**
    * Click on a file the agent sent. `image`: an image shown inline opens in
@@ -777,21 +922,9 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
    */
   ipc.handle('sessions:openFile', async (_e, taskId: string, runId: string, p: string, image: boolean, images?: string[]) => {
     const file = String(p);
-    const hostPath = await sentFileHostPath(String(taskId), file);
-    // The image window reads the image whole: a bigger one opens in the default app.
-    const st = await fs.promises.stat(hostPath).catch(() => null);
     const siblings = Array.isArray(images) ? images.map(String).filter((f) => SENT_IMAGE_RE.test(f)) : [];
-    if (image && !caller() && SENT_IMAGE_RE.test(file) && st && st.size <= SENT_IMAGE_MAX) {
-      host.openMessageImage(
-        String(taskId),
-        String(runId),
-        fileImageKey(file),
-        undefined,
-        path.basename(file.replace(/\\/g, '/')),
-        siblings.length > 1 && siblings.includes(file) ? siblings.map(fileImageKey) : undefined,
-      );
-      return;
-    }
+    if (await previewFile(String(taskId), String(runId), file, image ? siblings : undefined)) return;
+    const hostPath = await sentFileHostPath(String(taskId), file);
     const many = image && siblings.length > 1 && siblings.includes(file);
     const err = await openPath(hostPath, many ? await Promise.all(siblings.map((f) => sentFileHostPath(String(taskId), f))) : undefined);
     if (err) throw new Error(err);
@@ -974,7 +1107,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     if (command === 'rename') host.openProjectFolderName({ folderId: id });
     else if (command === 'delete') void removeProjectFolder(id, sender);
   });
-  // A project folder's header: New Folder…, New Subfolder…, Rename Folder…, Delete Folder (what it holds moves up).
+  // A project folder's header: New Project…, New Subfolder…, Rename Folder…, Delete Folder (what it holds moves up).
   ipc.on('context-menu:project-folder', (e, folderId: unknown) => {
     const sender = windowOf(e);
     const folder = engine.listProjectFolders().find((f) => f.id === folderId);
@@ -982,7 +1115,6 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     popupMenu(
       Menu.buildFromTemplate([
         { label: 'New P&roject…', click: () => host.openProjectEditor() },
-        { label: 'New &Folder…', click: () => host.openProjectFolderName({ parentId: folder.parentId }) },
         { label: 'New &Subfolder…', click: () => host.openProjectFolderName({ parentId: folder.id }) },
         { type: 'separator' },
         { label: '&Rename Folder…', click: () => host.openProjectFolderName({ folderId: folder.id }) },
@@ -1111,6 +1243,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('remoteAccess:cancelPairing', () => remoteAccess().cancelPairing());
   ipc.handle('remoteAccess:removeDevice', (_e, id: string) => remoteAccess().removeDevice(String(id)));
   ipc.handle('remoteAccess:renameDevice', (_e, id: string, name: string) => remoteAccess().renameDevice(String(id), String(name)));
+  ipc.handle('remoteAccess:setDeviceNotifications', (_e, id: string, notify: unknown) => {
+    const n = parseDeviceNotifications(notify);
+    if (!n) throw new Error('Give every notification switch as true or false.');
+    remoteAccess().setDeviceNotifications(String(id), n);
+  });
   ipc.handle('remoteAccess:suggestPort', () => remoteAccess().suggestPort());
   ipc.handle('remoteAccess:beginSignIn', (_e, hostname: unknown) => {
     const name = TailnetHostnameSchema.safeParse(hostname);
@@ -1163,7 +1300,9 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     host.openNotification(taskId, typeof runId === 'string' && runId ? runId : undefined);
   });
   ipc.handle(REMOTE_CHANNELS.openSession, (_e, id: unknown) => {
-    if (typeof id === 'string' && id && engine.sessionKind(id)) host.openSessions(id);
+    // A notification about a chat that has compacted since opens the chat it went on in.
+    const live = typeof id === 'string' && id ? engine.liveSessionId(id) : '';
+    if (live && engine.sessionKind(live)) host.openSessions(live);
   });
   ipc.handle(REMOTE_CHANNELS.openOnHost, async (_e, p: string) => {
     const err = await openOnHost(String(p));
@@ -1178,7 +1317,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     ctx.client.send({ t: 'download', token: remoteAccess().offerDownload(file, name), name });
   });
   ipc.handle('remoteAccess:openPair', (e) => host.openRemoteAccessPair(windowOf(e)));
-  ipc.handle('remoteAccess:openRename', (e, id: string) => host.openRemoteAccessRename(String(id), windowOf(e)));
+  ipc.handle('remoteAccess:openDevice', (e, id: string) => host.openRemoteAccessDevice(String(id), windowOf(e)));
 
   ipc.on('context-menu:remote-conversation', (e, id: string) => {
     const sender = windowOf(e);
@@ -1483,7 +1622,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
 
   ipc.on(
     'context-menu:message',
-    (e, info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string; selectText?: string }) => {
+    (e, info: { taskId: string; runId: string; agentId?: string; file?: string; sent?: boolean; text?: string; label?: string; selectText?: string }) => {
       const sender = windowOf(e);
       if (!sender) return;
       const { runId, ...rest } = info;
@@ -1501,10 +1640,11 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     win?.close();
   });
 
-  ipc.on('context-menu:run', (e, info: { taskId: string; runId: string; details: string }) => {
+  ipc.on('context-menu:run', async (e, info: { taskId: string; runId: string; details: string }) => {
     const sender = windowOf(e);
     if (!sender) return;
-    const canContinue = engine.canContinueRun(info.taskId, info.runId);
+    const canContinue = await engine.canContinueRun(info.taskId, info.runId);
+    if (sender.isDestroyed()) return;
     const canGuide = engine.canGuideRun(info.taskId, info.runId);
     const showError = (err: unknown) =>
       void showMessageBox(sender, {
@@ -1525,9 +1665,14 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         click: () => host.openSendGuidance(info.taskId, info.runId),
       },
       {
-        label: 'Continue in Terminal',
-        enabled: canContinue.terminal,
-        click: () => void host.openTerminal(info.taskId, info.runId).catch(showError),
+        label: 'Continue Run',
+        enabled: canContinue.start,
+        click: () => void host.continueStoppedRun(info.taskId, info.runId).catch(showError),
+      },
+      {
+        label: 'Open in Terminal',
+        enabled: engine.canOpenRunInTerminal(info.taskId, info.runId),
+        click: () => void host.openRunInTerminal(info.taskId, info.runId, sender).catch(showError),
       },
       {
         label: 'Continue in Chat',
@@ -1572,7 +1717,7 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       for (const id of chatEncoders.keys()) if (!open.has(id)) chatEncoders.delete(id);
     }
     // Likewise a running "!" command's output: the windows showing its chat. A task run's box shows in its run window too.
-    if (event.type === 'chat:command') return sendTo(engine.getChat(event.chatId) ? host.sessionWindow(event.chatId) : allWindows(), event);
+    if (event.type === 'chat:command' || event.type === 'chat:command-prompt') return sendTo(engine.getChat(event.chatId) ? host.sessionWindow(event.chatId) : allWindows(), event);
     // Likewise a terminal session's output: only the windows showing it.
     if (event.type === 'terminal:data' || event.type === 'terminal:end') return sendTo(host.terminalWindow(event.id), event);
     // A task run's raw output is for `looper serve` to print: no window shows it.

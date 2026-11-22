@@ -28,8 +28,9 @@ export class ClaudeStreamAccumulator extends TranscriptAccumulator {
     const rec = parse(line);
     // A subagent's messages name the Agent call they belong to: they're its conversation, not this one.
     if (rec && typeof rec.parent_tool_use_id === 'string' && rec.parent_tool_use_id) return;
-    // A replayed message is one Looper sent: it shows as a prompt row of its own (addPrompt).
-    if (rec?.isReplay === true) return;
+    // A replayed message is one Looper sent, which shows as a prompt row of its own (addPrompt), unless it's synthetic:
+    // a delivery Claude Code queued itself, such as another session's message, which shows as the transcript's does.
+    if (rec?.isReplay === true && rec.isSynthetic !== true) return;
     const renameResult = rec !== null && rec.tool_use_result !== undefined && rec.toolUseResult === undefined;
     const meta = rec !== null && rec.type === 'user' && rec.isSynthetic === true && rec.isMeta === undefined;
     if (rec && (renameResult || meta)) {

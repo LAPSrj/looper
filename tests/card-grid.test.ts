@@ -11,7 +11,14 @@ import {
   rowHeights,
   sizeColumn,
   sizeRow,
+  DASHBOARD_LAYOUTS,
+  FOCUS_SIDE_MIN,
+  FOCUS_SIDE_WIDTH,
+  focusSideWidth,
+  layoutDashboard,
+  type LayoutInput,
 } from '../src/shared/card-grid';
+import { ViewSchema } from '../src/shared/types';
 
 describe('columnWidths', () => {
   it('fits as many automatic columns of at least the least width as there is room for, sharing the width', () => {
@@ -154,5 +161,59 @@ describe('sizing a track', () => {
     expect(resetSize([400, 500], 1)).toEqual([400]);
     expect(resetSize([400, 500], 0)).toEqual([0, 500]);
     expect(resetSize([0, 0, 260], 2)).toEqual([]);
+  });
+});
+
+describe('the dashboard layouts', () => {
+  const input = (n: number, over: Partial<LayoutInput> = {}): LayoutInput => ({
+    cards: Array.from({ length: n }, (_, i) => ({ id: `c${i}`, big: false })),
+    width: 1200,
+    height: 900,
+    columns: [],
+    rows: [],
+    side: 0,
+    ...over,
+  });
+
+  it("are View's layout values, Grid first (the default)", () => {
+    for (const l of DASHBOARD_LAYOUTS) expect(ViewSchema.parse({ sessions: { layout: l.id } }).sessions.layout).toBe(l.id);
+    expect(ViewSchema.safeParse({ sessions: { layout: 'nope' } }).success).toBe(false);
+    expect(ViewSchema.parse({}).sessions.layout).toBe(DASHBOARD_LAYOUTS[0].id);
+  });
+
+  it("lays Grid out as before: every card with its message box, in the columns that fit, the gaps' bars", () => {
+    const g = layoutDashboard('grid', input(4, { cards: [{ id: 'a', big: true }, { id: 'b', big: false }, { id: 'c', big: false }, { id: 'd', big: false }] }));
+    expect(g.widths).toEqual(columnWidths([], 1200));
+    expect(g.columns).toBe(columnTracks([], 1200));
+    expect(g.cards.map((c) => [c.id, c.box, c.place])).toEqual(placeCards([true, false, false, false], 3).map((p, i) => [['a', 'b', 'c', 'd'][i], true, p]));
+    expect(g.gap).toBe(12);
+    expect(g.bars.length).toBeGreaterThan(0);
+    // An unknown layout is Grid.
+    expect(layoutDashboard('nope', input(2))).toEqual(layoutDashboard('grid', input(2)));
+  });
+
+  it('lays Focus out as one large conversation with its message box, which stays in view, and the others in a column beside it', () => {
+    const f = layoutDashboard('focus', input(3, { focus: 'c1' }));
+    expect(f.gap).toBe(0);
+    expect(f.columns).toBe(`minmax(0, 1fr) ${FOCUS_SIDE_WIDTH}px`);
+    expect(f.rows).toBe('repeat(2, minmax(300px, 1fr))');
+    expect(f.cards).toEqual([
+      { id: 'c1', place: { row: 0, col: 0, rows: 2, cols: 1 }, box: true, stays: 900 },
+      { id: 'c0', place: { row: 0, col: 1, rows: 1, cols: 1 }, box: false },
+      { id: 'c2', place: { row: 1, col: 1, rows: 1, cols: 1 }, box: false },
+    ]);
+    expect(f.split).toEqual({ at: 1200 - FOCUS_SIDE_WIDTH, width: FOCUS_SIDE_WIDTH, min: FOCUS_SIDE_MIN, max: 1200 - 340 - 1 });
+    // A large conversation that closed: the first card.
+    expect(layoutDashboard('focus', input(2, { focus: 'gone' })).cards[0]).toMatchObject({ id: 'c0', box: true });
+    // One card fills the dashboard, with no side column.
+    expect(layoutDashboard('focus', input(1))).toMatchObject({ columns: 'minmax(0, 1fr)', cards: [{ id: 'c0', box: true }] });
+    expect(layoutDashboard('focus', input(1)).split).toBeUndefined();
+  });
+
+  it("keeps Focus's side column within what both columns keep", () => {
+    expect(focusSideWidth(0, 1200)).toBe(FOCUS_SIDE_WIDTH);
+    expect(focusSideWidth(100, 1200)).toBe(FOCUS_SIDE_MIN);
+    expect(focusSideWidth(5000, 1200)).toBe(1200 - 340 - 1);
+    expect(focusSideWidth(500, 400)).toBe(FOCUS_SIDE_MIN);
   });
 });

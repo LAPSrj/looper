@@ -118,7 +118,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       output: (id, runId, raw) => t.invoke('runs:output', id, runId, raw),
       openDir: (id, runId) => t.invoke('runs:openDir', id, runId),
       clear: (id) => t.invoke('runs:clear', id),
-      messages: (id, runId, agentId, raw) => t.invoke('runs:messages', id, runId, agentId, raw),
+      messages: (id, runId, agentId, raw, known) => t.invoke('runs:messages', id, runId, agentId, raw, known),
       messageImage: (id, runId, rowId, agentId) => t.invoke('runs:messageImage', id, runId, rowId, agentId),
       scriptCalls: (id, runId, toolUseId, before, count, agentId) => t.invoke('runs:scriptCalls', id, runId, toolUseId, before, count, agentId),
       pickFiles: (id) => t.invoke('runs:pickFiles', id).catch(plainError),
@@ -147,6 +147,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       confirmSend: (id) => t.invoke('chat:confirmSend', id),
       answer: (id, requestId, allow) => t.send('chat:answer', id, requestId, allow),
       setAutoContinue: (id, on) => t.send('chat:setAutoContinue', id, on),
+      setMuted: (id, on) => t.send('chat:setMuted', id, on),
       continueAnyway: (id) => t.send('chat:continueAnyway', id),
       setWatch: (id, taskId, eventId, on) => t.send('chat:setWatch', id, taskId, eventId, on),
       openWatch: (id, taskId) => t.send('chat:openWatch', id, taskId),
@@ -156,6 +157,8 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       commandScreen: (ownerId, commandId) => t.invoke('command:screen', ownerId, commandId),
       writeCommand: (ownerId, commandId, data) => t.send('command:write', ownerId, commandId, data),
       resizeCommand: (ownerId, commandId, cols, rows) => t.send('command:resize', ownerId, commandId, cols, rows),
+      commandPrompt: (ownerId, commandId) => t.invoke('command:prompt', ownerId, commandId),
+      answerCommand: (ownerId, commandId, promptId, answer) => t.send('command:answer', ownerId, commandId, promptId, answer),
       showCommandMenu: (hasSelection) => t.send('context-menu:commandTerminal', hasSelection),
       attachFiles: async (id, files) => t.invoke('chat:attach', id, await t.files(files)),
       showContextMenu: (info) => t.send('context-menu:chat', info),
@@ -177,6 +180,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       run: (id, command) => t.invoke('history:run', id, command).catch(plainError),
       showContextMenu: (id) => t.send('context-menu:history', id),
       open: () => t.send('history:open'),
+      openTasks: () => t.send('history:openTasks'),
     },
     git: {
       repos: () => t.invoke('git:repos'),
@@ -196,9 +200,12 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       show: (id) => t.send('sessions:show', id),
       showCards: (ids) => t.send('sessions:cards', ids),
       seen: (id) => t.send('sessions:seen', id),
+      markUnread: (id) => t.send('sessions:markUnread', id),
+      reorder: (ids) => t.send('sessions:reorder', ids),
       close: (id) => t.invoke('sessions:close', id),
       stop: (id) => t.invoke('sessions:stop', id),
       restart: (id) => t.invoke('sessions:restart', id),
+      continueInTerminal: (id) => t.invoke('sessions:continueInTerminal', id).catch(plainError),
       showContextMenu: (id, card) => t.send('context-menu:session', id, card),
       showGroupContextMenu: (group) => t.send('context-menu:session-group', group),
       openSend: () => t.send('sessions:openSend'),
@@ -208,11 +215,22 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       harnessSessionId: (id) => t.invoke('sessions:harnessSessionId', id),
       showHistoryMenu: (x, y) => t.send('context-menu:history-recent', x, y),
       send: (ids, text, attachments) => t.send('sessions:send', ids, text, attachments ?? []),
-      backgroundOutput: (id, taskId) => t.invoke('sessions:backgroundOutput', id, taskId),
+      backgroundOutput: (id, taskId, known) => t.invoke('sessions:backgroundOutput', id, taskId, known),
+      stopBackground: (id, taskId) => t.invoke('sessions:stopBackground', id, taskId).catch(plainError),
       fileThumbnail: (taskId, path) => t.invoke('sessions:fileThumbnail', taskId, path),
       sentFile: (taskId, path) => t.invoke('sessions:sentFile', taskId, path),
-      readSentFile: (taskId, path, maxBytes) => t.invoke('sessions:readSentFile', taskId, path, maxBytes),
+      // A device gets a download to fetch (streamed, nothing encoded on the computer); a window on it, the bytes.
+      readSentFile: async (taskId, path, maxBytes) => {
+        const r = (await t.invoke('sessions:readSentFile', taskId, path, maxBytes)) as { data: Uint8Array } | { url: string } | { error: string };
+        if (!('url' in r)) return r;
+        const res = await fetch(r.url);
+        if (!res.ok) return { error: 'The file can’t be read.' };
+        return { data: new Uint8Array(await res.arrayBuffer()) };
+      },
       openFile: (taskId, runId, path, image, images) => t.invoke('sessions:openFile', taskId, runId, path, image, images).catch(plainError),
+      saveFile: (taskId, path) => t.invoke('sessions:saveFile', taskId, path).catch(plainError),
+      openFileDefault: (taskId, path) => t.invoke('sessions:openFileDefault', taskId, path).catch(plainError),
+      previewPage: (html, load) => t.invoke('sessions:previewPage', html, load),
     },
     attachment: {
       open: (path) => t.invoke('attachment:open', path),
@@ -239,9 +257,10 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       cancelPairing: () => t.invoke('remoteAccess:cancelPairing').catch(plainError),
       removeDevice: (id) => t.invoke('remoteAccess:removeDevice', id).catch(plainError),
       renameDevice: (id, name) => t.invoke('remoteAccess:renameDevice', id, name).catch(plainError),
+      setDeviceNotifications: (id, notify) => t.invoke('remoteAccess:setDeviceNotifications', id, notify).catch(plainError),
       suggestPort: () => t.invoke('remoteAccess:suggestPort').catch(plainError),
       openPair: () => t.invoke('remoteAccess:openPair').catch(plainError),
-      openRename: (id) => t.invoke('remoteAccess:openRename', id).catch(plainError),
+      openDevice: (id) => t.invoke('remoteAccess:openDevice', id).catch(plainError),
       beginSignIn: (hostname) => t.invoke('remoteAccess:beginSignIn', hostname).catch(plainError),
       endSignIn: () => t.invoke('remoteAccess:endSignIn').catch(plainError),
       finishSetup: (choice, pair) => t.invoke('remoteAccess:finishSetup', choice, pair).catch(plainError),

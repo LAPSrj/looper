@@ -4,7 +4,8 @@ import { harnessKindLabel } from '@shared/environments';
 import type { MessageRow } from '@shared/messages';
 import type { RunAgent, SessionSummary, SlashCommand } from '@shared/sessions';
 import { AttachmentList } from './ChatRows';
-import { SETTINGS, SETTING_TITLES, settingDisabled, settingLabels, showSettingMenu, type SettingsView } from './chat-settings';
+import { CommandPromptView, useCommandPrompt } from './CommandPrompt';
+import { SETTING_TITLES, settingDisabled, settingLabels, showSettingMenu, shownSettings, type SettingsView } from './chat-settings';
 import { bashModeEntry, commandAttachment, type CommandOutput } from '@shared/bash-mode';
 import { MessageBox, type MessageBoxStop } from './MessageBox';
 import { commandAt, insertCommand, matchCommands, quoteText, sendsOnEnter } from './composer-text';
@@ -42,6 +43,7 @@ function CommandBar({
   onSkills: () => void;
 }) {
   const labels = settings ? settingLabels(settings) : null;
+  const shown = settings ? shownSettings(settings) : [];
   const open = (state: ChatState, which: ChatSettingMenu | 'all') => (e: React.MouseEvent<HTMLButtonElement>) =>
     showSettingMenu(state, which, e.currentTarget.getBoundingClientRect());
   return (
@@ -62,7 +64,7 @@ function CommandBar({
       {labels && menus && (
         <>
           <span className="commandbar-full">
-            {SETTINGS.map((which) => (
+            {shown.map((which) => (
               <button
                 key={which}
                 className="labeled commandbar-menu"
@@ -80,9 +82,9 @@ function CommandBar({
           <button
             className="labeled commandbar-menu commandbar-compact"
             title="Chat Settings"
-            aria-label={`Chat Settings: ${SETTINGS.map((w) => labels[w]).join(', ')}`}
+            aria-label={`Chat Settings: ${shown.map((w) => labels[w]).join(', ')}`}
             aria-haspopup="menu"
-            disabled={SETTINGS.every((w) => settingDisabled(menus, w))}
+            disabled={shown.every((w) => settingDisabled(menus, w))}
             onClick={open(menus, 'all')}
           >
             {labels.model}
@@ -93,13 +95,13 @@ function CommandBar({
       {labels && !menus && (
         <>
           <span className="commandbar-full">
-            {SETTINGS.map((which) => (
+            {shown.map((which) => (
               <span key={which} className="commandbar-value" title={SETTING_TITLES[which]} aria-label={`${SETTING_TITLES[which]}: ${labels[which]}`}>
                 {labels[which]}
               </span>
             ))}
           </span>
-          <span className="commandbar-value commandbar-compact" title={SETTINGS.map((w) => `${SETTING_TITLES[w]}: ${labels[w]}`).join('\n')}>
+          <span className="commandbar-value commandbar-compact" title={shown.map((w) => `${SETTING_TITLES[w]}: ${labels[w]}`).join('\n')}>
             {labels.model}
           </span>
         </>
@@ -583,6 +585,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (at === ta.value.length) ta.scrollTop = ta.scrollHeight;
   }, [text]);
 
+  // A draft comes back with the caret at its end, where typing goes on, and not at the start of a box a script filled.
+  useLayoutEffect(() => {
+    const ta = composerRef.current;
+    if (!ta) return;
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    ta.scrollTop = ta.scrollHeight;
+  }, [id]);
+
   // Quote: the selection goes after what the box holds, and the cursor after the quote.
   const quoteIntoBox = (selection: string) => {
     const quote = quoteText(selection);
@@ -720,8 +730,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
   };
 
-  const pendingList = pending.length > 0 && (
+  // A sudo in a command running from this box asks for its password here.
+  const asking = useCommandPrompt(
+    id,
+    pending.flatMap((a) => (a.command?.running ? [a.command.id] : [])),
+  );
+  const pendingList = (pending.length > 0 || asking) && (
     <div className="chat-pending">
+      {asking && <CommandPromptView ownerId={id} commandId={asking.commandId} prompt={asking.prompt} />}
       <AttachmentList
         items={pending}
         onRemove={(a) => setPending((p) => p.filter((x) => x !== a))}

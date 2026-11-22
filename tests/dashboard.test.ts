@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { attentionKey, attentionRows, noticeKey, runningRows } from '../src/shared/dashboard';
+import { attentionKey, attentionRows, noticeKey, runStepText, runningRows } from '../src/shared/dashboard';
+import { permissionText } from '../src/shared/sessions';
 import { migrateStateFile } from '../src/engine/store/state';
 import { EXAMPLE_TASK } from '../src/shared/example-task';
 import { TaskSchema, type ActiveRun, type TaskNotice, type RunResult, type TaskInput, type TaskRuntime } from '../src/shared/types';
@@ -155,5 +156,20 @@ describe('state.json version 1', () => {
     migrateStateFile(file, [], {}, 0);
     expect(fs.readFileSync(file, 'utf8')).toBe(text);
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('words a run in progress the way the Chats list does while it waits for the user', () => {
+    expect(runStepText(run('r1', 1))).toBe('Running agent');
+    expect(runStepText(run('r1', 1, { state: 'checking' }))).toBe('Checking');
+    expect(runStepText(run('r1', 1, { state: 'classifying' }))).toBe('Classifying');
+    expect(runStepText(run('r1', 1, { held: true }))).toBe('Waiting for you');
+    expect(runStepText(run('r1', 1, { question: 'Which one?' }))).toBe('Waiting for your answer');
+    expect(runStepText(run('r1', 1, { permission: { id: 'p1', tool: 'Bash', input: {} } }))).toBe('Wants to run a command');
+    expect(runStepText(run('r1', 1, { permission: { id: 'p1', tool: 'Edit', input: {} } }))).toBe('Wants to change a file');
+    expect(runStepText(run('r1', 1, { permission: { id: 'p1', tool: 'WebFetch', input: {} } }))).toBe('Wants to use WebFetch');
+    // The same words the Chats list shows for the run (SessionHub uses permissionText).
+    expect(runStepText(run('r1', 1, { permission: { id: 'p1', tool: 'PowerShell', input: {} } }))).toBe(permissionText('PowerShell'));
+    // A question or a hold comes before a permission request.
+    expect(runStepText(run('r1', 1, { question: 'Which one?', permission: { id: 'p1', tool: 'Bash', input: {} } }))).toBe('Waiting for your answer');
   });
 });

@@ -10,8 +10,8 @@ import type {
   RunPhase,
   TaskNotice,
   RunRecord,
+  RunOptions,
   RunResult,
-  RunSkips,
   Settings,
   Task,
   TaskRuntime,
@@ -27,7 +27,7 @@ import { errMsg, type Logger } from './log';
 import { readRunSessionId } from './messages';
 import { looksLikeEnvironmentError } from './network';
 import { createTarget } from './target';
-import { runCheck as defaultRunCheck } from './steps/check';
+import { parseCheckOutput, runCheck as defaultRunCheck } from './steps/check';
 import { classifyPrompt, runClassify as defaultRunClassify, type ClassifyResult } from './steps/classify';
 import {
   agentPrompt,
@@ -143,6 +143,21 @@ const RELATED_ID_FILE = 'related-id';
 /** In a run's folder: the session that writes its report after a chat it was opened in closes, kept apart from the run's own conversation. */
 const REPORT_DIR = 'report';
 
+/**
+ * A task as a run on another harness of its environment sees it (Run Options'
+ * Harness): the task's own command is its own harness's, and so are its model,
+ * effort and arguments when the other harness is of another kind.
+ */
+function onHarness(task: Task, harnessId: string, settings: Settings): Task {
+  const env = resolveEnvironment(task, settings);
+  const sameKind = env.harnesses.find((h) => h.id === harnessId)?.kind === resolveHarness(task, env).kind;
+  return {
+    ...task,
+    ...(sameKind ? {} : { projectArgs: [] }),
+    agent: { ...task.agent, harnessId, command: undefined, ...(sameKind ? {} : { model: undefined, effort: undefined, extraArgs: [] }) },
+  };
+}
+
 /** What the agent of a chat a run was opened in is told when the chat closes. */
 function reportPrompt(runId: string): string {
   return (
@@ -209,6 +224,8 @@ interface CycleEvents {
   checked?: boolean;
   /** A slot past the task's cap: it only runs the check, to see where its event goes. */
   overCap?: boolean;
+  /** Continue Run on a run stopped before its agent started: the steps that passed in it, which don't run again. */
+  resumed?: { fromRunId: string; check?: { summary?: string; context?: unknown; relatedId?: string }; classified: boolean };
 }
 
 /** A check's answer as a trigger event line. */
@@ -279,6 +296,8 @@ export class Scheduler extends EventEmitter {
    * and the next session takes them.
    */
   private readonly waitingRuns = new Set<string>();
+  /** Runs waiting before they complete (agent.waitAfterDoneMin): without sendRelatedEvents any event of the task goes to one. */
+  private readonly doneWaits = new Set<string>();
   /** Headless runs whose turn Stop in their message box ended: their session's end isn't the run's. */
   private readonly turnStops = new Set<string>();
   /** Tasks owed a fresh run: a system sleep cut their run short, so the slot's work never happened. */
@@ -467,8 +486,8 @@ export class Scheduler extends EventEmitter {
 
   // ---------- commands ----------
 
-  runNow(taskId: string, skips?: RunSkips): boolean {
-    return this.startManual(taskId, skips);
+  runNow(taskId: string, opts?: RunOptions): boolean {
+    return this.startManual(taskId, opts);
   }
 
   /**
@@ -492,6 +511,51 @@ export class Scheduler extends EventEmitter {
     const sessionId = readRunSessionId(this.d.runs.runDir(taskId, fromRunId), kind);
     if (!sessionId) throw new Error('No conversation was recorded for this run.');
     return this.startManual(taskId, undefined, { fromRunId, sessionId, prompt: guidance, relatedId });
+  }
+
+  /**
+   * Continue Run on a run that was stopped before its agent started: a new
+   * manual run on its trigger events, on its harness, that goes on to the
+   * agent. A step that passed in it doesn't run again (the check's answer is
+   * read back from its output, as a retry keeps it); the step it was stopped
+   * in runs again. False when the task's caps keep it from starting.
+   */
+  async continueStopped(taskId: string, fromRunId: string): Promise<boolean> {
+    const task = this.d.tasks.get(taskId);
+    const rt = this.runtimes.get(taskId);
+    if (!task || !rt) throw new Error(`unknown task ${taskId}`);
+    if (rt.runs.some((r) => r.runId === fromRunId) || rt.children.some((r) => r.runId === fromRunId)) throw new Error('This run is still active.');
+    const runDir = this.d.runs.runDir(taskId, fromRunId);
+    const summary = this.d.runs.summaries(taskId).find((s) => s.runId === fromRunId);
+    const prompted = await fs.promises.access(path.join(runDir, 'prompt.txt')).then(() => true, () => false);
+    if (!summary || summary.parentRunId || summary.result !== 'stopped' || prompted) {
+      throw new Error('Only a run that was stopped before its agent started is continued this way.');
+    }
+    const records = (await this.d.runs.listTail(taskId, 2000)).filter((r) => r.runId === fromRunId);
+    const passed = (phase: RunPhase) => records.some((r) => r.phase === phase && r.result === 'act');
+    let events: string[] = [];
+    try {
+      events = (await fs.promises.readFile(path.join(runDir, 'events.jsonl'), 'utf8')).split('\n').filter(Boolean);
+    } catch {
+      /* a run no event started */
+    }
+    let check: NonNullable<CycleEvents['resumed']>['check'];
+    if (passed('check')) {
+      try {
+        const parsed = parseCheckOutput(await fs.promises.readFile(path.join(runDir, 'check.out.txt'), 'utf8'));
+        if (parsed.ok && parsed.value.act) check = { summary: parsed.value.summary, context: parsed.value.context, relatedId: parsed.value.relatedId };
+      } catch {
+        /* the check runs again */
+      }
+    }
+    // Events a check produced went to the stopped run without a check of their own: the new run takes them the same way.
+    const checked = !records.some((r) => r.phase === 'check') && events.length > 0 && Object.values(checkOutputOf(events)).some((v) => v !== undefined);
+    const relatedId = task.trigger.sendRelatedEvents ? (check?.relatedId ?? (events[0] !== undefined ? relatedIdOfLine(events[0]) : undefined)) : undefined;
+    const harnessId = this.d.runs.readRunHarness(taskId, fromRunId) ?? undefined;
+    return this.startManual(taskId, harnessId ? { harnessId } : undefined, undefined, {
+      events,
+      related: { relatedId, checked, resumed: { fromRunId, check, classified: passed('classify') } },
+    });
   }
 
   /**
@@ -582,6 +646,13 @@ export class Scheduler extends EventEmitter {
     }
     this.turnStops.add(runId);
     await handle.stop('stopped', 'the user stopped the turn');
+  }
+
+  /** Stop one of a running run's background tasks (SessionHandle.stopBackground); throws with the reason it can't. */
+  stopBackground(runId: string, taskId: string): void {
+    const handle = this.agents.get(runId);
+    if (!handle) throw new Error('The run’s agent isn’t running.');
+    handle.stopBackground(taskId);
   }
 
   /** Take back the guidance still waiting for the run's agent (Edit, Cancel); null when the agent has it already. */
@@ -755,6 +826,22 @@ export class Scheduler extends EventEmitter {
   }
 
   /**
+   * The chat a run is open in compacted by itself into `toChatId`: the run
+   * goes on there, with the related events, the idle limit and the report
+   * (which the new chat's conversation writes when it closes).
+   */
+  moveChat(taskId: string, fromChatId: string, toChatId: string, link: ChatLink): void {
+    const rt = this.runtimes.get(taskId);
+    const run = rt?.runs.find((r) => r.chat === fromChatId);
+    if (!rt || !run || run.report === 'writing') return;
+    run.chat = toChatId;
+    this.chatLinks.set(run.runId, { link, heldAt: this.now() });
+    this.d.log.info(`[${taskId}] run ${run.runId} goes on in chat ${toChatId}, which chat ${fromChatId} compacted into`);
+    this.emitRuntime(rt);
+    this.persist();
+  }
+
+  /**
    * A message reached the agent of the chat a run is open in: the chat's end
    * writes the run's report. After Stop, it takes the run up again.
    */
@@ -887,9 +974,12 @@ export class Scheduler extends EventEmitter {
       fs.rmSync(runDir, { recursive: true, force: true });
       fs.mkdirSync(path.join(runDir, 'bin'), { recursive: true });
       // In the background, and only the report: no terminal to hold for a human, no agents of its own, no context restart.
+      // A run Run Options put on another harness goes on there, as its chat did.
+      const ranOn = this.d.runs.readRunHarness(task.id, runId);
+      const base = ranOn ? onHarness(task, ranOn, this.d.settings) : task;
       const reportTask: Task = {
-        ...task,
-        agent: { ...task.agent, mode: 'headless', contextLimitK: undefined, delegate: { ...task.agent.delegate, allowed: false } },
+        ...base,
+        agent: { ...base.agent, mode: 'headless', contextLimitK: undefined, delegate: { ...base.agent.delegate, allowed: false } },
       };
       const ctx: RunContext = {
         task: reportTask,
@@ -1416,12 +1506,15 @@ export class Scheduler extends EventEmitter {
   /** The shared manual start: lift a pause, honor the caps, run the cycle. */
   private startManual(
     taskId: string,
-    skips?: RunSkips,
+    skips?: RunOptions,
     continuation?: { fromRunId: string; sessionId: string; prompt: string; relatedId?: string },
+    /** The trigger events the run starts on, and how they relate (Continue Run). */
+    from?: { events: string[]; related: CycleEvents },
   ): boolean {
     const task = this.d.tasks.get(taskId);
     const rt = this.runtimes.get(taskId);
     if (!task || !rt) throw new Error(`unknown task ${taskId}`);
+    const harnessId = this.harnessOverride(task, skips?.harnessId);
     this.liftPause(task, rt);
     if (rt.runs.length >= task.maxConcurrentRuns) {
       this.record(taskId, rt.currentRunId ?? '-', 'skip', 'skipped', {
@@ -1429,14 +1522,14 @@ export class Scheduler extends EventEmitter {
       });
       return false;
     }
-    const block = this.concurrencyBlock(task);
+    const block = this.concurrencyBlock(task, undefined, harnessId);
     if (block) {
       this.record(taskId, rt.currentRunId ?? '-', 'skip', 'skipped', {
         summary: `manual run ignored: ${block}`,
       });
       return false;
     }
-    void this.runCycle(task, 'manual', undefined, undefined, skips, continuation);
+    void this.runCycle(task, 'manual', from?.events.length ? from.events : undefined, undefined, skips, continuation, from?.related);
     return true;
   }
 
@@ -2048,11 +2141,12 @@ export class Scheduler extends EventEmitter {
    * delegated agent counts once it has started, except that a run's first
    * one on the run's own environment and harness takes the run's slot: the
    * run waits on it. `candidate`: the delegated agent that wants to start.
+   * `harnessOverride`: the harness Run Options picked for the run that wants to start.
    */
-  private concurrencyBlock(task: Task, candidate?: Child): string | null {
+  private concurrencyBlock(task: Task, candidate?: Child, harnessOverride?: string): string | null {
     const env = this.d.settings.environments.find((e) => e.id === task.environmentId);
     if (!env) return null;
-    const harnessId = task.agent.harnessId ?? env.harnesses[0]?.id;
+    const harnessId = harnessOverride ?? task.agent.harnessId ?? env.harnesses[0]?.id;
     const harness = env.harnesses.find((h) => h.id === harnessId);
     const envLimit = env.maxConcurrentTasks;
     const harnessLimit = harness?.maxConcurrentTasks;
@@ -2070,18 +2164,19 @@ export class Scheduler extends EventEmitter {
     if (candidate && !slotTaken.has(candidate.parentRunId) && sameSlot(candidate)) return null;
     let envActive = 0;
     let harnessActive = 0;
-    const count = (t: Task, active: number) => {
-      if (t.environmentId !== env.id || !active) return;
-      envActive += active;
-      if (harnessOf(t) === harnessId) harnessActive += active;
+    // A run counts against the harness it runs on: Run Options' pick, else its task's.
+    const count = (t: Task, runs: { harnessId?: string }[]) => {
+      if (t.environmentId !== env.id || !runs.length) return;
+      envActive += runs.length;
+      for (const r of runs) if ((r.harnessId ?? harnessOf(t)) === harnessId) harnessActive++;
     };
-    for (const t of this.d.tasks.list()) count(t, this.runtimes.get(t.id)?.runs.length ?? 0);
+    for (const t of this.d.tasks.list()) count(t, this.runtimes.get(t.id)?.runs ?? []);
     // A delegated agent counts where it runs, once it has started, unless it took its parent's slot.
     const freeRide = new Set<string>();
     for (const c of this.children.values()) {
       if (!c.started) continue;
       if (slotTaken.has(c.parentRunId) && !freeRide.has(c.parentRunId) && sameSlot(c)) freeRide.add(c.parentRunId);
-      else count(c.task, 1);
+      else count(c.task, [{}]);
     }
     if (envLimit !== undefined && envActive >= envLimit) {
       return `environment "${env.name}" is at its limit of ${envLimit} concurrent task${envLimit === 1 ? '' : 's'}`;
@@ -2161,7 +2256,13 @@ export class Scheduler extends EventEmitter {
     const placed = (group: PendingEvents) => pending.splice(pending.indexOf(group), 1);
     for (const group of [...pending]) {
       const relatedId = task.trigger.sendRelatedEvents ? group.relatedId : undefined;
-      const owner = relatedId !== undefined ? rt.runs.find((r) => r.relatedId === relatedId) : undefined;
+      // A run waiting before it completes takes them too: its related ones, or without sendRelatedEvents any.
+      const owner =
+        relatedId !== undefined
+          ? rt.runs.find((r) => r.relatedId === relatedId)
+          : !task.trigger.sendRelatedEvents
+            ? rt.runs.find((r) => this.doneWaits.has(r.runId))
+            : undefined;
       if (owner) {
         if (this.sendEvents(task, owner, group.lines)) placed(group);
         continue;
@@ -2235,8 +2336,8 @@ export class Scheduler extends EventEmitter {
     events?: string[],
     /** Event-less watcher run (runOnStart): recorded so the log says why it fired. */
     catchUpNote?: string,
-    /** Steps the Run Options window switched off; manual runs only. */
-    skips?: RunSkips,
+    /** Steps the Run Options window switched off, and the harness it picked; manual runs only. */
+    skips?: RunOptions,
     /** Continuation of a finished run: resume its conversation with this prompt; check/classifier never run. */
     continuation?: { fromRunId: string; sessionId: string; prompt: string; relatedId?: string },
     related: CycleEvents = {},
@@ -2264,7 +2365,19 @@ export class Scheduler extends EventEmitter {
     // The task as it stood when the cycle started; what completes during it is the news.
     const wasCompleted = !!task.completedAt;
     const relatedId = related.relatedId ?? continuation?.relatedId ?? retry?.check?.relatedId;
-    rt.runs.push({ runId, state: 'checking', held: false, question: null, startedAt: this.now(), trigger, relatedId });
+    // Run Options' Harness: this run's agent runs on another harness of the task's environment, and its folder says
+    // which, so going on with its conversation later uses that harness too (readRunHarness).
+    const harnessId = this.harnessOverride(task, skips?.harnessId);
+    if (harnessId) {
+      task = onHarness(task, harnessId, this.d.settings);
+      try {
+        this.d.runs.writeRunHarness(task.id, runId, harnessId);
+      } catch (e) {
+        this.d.log.error(`[${task.id}] cannot write the run's harness: ${errMsg(e)}`);
+      }
+      this.d.log.info(`[${task.id}] run ${runId} runs on harness ${harnessId} (run options)`);
+    }
+    rt.runs.push({ runId, state: 'checking', held: false, question: null, startedAt: this.now(), trigger, relatedId, ...(harnessId ? { harnessId } : {}) });
     rt.lastRunAt = this.now();
     // Advanced once, here: finishCycle only recomputes it when the task goes idle.
     rt.nextRunAt = task.enabled ? this.computeNext(task, this.now()) : null;
@@ -2302,11 +2415,18 @@ export class Scheduler extends EventEmitter {
     // its gates already passed when the run it continues started. A retry
     // skips the steps that passed in the run it retries.
     const checkedEvents = related.checked && events ? checkOutputOf(events) : undefined;
-    const willCheck = !continuation && !!task.check?.enabled && !skips?.check && !retry?.check && !checkedEvents;
-    const willClassify = !continuation && !!task.classifier?.enabled && !skips?.classifier && !retry?.classified;
+    const resumed = related.resumed;
+    const willCheck = !continuation && !!task.check?.enabled && !skips?.check && !retry?.check && !resumed?.check && !checkedEvents;
+    const willClassify = !continuation && !!task.classifier?.enabled && !skips?.classifier && !retry?.classified && !resumed?.classified;
     /** The steps that passed, kept for a retry should the machine fail this run. */
-    let passedCheck = retry?.check ?? (checkedEvents && { ...checkedEvents, relatedId });
-    let passedClassify = !!retry?.classified;
+    let passedCheck = retry?.check ?? resumed?.check ?? (checkedEvents && { ...checkedEvents, relatedId });
+    let passedClassify = !!retry?.classified || !!resumed?.classified;
+    if (resumed) {
+      const reused = [resumed.check && 'check', resumed.classified && 'classifier'].filter(Boolean);
+      this.record(task.id, runId, 'system', 'started', {
+        summary: `continues run ${resumed.fromRunId}, stopped before its agent started${reused.length ? `; ${reused.join(' and ')} already passed, not run again` : ''}`,
+      });
+    }
     // Only steps the task actually has are worth naming; the rest of the run
     // log would otherwise report a skip of something that never ran anyway.
     const skipped: string[] = [];
@@ -2444,7 +2564,9 @@ export class Scheduler extends EventEmitter {
               this.record(task.id, runId, 'system', 'act', {
                 summary: `the check listed ${check.more.length} more item(s), each in a run of its own`,
               });
-              this.flushEvents(task);
+              // They're new runs: the task as it is now, not this run's copy from its start (and not Run Options' harness).
+              const now = this.d.tasks.get(task.id);
+              if (now) this.flushEvents(now);
             }
           }
         }
@@ -2509,7 +2631,8 @@ export class Scheduler extends EventEmitter {
             `[${task.id}] agent resumes conversation ${continuation.sessionId}, continuing run ${continuation.fromRunId}`,
           );
         } else {
-          ctx.agentSession = this.rollingSession(task, rt);
+          // A run on another harness than the task's starts a conversation of its own: the task's rolling one is its harness's.
+          ctx.agentSession = harnessId ? undefined : this.rollingSession(task, rt);
           if (ctx.agentSession) {
             this.d.log.info(
               `[${task.id}] agent ${
@@ -2564,7 +2687,7 @@ export class Scheduler extends EventEmitter {
         // reported. Only a rolling-conversation task books at all — a
         // continuation on a 'fresh' task is one-off and leaves no session.
         const booked =
-          task.agent.session === 'continue'
+          task.agent.session === 'continue' && !harnessId
             ? (ctx.agentSession ?? (end.sessionId ? { id: end.sessionId, resume: false } : undefined))
             : undefined;
         if (booked) this.rollSession(task, rt, booked, end);
@@ -2640,6 +2763,18 @@ export class Scheduler extends EventEmitter {
       return;
     }
     this.completeTask(task.id, reason, { runId });
+  }
+
+  /**
+   * Run Options' Harness: the harness a manual run goes on when it's another
+   * one of the task's environment than the task's own, else undefined. Throws
+   * when the environment no longer has it.
+   */
+  private harnessOverride(task: Task, harnessId: string | undefined): string | undefined {
+    if (!harnessId) return undefined;
+    const env = resolveEnvironment(task, this.d.settings);
+    if (!env.harnesses.some((h) => h.id === harnessId)) throw new Error(`The environment "${env.name}" no longer has this harness.`);
+    return harnessId === resolveHarness(task, env).id ? undefined : harnessId;
   }
 
   /**
@@ -3081,6 +3216,18 @@ export class Scheduler extends EventEmitter {
           });
         }
       }
+      // Wait before completing: what comes for the run goes to the same agent as a new turn.
+      if (end.reason === 'done' && end.doneStatus !== undefined && end.doneStatus !== RESTART_STATUS && !ctx.delegatedBy) {
+        const next = await this.waitAfterDone(task, rt, ctx, end, elapsedMs);
+        elapsedMs = next.elapsedMs;
+        if (next.prompt !== null) {
+          // This turn's report stays in the run log; the last turn's is the run's result.
+          if (end.headline || end.body) this.record(task.id, ctx.runId, 'result', end.doneStatus, { summary: end.headline, body: end.body });
+          ctx.agentSession = { id: next.sessionId, resume: true };
+          ctx.resume = { prompt: next.prompt, usedMs: elapsedMs };
+          continue;
+        }
+      }
       const whole = { durationMs: elapsedMs, wasHeld };
       const status = end.doneStatus;
       if (status !== RESTART_STATUS) return { ...end, ...whole, doneStatus: status };
@@ -3104,6 +3251,49 @@ export class Scheduler extends EventEmitter {
       ctx.agentSession = task.agent.session === 'continue' ? this.newConversation(task) : undefined;
       this.d.log.info(`[${task.id}] agent restarts at its context limit (restart ${count} of ${task.agent.maxRestarts})`);
     }
+  }
+
+  /**
+   * agent.waitAfterDoneMin: after looper-done the run stays open that long, as
+   * a run waiting for its next message does (`waitingRuns`), and what comes
+   * for it resumes the conversation: the user's guidance, and the task's
+   * events (`flushEvents`; with sendRelatedEvents only the run's related
+   * ones, so a run that handles no related id has nothing to wait for). The
+   * prompt is null when nothing came, or the run can't wait.
+   */
+  private async waitAfterDone(
+    task: Task,
+    rt: TaskRuntime,
+    ctx: RunContext,
+    end: AgentEnd,
+    elapsedMs: number,
+  ): Promise<{ elapsedMs: number; prompt: string | null; sessionId: string }> {
+    const none = { elapsedMs, prompt: null, sessionId: '' };
+    const waitMs = Math.min(task.agent.waitAfterDoneMin * 60_000, task.agent.maxRuntimeMin * 60_000 - elapsedMs);
+    if (waitMs <= 0 || ctx.signal?.aborted || this.stopping || !this.takesGuidance(task)) return none;
+    const run = rt.runs.find((r) => r.runId === ctx.runId);
+    if (!run || (task.trigger.sendRelatedEvents && run.relatedId === undefined)) return none;
+    const sessionId = end.sessionId ?? readRunSessionId(ctx.runDir, resolveHarness(task, resolveEnvironment(task, this.d.settings)).kind);
+    if (!sessionId) return none;
+    this.record(task.id, ctx.runId, 'agent', 'sent', {
+      summary: `the agent is done; the run waits ${Number(task.agent.waitAfterDoneMin.toFixed(2))} min before it completes`,
+    });
+    const waitStart = Date.now();
+    this.agents.delete(ctx.runId);
+    this.waitingRuns.add(ctx.runId);
+    this.doneWaits.add(ctx.runId);
+    let came = false;
+    try {
+      // Events that were waiting for a run go to this one now (the task as it is now: `task` may be this run's copy).
+      this.flushEvents(this.d.tasks.get(task.id) ?? task);
+      came = await this.waitForMessage(ctx.runDir, waitMs, ctx.signal);
+    } finally {
+      this.doneWaits.delete(ctx.runId);
+      this.waitingRuns.delete(ctx.runId);
+    }
+    const waited = elapsedMs + (Date.now() - waitStart);
+    if (!came || ctx.signal?.aborted || this.stopping) return { ...none, elapsedMs: waited };
+    return { elapsedMs: waited, prompt: this.takeWaiting(ctx.runDir), sessionId };
   }
 
   /** A new rolling conversation for a claude agent; codex picks its own id (undefined). */

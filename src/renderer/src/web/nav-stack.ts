@@ -64,6 +64,28 @@ export function presentation(os: PhoneOs, win: Pick<RemoteWindowSpec, 'modal' | 
 /** Whether the presentation covers the whole screen, so what's under it needn't be drawn. */
 export const coversScreen = (p: Presentation): boolean => p === 'root' || p === 'push' || p === 'full-dialog';
 
+/**
+ * Which screens of a stack (bottom first) are drawn: from the top down to the first one that covers everything.
+ * When the top covers everything, what it would uncover (down to the next screen that covers everything) is
+ * `covered`: drawn only while a back swipe uncovers it, or while the top is still `arriving` (sliding in), when
+ * it's drawn too.
+ */
+export function drawnScreens(stack: readonly Presentation[], arriving: boolean): { visible: boolean[]; covered: boolean[] } {
+  const visible = stack.map(() => false);
+  const covered = stack.map(() => false);
+  const top = stack.length - 1;
+  for (let i = top; i >= 0; i--) {
+    visible[i] = true;
+    if (!coversScreen(stack[i])) continue;
+    for (let j = i - 1; j >= 0 && i === top; j--) {
+      (arriving ? visible : covered)[j] = true;
+      if (coversScreen(stack[j])) break;
+    }
+    break;
+  }
+  return { visible, covered };
+}
+
 // ---------- back: the browser's history in step with what can be closed ----------
 
 export interface HistoryLike {

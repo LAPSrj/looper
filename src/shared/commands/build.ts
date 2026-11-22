@@ -174,6 +174,17 @@ export function contextMenu(view: CommandView, c: CommandContext): MenuItemSpec[
   );
 }
 
+/**
+ * A list's own View options, as a right-click on its empty space shows them: the view's View-menu commands in these
+ * groups (the ones the list's header or the View menu has), a separator wherever the group changes.
+ */
+export function viewOptions(view: CommandView, groups: readonly string[], c: CommandContext): MenuItemSpec[] {
+  return grouped(
+    commandsOf(c).filter((cmd) => cmd.in[view]?.menu === 'view' && groups.includes(cmd.group) && shows(cmd, view, c, 'menu')),
+    c,
+  );
+}
+
 /** The commands no phone screen shows: the menu items the More view lists, after the addons' rows. */
 export function moreViewCommands(c: CommandContext): Command[] {
   return commandsOf(c).filter((cmd) => {

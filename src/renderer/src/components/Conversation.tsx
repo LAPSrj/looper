@@ -1,6 +1,7 @@
 import { Fragment, memo, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref, type RefObject } from 'react';
 import type { ChatState } from '@shared/chat';
 import { harnessKindLabel } from '@shared/environments';
+import type { MessageRow } from '@shared/messages';
 import { Measured } from '../perf';
 import { ChatRow, ToolGroup, type RowCtx } from './ChatRows';
 import type { ChatItem } from './chat-groups';
@@ -104,6 +105,8 @@ export function Conversation({
   useStayAtEnd(scrollRef, atBottom, endKey);
 
   const total = parts.reduce((n, p) => n + p.items.length, 0);
+  // A chat's history comes ahead of its own rows, read in after it opened: what's drawn stays the newest items.
+  const lead = total - (parts.at(-1)?.items.length ?? 0);
   const { hidden, newer, onScroll: showMore, toEnd } = useNewestFirst(
     scrollRef,
     id,
@@ -111,6 +114,7 @@ export function Conversation({
     drawAll,
     card ? CARD_ITEMS : FIRST_ITEMS,
     place && !place.atEnd ? place.item : undefined,
+    lead,
   );
   const end = total - newer;
   const savePlace = useKeepPlace(
@@ -188,11 +192,25 @@ export function Conversation({
   );
 }
 
+/** The description of the tool call still running (its `description` input), looking at the newest rows. */
+function runningDescription(rows: readonly MessageRow[]): string | undefined {
+  for (let i = rows.length - 1; i >= 0 && i >= rows.length - 20; i--) {
+    const r = rows[i];
+    if (r.kind !== 'tool' || r.result !== undefined) continue;
+    const d = (r.input as { description?: unknown } | undefined)?.description;
+    if (typeof d === 'string' && d.trim()) return d.trim();
+  }
+  return undefined;
+}
+
 /** The conversation's last line: what the agent is doing, or why the conversation ended. */
-export function ChatStatus({ state }: { state: Pick<ChatState, 'harnessKind' | 'status' | 'error'> & { permissions?: readonly unknown[] } }) {
+export function ChatStatus({ state }: { state: Pick<ChatState, 'harnessKind' | 'status' | 'error'> & { permissions?: readonly unknown[]; harnessName?: string; rows?: readonly MessageRow[] } }) {
   const harness = harnessKindLabel(state.harnessKind);
   if (state.permissions?.length) return <div className="chat-status chat-working muted">{harness} is waiting for your answer.</div>;
-  if (state.status === 'working') return <div className="chat-status chat-working muted">{harness} is working…</div>;
+  if (state.status === 'working') {
+    const doing = state.rows ? runningDescription(state.rows) : undefined;
+    return <div className="chat-status chat-working muted">{doing ? `${state.harnessName ?? harness}: ${doing}` : `${harness} is working…`}</div>;
+  }
   if (state.status === 'starting') return <div className="chat-status chat-working muted">Starting {harness}…</div>;
   if (state.status === 'ended') return <div className="chat-status chat-working error-text">{state.error ?? 'The session ended.'}</div>;
   return null;

@@ -80,16 +80,19 @@ export function SplitView({
   lead,
   detail,
   inspector,
+  stacked = false,
 }: {
   split: SplitLayout | null;
   shows: 'lead' | 'detail';
+  /** The detail under the list on one screen, whatever the width: nothing is pushed or hidden. */
+  stacked?: boolean;
   lead: ReactNode;
   detail: ReactNode;
   inspector?: ReactNode;
 }) {
-  const hidden = (column: 'lead' | 'detail') => (!split && shows !== column ? { display: 'none' } : undefined);
+  const hidden = (column: 'lead' | 'detail') => (!split && !stacked && shows !== column ? { display: 'none' } : undefined);
   return (
-    <div className={`pg-split${split ? '' : ' one-column'}`} style={split ? ({ '--split-lead': `${split.lead}px`, '--split-inspector': `${split.inspector}px` } as React.CSSProperties) : undefined}>
+    <div className={`pg-split${stacked ? ' stacked' : split ? '' : ' one-column'}`} style={split ? ({ '--split-lead': `${split.lead}px`, '--split-inspector': `${split.inspector}px` } as React.CSSProperties) : undefined}>
       <div className="pg-split-lead" style={hidden('lead')}>
         {lead}
       </div>

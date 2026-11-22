@@ -3,6 +3,9 @@
  * step through the browser's zoom levels, Ctrl+0 goes back to 100%, and Ctrl+wheel
  * zooms too. Replacing Electron's default menu removed its zoom roles, and the
  * child windows have no menu, so the keys are handled on every window's page.
+ *
+ * Each window keeps its own zoom: in Chromium's default zoom mode a zoom belongs to the page's origin, and every
+ * Looper window has the same one, so a window opening at its own zoom (Settings at 100%) set the main window's too.
  */
 import { BrowserWindow } from 'electron';
 import { zoomKey, zoomStep, type ZoomDirection } from './zoom-steps';
@@ -14,6 +17,7 @@ import { zoomKey, zoomStep, type ZoomDirection } from './zoom-steps';
 export function attachZoom(w: BrowserWindow, initial: number | undefined, onChange: (factor: number) => void): void {
   let factor = initial ?? 1;
   const contents = w.webContents;
+  contents.setZoomMode('isolated');
   const apply = (): void => {
     if (!contents.isDestroyed() && contents.getZoomFactor() !== factor) contents.setZoomFactor(factor);
   };

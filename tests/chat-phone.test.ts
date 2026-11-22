@@ -59,7 +59,7 @@ describe('limitFacts', () => {
 describe('sessionLimits', () => {
   it("takes the limits of the session's own harness, and none without a session or a report", () => {
     const work = { sevenDay: { used: 0.4, resetsAt: 1 } };
-    const state = { sessions: [], limits: { 'local/work': work, 'local/home': { sevenDay: { used: 0.9, resetsAt: 1 } } } };
+    const state = { sessions: [], limits: { 'local/work': work, 'local/home': { sevenDay: { used: 0.9, resetsAt: 1 } } }, order: [] };
     const session = (limitsKey?: string) => ({ limitsKey }) as SessionSummary;
     expect(sessionLimits(state, session('local/work'))).toBe(work);
     expect(sessionLimits(state, session('windows/work'))).toEqual({});

@@ -40,20 +40,52 @@ little memory as Electron allows. Every rule below comes from a measured cost.
 
 - **`npm run perf` passes before a change is done.** Run it in the Windows
   copy after `npm run build` (`scripts/perf/check.mjs`). It opens every
-  window route, main-window tab, task tab and phone screen (iOS in WebKit,
-  Android in Edge) on demo data with 20 tasks and 20 chats, runs a day's use
+  window route, main-window tab, task tab and phone screen on demo data with
+  20 tasks and 20 chats, on every device (`ios`: iPhone 15 and `ipad`: iPad
+  Pro 11 in WebKit, `android`: Pixel 7 and `android-tablet`: Galaxy Tab S4
+  held sideways, whose tablet layout starts at 840 dp, in Playwright's Chromium
+  slowed to a Pixel 7's speed: `ANDROID_CPU_SLOWDOWN` in `phone.mjs`,
+  `BENCH_CPU_SLOWDOWN` overrides it), runs a day's use
   of the main window, and fails when a screen goes over its budget in
   `scripts/perf/budgets.json` (longest frame, time to content, elements, JS
-  heap, memory), draws nothing or throws. It stops when the computer is on
+  heap, memory, and on a phone or tablet the frames of a steady scroll), draws
+  nothing, draws a tablet's screen without its tablet layout, or throws.
+  `--device desktop,iphone,ipad,android,android-tablet` runs only those
+  devices (all by default), and `--only` only the screens whose name contains
+  it. It stops when the computer is on
   battery power or in energy saver, because both slow every frame. `--on-battery`
   and `--energy-saver` measure in that mode anyway, and an agent passes one
-  only when Leandro asks for a run in that mode. A change meant to cost more runs
-  `node scripts/perf/check.mjs --update` and says in its commit why.
+  only when Leandro asks for a run in that mode.
+- **Timings wait for a quiet computer; counts and memory always count.**
+  Before each timed step the scripts wait, up to 3 minutes, until nobody has
+  typed or moved the mouse for 5 s, the CPU is under 20% and a blank page in a
+  browser of its own keeps its frames (`scripts/perf/machine.mjs`), and each
+  result says what it was measured in. A timing over its budget is measured
+  again up to 3 times and the lowest counts; one only ever measured on a busy
+  computer reports "not measured: computer busy" and exit code 3 (battery and
+  energy saver are 2), while counts and memory still pass or fail. `--quiet`
+  opens the app's windows without the focus on another virtual desktop, the
+  last one in Task View that isn't the current one (`BENCH_QUIET=current`:
+  on this one, behind the others and off the taskbar), so a run doesn't take
+  the screen from whoever uses the computer (`main/platform/perf-quiet.ts`).
+- **A budget changes only with a measured reason and Leandro's approval.**
+  Every change to `scripts/perf/budgets.json` (raised, lowered, added or
+  removed) needs `npm run perf:bench` medians against the last commit and
+  what causes the difference, and an agent asks Leandro with those numbers
+  before writing it. Make the screen cost less before asking to raise its
+  budget, and never remove or hide a feature to meet one. `--update` rewrites
+  every budget from one run, so restore each value that isn't part of the
+  approved change. A new screen's budgets come from its own medians, never
+  copied from another screen's. The commit message lists each changed value
+  with its old and new number and the reason.
 - **A new screen gets an entry in `scripts/perf/screens.mjs`.** A window
   route in `main.tsx`, a main-window tab, a task tab, a phone tab or a kind of
   pushed phone screen without one fails `tests/perf-coverage.test.ts`.
-- **Compare with `npm run perf:bench`, not by feel.** It prints the medians of
-  three runs; one run swings by 20% and more. Its `BENCH_` options profile a
+- **Compare with `npm run perf:bench`, not by feel.** It measures each screen
+  of every device (`--device` and `--only` as in `npm run perf`) and the
+  journey, and prints the medians of three runs by screen and metric, so the
+  same command before and after a change compares them; one run swings by 20%
+  and more. Its `BENCH_` options profile a
   step, trace layout and what invalidated it, try CSS or a script first, pass
   Chromium switches and dump each process's memory (see `scripts/perf/lib.mjs`
   and `journey.mjs`). Test on battery saver too: it shows what a slower

@@ -45,7 +45,8 @@ export function ToolbarButtons({ groups, controls }: { groups: ToolbarGroup[]; c
  * has its own buttons: Save as the confirming action, Back). `order`: where its
  * items go among other toolbars of the page. `children` follow the buttons on
  * the desktop, and `controls` take an item's place there (ToolbarButtons).
- * `inline`: a pane's own strip, drawn in place on a phone too.
+ * `inline`: a pane's own strip, drawn in place on a phone too. `label`: its
+ * name, for a window with several toolbars.
  */
 export function Toolbar({
   groups,
@@ -53,6 +54,7 @@ export function Toolbar({
   controls,
   inline = false,
   className,
+  label,
   order = 0,
   onClick,
   onContextMenu,
@@ -63,6 +65,7 @@ export function Toolbar({
   controls?: Record<string, React.ReactNode>;
   inline?: boolean;
   className?: string;
+  label?: string;
   order?: number;
   /** A click anywhere on the strip (a card's toolbar keeps its clicks from opening the card). */
   onClick?: (e: React.MouseEvent) => void;
@@ -71,7 +74,7 @@ export function Toolbar({
 }) {
   if (isPhone && !inline) return <NavBar {...(nav ?? { toolbar: groups })} order={order} />;
   return (
-    <div className={`toolbar${className ? ` ${className}` : ''}`} onClick={onClick} onContextMenu={onContextMenu}>
+    <div className={`toolbar${className ? ` ${className}` : ''}`} {...(label ? { role: 'toolbar', 'aria-label': label } : {})} onClick={onClick} onContextMenu={onContextMenu}>
       <ToolbarButtons groups={groups} controls={controls} />
       {children}
     </div>

@@ -5,6 +5,7 @@ import './phone/keyboard';
 import { platform } from '../platform';
 import { isPhone } from '../web/page-nav';
 import { EmptyState } from './EmptyState';
+import { mergeStoredWidths, shownWidth } from './fit-columns';
 import { NavBar } from './NavBar';
 import { bindField, textOptions, type TextOptions } from './field-model';
 import { StatusGlyph, type StatusLevel } from './icons';
@@ -682,23 +683,21 @@ export interface TableCol {
   num?: boolean;
 }
 
-/** Stored widths keyed by column label, so entries survive column reorder/insertion. */
-function loadStoredWidths(storageKey: string | undefined, cols: readonly TableCol[]): (number | undefined)[] {
-  const defaults = cols.map((c) => c.width);
-  if (!storageKey) return defaults;
+/** Stored widths keyed by column label, so entries survive column reorder/insertion; those of columns the pane is too narrow for stay. */
+export function readStoredWidths(storageKey: string | undefined): Record<string, unknown> {
+  if (!storageKey) return {};
   try {
     const raw = localStorage.getItem(`col-widths:${storageKey}`);
-    if (!raw) return defaults;
-    const stored: unknown = JSON.parse(raw);
-    if (stored === null || typeof stored !== 'object') return defaults;
-    return cols.map((c, i) => {
-      if (c.width === undefined) return undefined;
-      const w = (stored as Record<string, unknown>)[c.label];
-      return typeof w === 'number' && Number.isFinite(w) ? Math.max(c.min ?? 40, Math.round(w)) : defaults[i];
-    });
+    const stored: unknown = raw ? JSON.parse(raw) : null;
+    return stored !== null && typeof stored === 'object' && !Array.isArray(stored) ? (stored as Record<string, unknown>) : {};
   } catch {
-    return defaults;
+    return {};
   }
+}
+
+function loadStoredWidths(storageKey: string | undefined, cols: readonly TableCol[]): (number | undefined)[] {
+  const stored = readStoredWidths(storageKey);
+  return cols.map((c) => shownWidth(c, stored));
 }
 
 /**
@@ -707,7 +706,7 @@ function loadStoredWidths(storageKey: string | undefined, cols: readonly TableCo
  * widths persist in localStorage (saved on drag end, only where they differ
  * from the defaults); double-clicking a handle resets its column.
  */
-export function ResizableColumns({ cols, storageKey }: { cols: readonly TableCol[]; storageKey?: string }) {
+export function ResizableColumns({ cols, storageKey, onSaved }: { cols: readonly TableCol[]; storageKey?: string; onSaved?: () => void }) {
   const [widths, setWidths] = useState<(number | undefined)[]>(() => loadStoredWidths(storageKey, cols));
   const widthsRef = useRef(widths);
   widthsRef.current = widths;
@@ -715,14 +714,11 @@ export function ResizableColumns({ cols, storageKey }: { cols: readonly TableCol
   const save = (w: readonly (number | undefined)[]) => {
     if (!storageKey) return;
     try {
-      const stored: Record<string, number> = {};
-      cols.forEach((c, i) => {
-        if (c.width !== undefined && typeof w[i] === 'number' && w[i] !== c.width) stored[c.label] = w[i]!;
-      });
-      localStorage.setItem(`col-widths:${storageKey}`, JSON.stringify(stored));
+      localStorage.setItem(`col-widths:${storageKey}`, JSON.stringify(mergeStoredWidths(readStoredWidths(storageKey), cols, w)));
     } catch {
       /* storage unavailable: widths just don't persist */
     }
+    onSaved?.();
   };
 
   const startDrag = (i: number, e: ReactMouseEvent) => {

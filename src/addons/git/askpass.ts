@@ -234,14 +234,14 @@ export class AskpassServer {
 
   private async listen(): Promise<void> {
     if (this.o.host === 'windows') {
-      this.pipe = `\\\\.\\pipe\\looper-git-askpass-${randomId()}`;
+      this.pipe = `\\\\.\\pipe\\looper-askpass-${randomId()}`;
       const dir = this.o.dataDir || tmpdir();
       await mkdir(dir, { recursive: true });
       this.script = path.join(dir, 'askpass.sh');
       await writeFile(this.script, `${ASKPASS_SCRIPT}\n`);
     } else {
       // mkdtemp makes the folder for this user alone (0700).
-      this.dir = await mkdtemp(path.join(tmpdir(), 'looper-git-'));
+      this.dir = await mkdtemp(path.join(tmpdir(), 'looper-askpass-'));
       this.pipe = path.join(this.dir, 'askpass.sock');
       this.script = path.join(this.dir, 'askpass');
       await writeFile(this.script, `${ASKPASS_SCRIPT}\n`, { mode: 0o700 });

@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, shell, Tray } from 'electron';
+import { app, BrowserWindow, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, protocol, shell, Tray } from 'electron';
+import { previewFrame, previewFrameHeaders } from './preview-frames';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createEngine, type CommandPlace, type Engine } from '../engine/engine';
@@ -9,9 +10,9 @@ import type { PowerAdapter } from '../engine/rest';
 import type { EngineEvent, PreventSleepTimer } from '../shared/types';
 import { draftName, type BuilderSetup } from '../shared/builder';
 import { projectTaskId } from '../shared/projects';
-import { sessionGroupKey, watchedSessions } from '../shared/sessions';
+import { chatGroups, inChatGroup, watchedSessions } from '../shared/sessions';
 import type { UiEvent } from '../shared/api';
-import { chatIsEmpty } from '../shared/chat';
+import { chatInteractive, chatIsEmpty } from '../shared/chat';
 import { loginRowKey, loginRows, type ClaudeLogin, type LoginRow } from '../shared/logins';
 import { startsWithRemoteControl } from '../shared/environments';
 import { convertWslPath, defaultDataDir } from '../engine/host';
@@ -32,7 +33,6 @@ import {
   ipc,
   isRemote,
   newWindow,
-  notifyClients,
   ofCaller,
   openExternal,
   openPath,
@@ -57,7 +57,7 @@ import { RemoteAccess, wanted } from './remote-access';
 import { mainCliRequests } from './cli-requests';
 import { pwaIcons } from './pwa-icons';
 import { pwaStartup } from './pwa-startup';
-import { SOURCE_NAMES, type RemoteAccessPhase, type RemoteAccessProviderId, type RemoteAccessState, type WindowRole } from '../shared/remote-access';
+import { SOURCE_NAMES, notifyTopicOf, type RemoteAccessPhase, type RemoteAccessProviderId, type RemoteAccessState, type WindowRole } from '../shared/remote-access';
 import { addonTabId, mainTabs } from '../shared/main-tabs';
 import { PANES_TAB } from '../shared/addons';
 import { macMenuBar, openWindowItems } from './window-menu';
@@ -67,6 +67,7 @@ import type { CommandView } from '../shared/commands/command';
 import { EMPTY_CONTEXT, type CommandContext, type HostCommand } from '../shared/commands/context';
 import type { MenuItemSpec } from '../shared/remote-access';
 import { hideOffPlatform } from './platform/menus';
+import { usePerfQuiet } from './platform/perf-quiet';
 import { mainSpan, startStallWatch } from './main-stalls';
 import { startMemoryTrim } from './memory-trim';
 import { isWebLink } from '../shared/links';
@@ -128,7 +129,16 @@ if (!app.requestSingleInstanceLock()) {
     if (file) void openLooperFile(file);
   });
 
+  // Preview's HTML pages: an origin of their own (looper-preview://<token>/), apart from Looper's windows.
+  protocol.registerSchemesAsPrivileged([{ scheme: 'looper-preview', privileges: { standard: true, secure: true } }]);
+
   app.whenReady().then(async () => {
+    protocol.handle('looper-preview', (req) => {
+      // The page is the only thing served: a frame or a file it names by a relative address isn't, as on a device.
+      const url = new URL(req.url);
+      const f = url.pathname === '/' ? previewFrame(url.host) : undefined;
+      return f ? new Response(f.html, { headers: previewFrameHeaders(f) }) : new Response('Not Found', { status: 404 });
+    });
     // When each step of starting ended, from the process's start, for perf.log once the main window has loaded.
     const startup: string[] = [];
     const mark = (step: string) => startup.push(`${step} ${Math.round(performance.now())} ms`);
@@ -189,11 +199,13 @@ if (!app.requestSingleInstanceLock()) {
     }
     mark('engine');
     useWindowPlaces(path.join(dataDir, 'windows.json'));
+    await usePerfQuiet((line) => engine?.log.warn(line));
     useMenuPopupPage({ preload: webPreferences().preload!, load: (w, hash) => loadRenderer(w, hash) });
     // Which projects an agent is working in, for the addons' `activity` notifications.
     const projectActivity = new ProjectActivity(engine.sessionsState().sessions);
     engine.on((event) => {
       if (event.type === 'notify') showTaskNotification(event);
+      else if (event.type === 'chat:compacted') followCompacted(event.from, event.to);
       else if (event.type === 'logins') showLoginNotifications(event.logins);
       else if (event.type === 'projects') {
         tray?.setContextMenu(trayMenu());
@@ -226,7 +238,7 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc(engine, {
       getWindow: () => win,
       openMessages: openMessagesWindow,
-      openMessageImage: openImageWindow,
+      openMessageImage: openPreviewWindow,
       openEditor: openEditorWindow,
       promptRunOptions,
       openNoteEditor: openNoteEditorWindow,
@@ -275,10 +287,15 @@ if (!app.requestSingleInstanceLock()) {
       showCards,
       closeSession: (id, from) => closeSessionAsk(id, from),
       restartSession: (id, from) => restartSessionAsk(id, from),
+      continueChatInTerminal,
+      openChatTerminal,
+      openRunInTerminal,
+      continueStoppedRun,
       confirmChatSend,
       closeSessionGroup: (group, from) => closeAllSessionsAsk(group, from),
       openSendToSessions: openSendToSessionsWindow,
       openHistory: openHistoryWindow,
+      openTaskHistory: openTaskHistoryWindow,
       historyRun,
       historyMenu,
       showHistoryMenu,
@@ -293,7 +310,7 @@ if (!app.requestSingleInstanceLock()) {
       openRemoteHelperEditor,
       remoteAccess: () => remoteAccess,
       openRemoteAccessPair: openRemoteAccessPairWindow,
-      openRemoteAccessRename: openRemoteAccessRenameWindow,
+      openRemoteAccessDevice: openRemoteAccessDeviceWindow,
       finishRemoteAccessSetup,
       openNotification,
       logIn: openLogIn,
@@ -843,14 +860,16 @@ function showTaskNotification(e: Extract<EngineEvent, { type: 'notify' }>): void
   toastTargets.delete(toastKey(e.taskId, e.runId));
   toastTargets.set(toastKey(e.taskId, e.runId), target);
   if (toastTargets.size > MAX_LIVE_TOASTS) toastTargets.delete(toastTargets.keys().next().value!);
-  // Every connected device shows it too, whether or not the desktop's toast is skipped below.
-  notifyClients({ title: e.title, body: e.body, ...(e.taskId ? { taskId: e.taskId } : {}), ...(e.runId && e.runId !== '-' ? { runId: e.runId } : {}) });
+  // Every connected device that wants it shows it too, whether or not the desktop's toast is skipped below.
+  const topic = notifyTopicOf(e.kind);
+  const shown = { title: e.title, body: e.body, ...(e.taskId ? { taskId: e.taskId } : {}), ...(e.runId && e.runId !== '-' ? { runId: e.runId } : {}) };
+  remoteAccess?.notifyClients(shown, topic);
   // The user is already looking at the app: no toast. A question waits only so
   // long, so it is skipped only while its run window, where it's answered, is focused.
   const focused = BrowserWindow.getFocusedWindow();
   if (focused && (e.kind !== 'question' || focused.webContents.getURL().includes(`#${runWindowHash(e.taskId, e.runId)}/`))) return;
   // The paired devices not looking at Looper get the same toast as a push notification.
-  void remoteAccess?.pushToast({ title: e.title, body: e.body, ...(e.taskId ? { taskId: e.taskId } : {}), ...(e.runId && e.runId !== '-' ? { runId: e.runId } : {}) });
+  void remoteAccess?.pushToast(shown, topic);
   if (!Notification.isSupported()) return;
   const toast = new Notification({ title: e.title, body: e.body, icon: appIcon });
   liveToasts.add(toast);
@@ -878,9 +897,9 @@ function showLoginNotifications(logins: ClaudeLogin[]): void {
 function showLoginNotification(row: LoginRow): void {
   if (!engine?.settings.notificationsEnabled) return;
   const n = { title: row.login.name, body: row.problem };
-  notifyClients(n);
+  remoteAccess?.notifyClients(n, 'warnings');
   if (BrowserWindow.getFocusedWindow()) return;
-  void remoteAccess?.pushToast(n);
+  void remoteAccess?.pushToast(n, 'warnings');
   if (!Notification.isSupported()) return;
   const toast = new Notification({ ...n, icon: appIcon });
   liveToasts.add(toast);
@@ -945,6 +964,9 @@ function webPreferences(): Electron.WebPreferences {
     // The preload needs only Electron's contextBridge, ipcRenderer and webUtils; without the sandbox every window started Node for it.
     sandbox: true,
     nodeIntegration: false,
+    // The preload runs in frames too, where it gives the page nothing and sends a previewed page's clicked links to main
+    // (forwardPreviewLinks): Node stays off in them, as the sandbox keeps it.
+    nodeIntegrationInSubFrames: true,
   };
 }
 
@@ -1048,7 +1070,7 @@ function createWindow(): void {
     {
       width: 1400,
       height: 900,
-      minWidth: 900,
+      minWidth: 800,
       minHeight: 600,
       title: 'Looper',
       icon: windowIcon,
@@ -1190,6 +1212,7 @@ function promptRunOptions(taskId: string): Promise<boolean> {
   return new Promise((resolve) => {
     const child = openChildWindow(`run-options/${encodeURIComponent(taskId)}`, 'Run Options', 420, 400, win, {
       role: 'tool',
+      contentSize: true,
       minWidth: 320,
       minHeight: 240,
       resizable: false,
@@ -1202,12 +1225,13 @@ function promptRunOptions(taskId: string): Promise<boolean> {
       resolve(started);
       if (!child.isDestroyed()) child.close();
     };
-    const onApply = (e: Electron.IpcMainEvent, opts: { check: boolean; classifier: boolean; agent: boolean }): void => {
+    const onApply = (e: Electron.IpcMainEvent, opts: { check: boolean; classifier: boolean; agent: boolean; harnessId?: unknown }): void => {
       if (windowOf(e) !== child) return;
       let started = false;
       try {
+        const harnessId = typeof opts?.harnessId === 'string' && opts.harnessId ? opts.harnessId : undefined;
         started =
-          engine?.runNow(taskId, { check: !opts?.check, classifier: !opts?.classifier, agent: !opts?.agent }) ?? false;
+          engine?.runNow(taskId, { check: !opts?.check, classifier: !opts?.classifier, agent: !opts?.agent, ...(harnessId ? { harnessId } : {}) }) ?? false;
       } catch (err) {
         // An unknown task must not take the main process down with it.
         engine?.log.error(`run options for ${taskId} failed: ${(err as Error).message}`);
@@ -1271,11 +1295,16 @@ function openMessagesWindow(taskId: string, runId: string, agentId?: string, lab
   loadRenderer(child, hash);
 }
 
-function openImageWindow(taskId: string, runId: string, rowId: string, agentId?: string, label?: string, siblings?: string[]): void {
+/**
+ * The Preview window: an image from a conversation (`rowId` a row's id), or a file the agent sent, read or
+ * wrote (`rowId` its fileImageKey) shown as its kind is: a PDF, an Office file, an HTML page, a CSV, code,
+ * Markdown or text. `siblings`: every image of the same message, which the window steps through.
+ */
+function openPreviewWindow(taskId: string, runId: string, rowId: string, agentId?: string, label?: string, siblings?: string[]): void {
   const name = label?.trim() ? label.trim().slice(0, 80) : `${runId} row ${rowId}`;
   const hash =
-    `image/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}/${agentId ? encodeURIComponent(agentId) : '-'}` +
-    `/${encodeURIComponent(rowId)}/${encodeURIComponent(`Image – ${name}`)}` +
+    `preview/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}/${agentId ? encodeURIComponent(agentId) : '-'}` +
+    `/${encodeURIComponent(rowId)}/${encodeURIComponent(name)}` +
     (siblings ? `/${encodeURIComponent(JSON.stringify(siblings))}` : '');
   const child = newWindow(
     {
@@ -1283,7 +1312,7 @@ function openImageWindow(taskId: string, runId: string, rowId: string, agentId?:
       height: 700,
       minWidth: 420,
       minHeight: 320,
-      title: `Image – ${name}`,
+      title: `${name} – Preview`,
       icon: windowIcon,
       backgroundColor: windowBackground(),
       maximizable: true,
@@ -1297,6 +1326,17 @@ function openImageWindow(taskId: string, runId: string, rowId: string, agentId?:
     if (isWebLink(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
+  // An HTML file's frame stays its page. Nothing opens from here: a navigation needn't come from a click (a
+  // script, a meta refresh), and Looper's preload sends a clicked link to main (forwardPreviewLinks). The frames
+  // inside the page load what its Content-Security-Policy allows.
+  if (child instanceof BrowserWindow) {
+    child.webContents.on('will-frame-navigate', (e) => {
+      // The page's own frame is the one right under the window's.
+      const page = !e.frame || !e.frame.parent?.parent;
+      if (e.isMainFrame || !page || e.url.startsWith('looper-preview://')) return;
+      e.preventDefault();
+    });
+  }
   loadRenderer(child, hash);
 }
 
@@ -1417,7 +1457,7 @@ function openRenameFolderWindow(folderId: string): void {
 
 function openSettingsWindow(): void {
   // Its tallest tab, Advanced, fits without a scroll bar (npm run perf fails a dialog that opens scrolling).
-  openChildWindow('settings', 'Settings', 720, 642, win, { role: 'editor', contentSize: true });
+  openChildWindow('settings', 'Settings', 720, 707, win, { role: 'editor', contentSize: true });
 }
 
 const templatesWindows = new WindowSlots();
@@ -1944,13 +1984,23 @@ function openRemoteAccessPairWindow(parent: AppWindow | null = mainWin()): void 
   });
 }
 
-function openRemoteAccessRenameWindow(deviceId: string, parent: AppWindow | null): void {
-  openChildWindow(`remote-access-rename/${encodeURIComponent(deviceId)}`, 'Rename Device', 420, 240, parent, {
-    role: 'prompt',
+/** Edit Device: a paired device's name and notifications; opening it again brings it forward. */
+const remoteAccessDeviceWindows = new WindowSlots();
+
+function openRemoteAccessDeviceWindow(deviceId: string, parent: AppWindow | null): void {
+  const open = remoteAccessDeviceWindows.get(deviceId);
+  if (open) {
+    open.focus();
+    return;
+  }
+  const child = openChildWindow(`remote-access-device/${encodeURIComponent(deviceId)}`, 'Edit Device', 420, 375, parent, {
+    role: 'tool',
     minWidth: 420,
-    minHeight: 240,
+    minHeight: 375,
     resizable: false,
+    contentSize: true,
   });
+  remoteAccessDeviceWindows.set(child, deviceId);
 }
 
 // ---------- projects ----------
@@ -2031,10 +2081,9 @@ function forkChat(chatId: string, index: number): void {
   if (engine) showChat(engine.forkChat(chatId, index).id);
 }
 
-/** Compact into New Chat: the compacted chat shows where showChat puts it. Rejects with the reason. */
+/** Compact into New Chat: the compacted chat takes the old one's place wherever it showed (followCompacted), and nowhere else. Rejects with the reason. */
 async function compactChat(chatId: string): Promise<void> {
-  // The new chat shows before the old one closes, so the window doesn't fall back to the dashboard between them.
-  if (engine) await engine.compactChat(chatId, (next) => showChat(next.id));
+  if (engine) await engine.compactChat(chatId);
 }
 
 /** Continue Compacted: a new chat from the run's messages, shown where showChat puts it. Rejects with the reason. */
@@ -2086,17 +2135,18 @@ function bringForward(w: AppWindow): void {
  * Conversation and Close All Conversations end them. Quitting Looper stops
  * their agents and keeps them for its next start.
  */
-function openSessionsWindow(select?: string): void {
+function openSessionsWindow(select?: string, terminal = false): void {
   const open = sessionsWindows.get();
   if (open) {
     bringForward(open);
-    if (select) open.webContents.send('ui:event', { type: 'sessions-select', id: select });
+    if (select) open.webContents.send('ui:event', { type: terminal ? 'sessions-terminal' : 'sessions-select', id: select } satisfies UiEvent);
     return;
   }
-  const child = openChildWindow(select ? `sessions/${encodeURIComponent(select)}` : 'sessions', 'Chats', 1388, 895, undefined, {
+  const route = select ? `sessions/${encodeURIComponent(select)}${terminal ? '/terminal' : ''}` : 'sessions';
+  const child = openChildWindow(route, 'Chats', 1388, 895, undefined, {
     role: 'workspace',
-    // The list's and the Activity pane's smallest widths (200, 280) beside a 480 px conversation.
-    minWidth: 970,
+    // The list's smallest width (200) beside a 430 px conversation; the Activity pane covers the conversation when there's no room beside it.
+    minWidth: 640,
     minHeight: 500,
     contentSize: true,
   });
@@ -2163,21 +2213,25 @@ function tabSessionsView(w: AppWindow): SessionsView | undefined {
   return view;
 }
 
+/** Whether `w` is a phone's or tablet's window, which shows no conversation in its main window. */
+function onPhone(w: AppWindow | null | undefined): boolean {
+  return isRemote(w) && w.client.uiPlatform === 'mobile';
+}
+
 /**
  * A conversation that was started or picked: in the Chats window when it's
  * open and the caller's main window isn't the one in front, else on the main
  * window's Chats tab. A phone's main window has no conversation in it, so it
  * opens a Chats window.
  */
-function showChat(id: string): void {
+function showChat(id: string, terminal = false): void {
   const main = mainWin();
-  const phone = isRemote(main) && main.client.uiPlatform === 'mobile';
-  if (!main || main.isDestroyed() || phone || (sessionsWindows.get() && !main.isFocused())) {
-    openSessionsWindow(id);
+  if (!main || main.isDestroyed() || onPhone(main) || (sessionsWindows.get() && !main.isFocused())) {
+    openSessionsWindow(id, terminal);
     return;
   }
   bringForward(main);
-  main.webContents.send('ui:event', { type: 'sessions-select', id } satisfies UiEvent);
+  main.webContents.send('ui:event', { type: terminal ? 'sessions-terminal' : 'sessions-select', id } satisfies UiEvent);
 }
 
 /** The engine follows closely every session a Chats window shows, on any device, and the task runs its dashboard shows live. */
@@ -2193,6 +2247,29 @@ function showSession(w: AppWindow | null, id: string | null): void {
   const view = own ?? (w && mainViews.has(w) ? undefined : chatsWindow ? sessionsViews.get(chatsWindow) : undefined);
   if (view && !view.single) view.shown = id;
   watchShownSessions();
+}
+
+/**
+ * A chat compacted into a new one (by itself too): every window showing it
+ * shows the new one, which its page selects too. A single chat's window would
+ * otherwise close with the old chat.
+ */
+function followCompacted(from: string, to: string): void {
+  for (const view of sessionsViews.values()) {
+    // A dashboard showing it as a card goes on showing it live.
+    if (view.cards.includes(from)) view.cards = view.cards.map((id) => (id === from ? to : id));
+    if (view.shown !== from) continue;
+    view.shown = to;
+    if (view.single) chatWindows.set(view.w, to);
+    // A phone's or browser's window opened on the chat loads the new one when it loads again (its page names it too).
+    const route = `sessions/${encodeURIComponent(from)}`;
+    if (isRemote(view.w) && (view.w.hash === route || view.w.hash.startsWith(`${route}/`))) {
+      view.w.setRoute(`sessions/${encodeURIComponent(to)}${view.w.hash.slice(route.length)}`);
+    }
+  }
+  watchShownSessions();
+  // A finished turn the devices were told about isn't news again under the new id.
+  remoteAccess?.sessionMoved(from, to);
 }
 
 /** The chats and task runs that Chats window's dashboard shows live as cards: their chat and activity events go there too. */
@@ -2298,6 +2375,114 @@ async function restartSessionAsk(id: string, from?: AppWindow | null): Promise<v
   await engine.restartSession(id);
 }
 
+/**
+ * Continue in Terminal on an open chat (the Chat menu, its right-click menu):
+ * the chat closes, once the user confirms when it's working, and its
+ * conversation goes on in a terminal as History's Continue in Terminal does.
+ * Rejects with the reason.
+ */
+async function continueChatInTerminal(id: string, from?: AppWindow | null): Promise<void> {
+  const chat = engine?.getChat(id);
+  if (!engine || !chat) return;
+  const blocked = engine.chatTerminalBlocker(id);
+  if (blocked) throw new Error(blocked);
+  if (sessionBusy(id)) {
+    const parent = from && !from.isDestroyed() ? from : sessionsWindows.get();
+    const { response } = await showMessageBox(parent, {
+      type: 'question',
+      title: 'Chats',
+      message: `Continue "${sessionTitle(id)}" in a terminal?`,
+      detail: 'It’s still working, and closing the chat stops its turn.',
+      buttons: ['Continue in Terminal', 'Cancel'],
+      noLink: true,
+      defaultId: 1,
+      cancelId: 1,
+    });
+    if (response !== 0) return;
+  }
+  const { taskId } = chat;
+  await engine.closeSession(id);
+  await openTerminal(taskId, id);
+}
+
+/**
+ * Open in Terminal on a chat (its right-click menus): an interactive chat
+ * shows its Terminal tab; a headless one becomes interactive, going on with
+ * its conversation, and shows it. A Codex chat runs only headless, so its
+ * conversation goes on in a terminal session as Continue in Terminal does.
+ * The tab opens in `from` when it shows chats, else where showChat puts it.
+ * Rejects with the reason.
+ */
+async function openChatTerminal(id: string, from?: AppWindow | null): Promise<void> {
+  const chat = engine?.getChat(id);
+  if (!engine || !chat) return;
+  if (chat.harnessKind !== 'claude-code') {
+    await continueChatInTerminal(id, from);
+    return;
+  }
+  if (!chatInteractive(chat)) {
+    // A new process would cut the turn short, so the Chat menu's Session Type waits for it too.
+    if (sessionBusy(id)) throw new Error(`"${sessionTitle(id)}" is working. Its terminal opens once the turn has ended.`);
+    await engine.configureChat(id, { mode: 'interactive' });
+  }
+  // A phone's main window has no Chats tab to put the terminal in: its chat opens in a Chats window, as showChat does.
+  const phoneMain = !!from && mainViews.has(from) && onPhone(from);
+  const view = from && !from.isDestroyed() && !phoneMain ? (sessionsViews.get(from) ?? tabSessionsView(from)) : undefined;
+  if (from && view && (!view.single || view.shown === id)) {
+    bringForward(from);
+    from.webContents.send('ui:event', { type: 'sessions-terminal', id } satisfies UiEvent);
+    return;
+  }
+  showChat(id, true);
+}
+
+/** Whether a task run is in flight, its delegated agents' included. */
+function runInFlight(taskId: string, runId: string): boolean {
+  const rt = engine?.listRuntimes().find((r) => r.taskId === taskId);
+  return !!rt && (rt.runs.some((r) => r.runId === runId) || rt.children.some((r) => r.runId === runId));
+}
+
+/**
+ * Open in Terminal on a task run (its right-click menus): its conversation
+ * goes on in a Looper terminal, as Continue in Terminal does. A run still
+ * going asks first, because its agent stops, and goes on once it has ended.
+ * Rejects with the reason.
+ */
+async function openRunInTerminal(taskId: string, runId: string, from?: AppWindow | null): Promise<void> {
+  if (!engine) return;
+  const eng = engine;
+  if (runInFlight(taskId, runId)) {
+    const parent = from && !from.isDestroyed() ? from : mainWin();
+    const { response } = await showMessageBox(parent, {
+      type: 'question',
+      title: 'Looper',
+      message: `Open the run of "${eng.taskName(taskId) ?? taskId}" in a terminal?`,
+      detail: 'The run is still going. Its agent stops, and its conversation goes on in the terminal.',
+      buttons: ['Open in Terminal', 'Cancel'],
+      noLink: true,
+      defaultId: 1,
+      cancelId: 1,
+    });
+    if (response !== 0) return;
+    await eng.stopTask(taskId, 'continued in a terminal', runId);
+    const until = Date.now() + 30_000;
+    while (runInFlight(taskId, runId)) {
+      if (Date.now() > until) throw new Error('The run didn’t end within 30 seconds, so its conversation can’t go on in a terminal yet.');
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  if (!(await eng.canContinueRun(taskId, runId)).terminal) throw new Error('This run’s conversation can’t go on in a terminal.');
+  await openTerminal(taskId, runId);
+}
+
+/** Continue Run on a run stopped before its agent started: a new run starts the agent on its events. Rejects with the reason. */
+async function continueStoppedRun(taskId: string, runId: string): Promise<void> {
+  if (!engine) return;
+  if (!(await engine.continueStoppedRun(taskId, runId))) {
+    throw new Error(`"${engine.taskName(taskId) ?? taskId}" didn't start a run; its run log says why.`);
+  }
+}
+
 /** The chats and terminal sessions the list shows: the ones Close and Send to Chats act on (task runs aren't). */
 function openConversations() {
   return (engine?.sessionsState().sessions ?? []).filter((s) => s.kind !== 'run');
@@ -2305,16 +2490,18 @@ function openConversations() {
 
 /**
  * Close All Conversations: every chat and terminal session ends, after asking.
- * `group` (sessionGroupKey): only the ones in that list group, asked over `from`.
+ * `group` (ChatGroup.key): only the ones in that list group, asked over `from`.
  */
 async function closeAllSessionsAsk(group?: string, from?: AppWindow | null): Promise<void> {
   if (!engine) return;
   const eng = engine;
-  const sessions = openConversations().filter((s) => group === undefined || sessionGroupKey(s) === group);
+  const places = { projects: eng.listProjects(), folders: eng.listProjectFolders(), layout: {} };
+  const sessions = openConversations().filter((s) => group === undefined || inChatGroup(s, group, places));
   if (sessions.length === 0) return;
   const working = sessions.filter((s) => sessionBusy(s.id)).length;
   const parent = from && !from.isDestroyed() ? from : sessionsWindows.get();
-  const where = group === undefined ? '' : ` in ${sessions[0].groupName}`;
+  // The group's name as the list shows it: its project's, or its Projects tab folder's.
+  const where = group === undefined ? '' : ` in ${chatGroups(sessions, group.startsWith('folder:') ? 'folder' : 'project', places)[0]?.name ?? sessions[0].groupName}`;
   const opts = {
     type: 'question' as const,
     title: 'Chats',
@@ -2361,7 +2548,7 @@ const sendToSessionsWindows = new WindowSlots();
 
 /**
  * Send to Chats: one message to the chats and terminal sessions picked there. Modeless, one per client;
- * opening it again brings it forward. `group` (sessionGroupKey): that list group's chats are the ones checked.
+ * opening it again brings it forward. `group` (ChatGroup.key): that list group's chats are the ones checked.
  */
 function openSendToSessionsWindow(group?: string): void {
   const open = sendToSessionsWindows.get();
@@ -2389,14 +2576,24 @@ const STILL_OPEN_MS = 5 * 60_000;
  * Modeless; opening it again brings it forward.
  */
 function openHistoryWindow(): void {
-  const open = historyWindows.get();
+  openHistoryIn(historyWindows, 'history', 'History');
+}
+
+/** The Task History window: every task's runs, newest first, in the History window's layout. Modeless, one per client. */
+const taskHistoryWindows = new WindowSlots();
+function openTaskHistoryWindow(): void {
+  openHistoryIn(taskHistoryWindows, 'task-history', 'Task History');
+}
+
+function openHistoryIn(slots: WindowSlots, route: string, title: string): void {
+  const open = slots.get();
   if (open) {
     bringForward(open);
     return;
   }
-  const child = openChildWindow('history', 'History', 1388, 895, undefined, { role: 'workspace', minWidth: 970, minHeight: 500, contentSize: true });
+  const child = openChildWindow(route, title, 1388, 895, undefined, { role: 'workspace', minWidth: 690, minHeight: 500, contentSize: true });
   child.setMaximizable(true);
-  historyWindows.set(child);
+  slots.set(child);
   historyOpen.add(child);
   attachWindowMenu(child, firstTemplate(child, HISTORY_VIEWS));
   child.on('closed', () => {
@@ -2493,7 +2690,6 @@ async function recentChatItems(from: AppWindow, projectId?: string): Promise<Ele
       await engine.historyList({
         fresh: false,
         limit: RECENT_CHATS,
-        showRuns: engine.settings.view.history.showRuns,
         folder: projectId ? `project:${projectId}` : '',
       })
     ).items;
@@ -3119,6 +3315,7 @@ const HOST: Record<HostCommand, (w: AppWindow | null, ...args: string[]) => void
     const clean = path.join(dir, 'output.txt');
     return openHostPath(!raw && fs.existsSync(clean) ? clean : path.join(dir, 'output.log'));
   },
+  'run-start': (_w, taskId, runId) => continueStoppedRun(taskId, runId),
   'run-terminal': (_w, taskId, runId) => openTerminal(taskId, runId),
   'run-chat': (_w, taskId, runId) => openChat(taskId, runId),
   'run-compact': (_w, taskId, runId) => compactRun(taskId, runId),

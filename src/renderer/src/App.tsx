@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { mainToolbarViews, mainWindowViews } from '@shared/commands/build';
-import { addonToolbarEntries } from '@shared/commands/list';
+import { mainWindowViews } from '@shared/commands/build';
+import { toolbarEntries } from '@shared/commands/list';
+import { noMnemonic } from '@shared/commands/command';
+import { MAIN_TOOLBARS, addonToolbarId, toolbarRows, type MainToolbarId } from '@shared/toolbars';
 import type { CommandContext } from '@shared/commands/context';
 import { isLooperTab, mainTabs } from '@shared/main-tabs';
 import { addonPaneKey } from '@shared/addons';
@@ -12,7 +14,7 @@ import { AddonPaneList, addonSearch, showPaneItemMenu, showPaneMenu } from './co
 import { AddonNotRunning } from './components/AddonNotRunning';
 import { SearchBox } from './components/SearchBox';
 import { useFindFocus } from './components/FindBar';
-import { commandToolbar, popupEntries } from './components/command-surfaces';
+import { mainToolbarBands, popupEntries, popupToolbarCommands } from './components/command-surfaces';
 import { setRowMenuContext } from './components/row-menus';
 import { useCommandMenu, useCommandState } from './components/useCommands';
 import { Dashboard } from './components/Dashboard';
@@ -26,8 +28,7 @@ import { PaneStack } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { TaskCollection } from './components/TaskCollection';
 import { TaskDetail, type DetailTab } from './components/TaskDetail';
-import { Toolbar } from './components/Toolbar';
-import type { ToolbarGroup } from './components/toolbar-model';
+import { Rebar, type RebarBand } from './components/Rebar';
 import { sessionLimits } from './components/usage';
 import { ViewTabs } from './components/ViewTabs';
 import { SessionsBody, SessionsStatusBar } from './SessionsApp';
@@ -94,8 +95,8 @@ interface TabMemory {
 }
 
 /**
- * The desktop main window: the toolbar (the New buttons, then the shown tab's
- * own and the addons'), the tabs, the shown tab's view, and the status bar
+ * The desktop main window: its toolbars (New, the shown tab's own and the
+ * addons', in the rows their grips dragged them to), the tabs, the shown tab's view, and the status bar
  * (the tab's facts, then the computer's). The window's selection is the shown
  * tab's, so the menus act on what's in view; each tab keeps its own while
  * another shows. A selection made elsewhere (a notification, a project's task,
@@ -168,7 +169,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   useEffect(
     () =>
       window.looper.onUi((e) => {
-        if (e.type === 'sessions-select') pick('chats');
+        if (e.type === 'sessions-select' || e.type === 'sessions-terminal') pick('chats');
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
@@ -183,8 +184,10 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   // The status bar of an addon's panes tab with no item's screen showing: its first pane's.
   const firstPane = paneAddon?.panes[0] && m.addonPanes[addonPaneKey(paneAddon.id, paneAddon.panes[0].id)];
   const paneStatus = firstPane?.status === 'ready' ? firstPane.content.status : undefined;
-  // View > Filter: the Search box takes the focus, or with the toolbar hidden the Filter dialog asks for the text.
-  const openSearch = () => (toolbarShown ? searchField.focus() : commands.host('filter', 'Show items containing', query));
+  // The Search box is the addon's toolbar's: View → Toolbars hides it with the addon's buttons.
+  const searchShown = !!search && !view?.hiddenAddonToolbars.includes(paneAddon!.id);
+  // View > Filter: the Search box takes the focus, or with it hidden the Filter dialog asks for the text.
+  const openSearch = () => (searchShown ? searchField.focus() : commands.host('filter', 'Show items containing', query));
 
   // The Filter dialog's text is the shown addon's search.
   const searchAddon = useRef<string | null>(null);
@@ -212,8 +215,17 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   };
   useCommandMenu(mainWindowViews(tab, !!fixed, !!item), commands);
   setRowMenuContext(commands);
-  const toolbarGroups: ToolbarGroup[] = commandToolbar(mainToolbarViews(tab, !!fixed, !!item), commands);
-  const toolbarShown = (view?.toolbar ?? true) && (toolbarGroups.length > 0 || tab !== 'dashboard');
+  // The toolbars View → Toolbars shows (an addon's hidden one has no buttons).
+  const bands: RebarBand[] = mainToolbarBands(tab, !!fixed, !!item, commands).flatMap((b) => {
+    const own = MAIN_TOOLBARS.find((t) => t.id === b.id);
+    if (own) return !view || view.toolbars[own.id as MainToolbarId] ? [{ ...b, label: noMnemonic(own.label) }] : [];
+    const addon = addons.find((a) => addonToolbarId(a.id) === b.id);
+    return [{ ...b, label: `${addon?.toolbarName ?? addon?.name ?? ''} Toolbar` }];
+  });
+  const toolbarShown = bands.length > 0 || searchShown;
+  // Every toolbar has a place, the ones this tab doesn't show too, so dragging one keeps the others where they were.
+  const savedRows = view?.toolbars.rows ?? [];
+  const rows = toolbarRows(savedRows, [...MAIN_TOOLBARS.map((t) => t.id), ...bands.map((b) => b.id)]);
 
   const alone = (content: React.ReactNode) => (
     <div className="app single">
@@ -300,7 +312,7 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
       </WithSidebar>
     );
   } else if (onChats) {
-    body = <SessionsBody s={s} />;
+    body = <SessionsBody s={s} menu={commands} />;
   } else if (tabDef?.addon && !tabDef.addon.tab) {
     // An addon with only panes: its panes as the list, the item picked beside them.
     const addon = addons.find((a) => a.id === tabDef.addon!.id);
@@ -416,16 +428,18 @@ function DesktopMain({ fixed, item }: { fixed?: string; item?: string }) {
   return (
     <div className="app-shell">
       {toolbarShown && (
-        <Toolbar
-          groups={toolbarGroups}
+        <Rebar
+          bands={bands}
+          rows={rows}
+          onLayout={(next) => view && commands.setView({ toolbars: { ...view.toolbars, rows: next } })}
+          onOverflow={(ids, at) => popupToolbarCommands(commands, ids, at)}
+          end={searchShown && <SearchBox value={query} onChange={(q) => m.setAddonQuery(paneAddon!.id, q)} placeholder={search!.prompt} inputRef={searchField.inputRef} />}
           onContextMenu={(e) => {
             if ((e.target as Element).closest('input')) return;
             e.preventDefault();
-            popupEntries(commands, 'addon-toolbars', addonToolbarEntries(commands));
+            popupEntries(commands, 'toolbars', toolbarEntries(commands));
           }}
-        >
-          {search && <SearchBox value={query} onChange={(q) => m.setAddonQuery(paneAddon!.id, q)} placeholder={search.prompt} inputRef={searchField.inputRef} />}
-        </Toolbar>
+        />
       )}
       {position === 'top' && strip}
       <div className="app-views">

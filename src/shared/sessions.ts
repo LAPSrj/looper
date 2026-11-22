@@ -1,5 +1,7 @@
 import type { ChatContext, ChatState } from './chat';
+import { folderParents, itemsInTreeOrder, siblingOrder, type FolderLayout } from './folders';
 import type { MessageRow } from './messages';
+import type { ProjectFolder, View } from './types';
 import type { WorkflowRun } from './workflows';
 
 /** A chat, a terminal session, or a task run's agent (a delegated agent's always, the others with Show Task Runs on), in the Chats window. */
@@ -10,6 +12,13 @@ export interface RunPermission {
   id: string;
   tool: string;
   input: unknown;
+}
+
+/** What a permission request asks, in words ("Wants to run a command"): the Chats list's status, and a task run's step on the dashboards. */
+export function permissionText(tool: string): string {
+  if (tool === 'Bash' || tool === 'PowerShell') return 'Wants to run a command';
+  if (tool === 'Write' || tool === 'Edit' || tool === 'MultiEdit' || tool === 'NotebookEdit') return 'Wants to change a file';
+  return `Wants to use ${tool}`;
 }
 
 /** Why a session waits for the user: a tool call to allow, a finished turn not looked at, the agent's notification, or an error. */
@@ -36,7 +45,10 @@ export interface SessionSummary {
   status: 'starting' | 'working' | 'ready' | 'ended';
   /** A terminal session that quitting Looper stopped: the next key typed into it starts its harness again. */
   stopped?: boolean;
-  waiting?: { reason: WaitReason; text: string; since: number };
+  /** `unread`: the user marked the session unread; looking at it doesn't clear that, opening it does. */
+  waiting?: { reason: WaitReason; text: string; since: number; unread?: true };
+  /** A chat's Mute Notifications: no device gets a push for it. */
+  muted?: true;
   /** A chat's oldest permission request, which the Overview can answer. */
   permissionId?: string;
   /** A task run's agent asked this with looper-ask and waits for the answer. */
@@ -62,6 +74,19 @@ export interface SessionSummary {
    */
   limit?: { resetsAt?: number; restored?: boolean };
 }
+
+/**
+ * Whether the session reads as unread: it waits for a finished turn, a notification or an error (or the user marked it
+ * unread), which the list draws in bold until it's opened. A permission request is bold too, but only answering it ends it.
+ */
+export const isUnread = (s: SessionSummary | undefined): boolean => !!s?.waiting && s.waiting.reason !== 'permission';
+
+/**
+ * Whether Mark as Unread (or, once it's unread, Mark as Read) applies. An unread session can always be marked read. A read
+ * one can be marked unread once its agent is ready: while it works its next turn is news anyway, and one that is starting or
+ * has ended (with nothing unseen) has no finished turn to bring back. A permission request keeps it bold on its own.
+ */
+export const canToggleUnread = (s: SessionSummary | undefined): boolean => !!s && s.kind !== 'run' && (isUnread(s) || (s.status === 'ready' && !s.waiting));
 
 /** How much of one usage window is used (0 to 1), and when it resets (ms since the epoch). */
 export interface UsageWindow {
@@ -90,6 +115,11 @@ export interface SessionsState {
   sessions: SessionSummary[];
   /** Each harness's limits, by limitsKey: harnesses can run on different accounts. */
   limits: Record<string, UsageLimits>;
+  /**
+   * The order the list's rows were dragged to with Group Chats By None, by session id. The main process keeps it
+   * while it runs, not in the settings, so it's forgotten once Looper closes.
+   */
+  order: string[];
 }
 
 /** A command, subagent or workflow the agent started in the background. */
@@ -169,6 +199,123 @@ export function sessionsInOrder(sessions: SessionSummary[], projectOrder: string
 /** The key of the list group a session is in: its project's id, or the group's name without one. */
 export const sessionGroupKey = (s: SessionSummary): string => s.projectId ?? s.groupName;
 
+/** View → Group Chats By: each project, the Projects tab's folder each project is in, or no groups. */
+export type ChatGroupBy = 'project' | 'folder' | 'none';
+
+/** The Projects tab's projects and folders, which Group Chats By Project Folder reads. */
+export interface ChatPlaces {
+  projects: { id: string; folderId?: string }[];
+  folders: ProjectFolder[];
+  layout: FolderLayout;
+}
+
+/** A list group's key with Group Chats By Project Folder: `folder:` and the folder's id, or `folder:` alone for no folder. */
+const FOLDER_KEY = 'folder:';
+
+/** The name of the group of chats whose project is in no folder, or that have no project. */
+export const NO_FOLDER = 'No Folder';
+
+/** The Projects tab's folder a project is in ('' at the top level or in a folder that's gone). */
+function projectFolderOf(places: ChatPlaces, parents: Map<string, string>, projectId: string | undefined): string {
+  const folderId = projectId ? places.projects.find((p) => p.id === projectId)?.folderId : undefined;
+  return folderId && parents.has(folderId) ? folderId : '';
+}
+
+/** A folder's name with the folders it's in: "Clients / Acme". */
+function folderPath(folders: ProjectFolder[], parents: Map<string, string>, id: string): string {
+  const names: string[] = [];
+  for (let at = id; at; at = parents.get(at) ?? '') {
+    const f = folders.find((x) => x.id === at);
+    if (!f || names.length > folders.length) break;
+    names.unshift(f.name);
+  }
+  return names.join(' / ');
+}
+
+/** The key of the list group a session is in, as the list is grouped (none: ''). */
+export function chatGroupKey(s: SessionSummary, by: ChatGroupBy, places: ChatPlaces): string {
+  if (by === 'none') return '';
+  if (by === 'project') return sessionGroupKey(s);
+  return FOLDER_KEY + projectFolderOf(places, folderParents(places.folders), s.projectId);
+}
+
+/** Whether a session is in the list group `key` (a project's, or with Group Chats By Project Folder a folder's). */
+export const inChatGroup = (s: SessionSummary, key: string, places: ChatPlaces): boolean =>
+  key.startsWith(FOLDER_KEY) ? chatGroupKey(s, 'folder', places) === key : sessionGroupKey(s) === key;
+
+/** A group of the Chats list: its key (what its closed state is saved under), its name ('' for Group Chats By None's one group, which has no header) and its rows. */
+export interface ChatGroup {
+  key: string;
+  name: string;
+  items: SessionSummary[];
+}
+
+/**
+ * The Chats list's groups, in order, from the sessions in the engine's order
+ * (by project). By project: each project's sessions. By folder: the sessions of
+ * the projects in each of the Projects tab's folders, the folders in that tab's
+ * order, then No Folder. None: one group without a header, its rows in the
+ * order they were dragged to (`order`), then the others as they started.
+ */
+export function chatGroups(sessions: SessionSummary[], by: ChatGroupBy, places: ChatPlaces, order: readonly string[] = []): ChatGroup[] {
+  if (by === 'none') {
+    const at = new Map(order.map((id, i) => [id, i]));
+    const rank = (s: SessionSummary) => at.get(s.id) ?? order.length;
+    return sessions.length ? [{ key: '', name: '', items: [...sessions].sort((a, b) => rank(a) - rank(b) || a.startedAt - b.startedAt) }] : [];
+  }
+  const groups: ChatGroup[] = [];
+  if (by === 'project') {
+    for (const s of sessions) {
+      const key = sessionGroupKey(s);
+      const last = groups[groups.length - 1];
+      if (last?.key === key) last.items.push(s);
+      else groups.push({ key, name: s.groupName, items: [s] });
+    }
+    return groups;
+  }
+  const parents = folderParents(places.folders);
+  const tree = itemsInTreeOrder(places.projects, siblingOrder(places.projects, places.folders, places.layout, parents));
+  const rank = new Map(tree.map((p, i) => [p.id, i]));
+  const rankOf = (s: SessionSummary) => (s.projectId !== undefined ? (rank.get(s.projectId) ?? tree.length) : tree.length);
+  const byKey = new Map<string, ChatGroup>();
+  for (const s of [...sessions].sort((a, b) => rankOf(a) - rankOf(b))) {
+    const folder = projectFolderOf(places, parents, s.projectId);
+    const key = FOLDER_KEY + folder;
+    let g = byKey.get(key);
+    if (!g) {
+      g = { key, name: folder ? folderPath(places.folders, parents, folder) : NO_FOLDER, items: [] };
+      byKey.set(key, g);
+    }
+    g.items.push(s);
+  }
+  const none = byKey.get(FOLDER_KEY);
+  return [...[...byKey.values()].filter((g) => g !== none), ...(none ? [none] : [])];
+}
+
+/** The key Waiting for you's closed state is saved under. */
+export const WAITING_GROUP_KEY = '@waiting';
+
+/**
+ * The sessions the dashboard shows, in the list's order (`groups`), after
+ * Dashboard Filter: the hidden ones (`hiddenCards`) only with Show Hidden
+ * Chats, and with Only Chats Shown in the List only those the list shows: in an
+ * open group, or waiting in an open Waiting for you.
+ */
+export function dashboardCards(
+  groups: ChatGroup[],
+  shown: { hiddenCards: string[]; showHiddenCards: boolean; cardsListedOnly: boolean; collapsed: string[]; waitingFirst: boolean },
+): SessionSummary[] {
+  const hidden = new Set(shown.showHiddenCards ? [] : shown.hiddenCards);
+  const closed = new Set(shown.collapsed);
+  const waitingOpen = shown.waitingFirst && !closed.has(WAITING_GROUP_KEY);
+  return groups.flatMap((g) =>
+    g.items.filter((s) => !hidden.has(s.id) && (!shown.cardsListedOnly || !g.name || !closed.has(g.key) || (waitingOpen && !!s.waiting))),
+  );
+}
+
+/** The list's sessions top to bottom (Waiting for you aside): the order F8, F9 and Ctrl+1 to Ctrl+9 go by. */
+export const listOrder = (groups: ChatGroup[]): SessionSummary[] => groups.flatMap((g) => g.items);
+
 /** The sessions waiting for the user, the one that waited longest first. */
 export const waitingOf = (sessions: SessionSummary[]): SessionSummary[] =>
   sessions.filter((s) => s.waiting).sort((a, b) => a.waiting!.since - b.waiting!.since);
@@ -186,6 +333,24 @@ export function dashboardOrder(sessions: SessionSummary[], order: string[], wait
     .sort((a, b) => rank(a.s) - rank(b.s) || a.i - b.i)
     .map((x) => x.s);
   return waitingFirst ? [...waitingOf(placed), ...placed.filter((s) => !s.waiting)] : placed;
+}
+
+/**
+ * The Chats window's View settings with a compacted chat's id (`from`) put
+ * in place of the chat it went on in (`to`): its card keeps its size, its
+ * place, Hide from Dashboard and Focus's large card. Undefined when nothing names it.
+ */
+export function compactedView(shown: View['sessions'], from: string, to: string): View['sessions'] | undefined {
+  const swap = (ids: string[]) => ids.map((id) => (id === from ? to : id));
+  const named = [shown.bigCards, shown.hiddenCards, shown.cardOrder].some((ids) => ids.includes(from)) || shown.focusCard === from;
+  if (!named) return undefined;
+  return {
+    ...shown,
+    bigCards: swap(shown.bigCards),
+    hiddenCards: swap(shown.hiddenCards),
+    cardOrder: swap(shown.cardOrder),
+    ...(shown.focusCard === from ? { focusCard: to } : {}),
+  };
 }
 
 /** The card order `ids` with the card `id` dropped before (or `after`) the card `target`. */

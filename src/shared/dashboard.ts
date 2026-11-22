@@ -1,5 +1,6 @@
 import { capFirst, resultLabel } from './format';
 import type { RunSummary } from './runs';
+import { permissionText } from './sessions';
 import type { ActiveRun, RunResult, Task, TaskNotice, TaskRuntime } from './types';
 
 /** A main-window dashboard row that needs the user. */
@@ -25,6 +26,21 @@ export interface RunningRow {
   task: Task;
   run: ActiveRun;
   runId: string;
+}
+
+/** The step a run in progress is at, as Running Now's rows say it. */
+export const STEP_LABELS: Record<ActiveRun['state'], string> = {
+  checking: 'Checking',
+  classifying: 'Classifying',
+  running: 'Running agent',
+};
+
+/** What a run in progress is doing: waiting for the user's answer, their go-ahead, or their permission for a tool call (as the Chats list words it), else its step. */
+export function runStepText(run: ActiveRun): string {
+  if (run.question !== null) return 'Waiting for your answer';
+  if (run.held) return 'Waiting for you';
+  if (run.permission) return permissionText(run.permission.tool);
+  return STEP_LABELS[run.state];
 }
 
 /** A main-window dashboard row for one of the latest runs: a task's, or a Remote Control folder project's or helper's. */

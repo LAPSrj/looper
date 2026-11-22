@@ -6,7 +6,8 @@ import fs from 'node:fs';
  * Claude Code writes the usage of every API response on its assistant
  * records: the context the response was given is input + cache read + cache
  * creation. A compaction writes a `compact_boundary` system record whose
- * compactMetadata.postTokens is the size after it.
+ * compactMetadata.postTokens is the size after it (compact_metadata.post_tokens
+ * in `claude -p`'s stream, where Claude Code 2.1.330's schema has it optional).
  *
  * Codex writes an `event_msg` of type `token_count` after every response;
  * info.last_token_usage.input_tokens is the context that response was given,
@@ -45,7 +46,7 @@ export function contextOfLine(line: string, kind: TranscriptKind): number | 'unk
   if (!rec) return null;
   if (kind === 'claude') {
     if (rec.type === 'system' && rec.subtype === 'compact_boundary') {
-      const post = obj(rec.compactMetadata)?.postTokens;
+      const post = obj(rec.compactMetadata)?.postTokens ?? obj(rec.compact_metadata)?.post_tokens;
       return typeof post === 'number' && post > 0 ? post : 'unknown';
     }
     // A subagent's records belong to its own conversation.
@@ -95,6 +96,8 @@ export interface SubagentStats {
   model?: string;
   effort?: string;
   tokens: number;
+  /** Its newest response ended its turn (stop_reason end_turn): it has stopped, unless a later message wakes it. */
+  stopped?: true;
 }
 
 /** What a subagent transcript line's response says: its model, effort and context; null for any other line. */
@@ -114,6 +117,7 @@ export function subagentStatsOfLine(line: string): SubagentStats | null {
     ...(typeof msg?.model === 'string' ? { model: msg.model } : {}),
     ...(typeof rec.effort === 'string' ? { effort: rec.effort } : {}),
     tokens: num(usage.input_tokens) + num(usage.cache_read_input_tokens) + num(usage.cache_creation_input_tokens),
+    ...(msg?.stop_reason === 'end_turn' ? { stopped: true as const } : {}),
   };
 }
 

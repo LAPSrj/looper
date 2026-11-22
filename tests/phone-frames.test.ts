@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { WindowRole } from '../src/shared/remote-access';
 import { iosAlertButtons, materialDialogButtons } from '../src/renderer/src/web/dialog-flows';
 import { AxisDrag, LongPress, LONG_PRESS_MS } from '../src/renderer/src/web/gestures';
-import { BACK_SETTLE_MS, BackStack, coversScreen, darkColor, INSPECTOR_WIDTH, presentation, splitLayout } from '../src/renderer/src/web/nav-stack';
+import { BACK_SETTLE_MS, BackStack, coversScreen, darkColor, drawnScreens, INSPECTOR_WIDTH, presentation, splitLayout } from '../src/renderer/src/web/nav-stack';
 
 describe('the bar over a page top color', () => {
   it('takes a light title over a dark color only', () => {
@@ -319,6 +319,30 @@ describe('presentation', () => {
     expect(coversScreen('full-dialog')).toBe(true);
     expect(coversScreen('page-sheet')).toBe(false);
     expect(coversScreen('bottom-sheet')).toBe(false);
+  });
+});
+
+describe('which screens are drawn', () => {
+  it("doesn't draw the main window under a chat, but keeps it for the back swipe", () => {
+    expect(drawnScreens(['root', 'push'], false)).toEqual({ visible: [false, true], covered: [true, false] });
+  });
+
+  it('draws the main window while the chat slides in over it', () => {
+    expect(drawnScreens(['root', 'push'], true)).toEqual({ visible: [true, true], covered: [false, false] });
+  });
+
+  it('draws what shows around a sheet, down to the first screen that covers everything', () => {
+    expect(drawnScreens(['root', 'push', 'page-sheet'], false)).toEqual({ visible: [false, true, true], covered: [false, false, false] });
+    expect(drawnScreens(['root', 'page-sheet', 'bottom-sheet'], false)).toEqual({ visible: [true, true, true], covered: [false, false, false] });
+  });
+
+  it('uncovers a sheet and the screen around it under a screen pushed over the sheet', () => {
+    expect(drawnScreens(['root', 'page-sheet', 'push'], false)).toEqual({ visible: [false, false, true], covered: [true, true, false] });
+    expect(drawnScreens(['root', 'push', 'push'], false)).toEqual({ visible: [false, false, true], covered: [false, true, false] });
+  });
+
+  it("doesn't draw what an Android full-screen dialog covers", () => {
+    expect(drawnScreens(['root', 'full-dialog'], false)).toEqual({ visible: [false, true], covered: [true, false] });
   });
 });
 

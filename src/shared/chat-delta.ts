@@ -52,6 +52,23 @@ export function rowSignature(r: MessageRow): string {
   ].join('|');
 }
 
+/**
+ * `next` (rows read again, as new objects) with every row that shows what the one before it with its id did kept as
+ * that object, so the rows that didn't change don't render again; `prev` itself when none changed.
+ */
+export function keepRows(prev: MessageRow[], next: MessageRow[]): MessageRow[] {
+  const before = new Map<string, MessageRow>();
+  for (const r of prev) before.set(r.id, r);
+  let same = prev.length === next.length;
+  const kept = next.map((r, i) => {
+    const old = before.get(r.id);
+    const keep = old && rowSignature(old) === rowSignature(r) ? old : r;
+    if (keep !== prev[i]) same = false;
+    return keep;
+  });
+  return same ? prev : kept;
+}
+
 const historyKey = (h: MessageRow[]) => `${h.length}:${h[0]?.id ?? ''}:${h.at(-1)?.id ?? ''}`;
 
 let encoders = 0;

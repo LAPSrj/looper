@@ -79,7 +79,8 @@ function make(depth: number): Level {
     skipTaskbar: true,
     focusable: false,
     hasShadow: false,
-    webPreferences: { preload: page!.preload, contextIsolation: true, sandbox: true, nodeIntegration: false },
+    // Zoomed as the window whose menu it shows (zoomTo), not as every page of the origin.
+    webPreferences: { preload: page!.preload, contextIsolation: true, sandbox: true, nodeIntegration: false, zoomMode: 'isolated' },
   });
   win.removeMenu();
   const level: Level = { win, ready: false, layout: null, shown: false };
@@ -120,9 +121,22 @@ export function showMenuPopups(from: unknown, next: MenuPopupState | null): bool
       break;
     }
     const level = (levels[d] ??= make(d));
+    zoomTo(level);
     send(level, { ...lv, cues: next.cues });
   }
   return true;
+}
+
+/** The page zoom of the window whose menu is open: its menu is drawn at that zoom, as the menu bar it opens from. */
+function ownerZoom(): number {
+  return (owner && !owner.isDestroyed() && owner.webContents.getZoomFactor()) || 1;
+}
+
+/** The level's page at its owner's zoom, before it draws the owner's menu. */
+function zoomTo(level: Level): void {
+  const z = ownerZoom();
+  const wc = level.win.webContents;
+  if (level.ready && !wc.isDestroyed() && wc.getZoomFactor() !== z) wc.setZoomFactor(z);
 }
 
 function release(): void {
@@ -192,7 +206,10 @@ export function menuLevelLayout(from: unknown, depth: number, layout: MenuLevelL
     level.win.setAlwaysOnTop(true, 'pop-up-menu');
     // A submenu opened while its window loaded.
     const lv = state?.levels[depth];
-    if (lv) send(level, { ...lv, cues: state!.cues });
+    if (lv) {
+      zoomTo(level);
+      send(level, { ...lv, cues: state!.cues });
+    }
     return;
   }
   level.layout = layout;
@@ -203,15 +220,18 @@ export function menuLevelLayout(from: unknown, depth: number, layout: MenuLevelL
 function place(depth: number): void {
   const level = levels[depth];
   if (!owner || owner.isDestroyed() || !state || !level?.layout || !state.levels[depth]) return;
-  const { width, height } = level.layout;
+  // The level's page is at its owner's zoom (zoomTo), so its CSS px are `z` screen px.
+  const z = ownerZoom();
+  const width = Math.ceil(level.layout.width * z);
+  const height = Math.ceil(level.layout.height * z);
+  const pad = Math.round(MENU_PAD * z);
   // The menu's own top-left on the screen; its window is MENU_PAD larger on every side.
   let x: number;
   let y: number;
   if (depth === 0) {
     const content = owner.getContentBounds();
-    const zoom = owner.webContents.getZoomFactor() || 1;
-    x = Math.round(content.x + state.at.x * zoom);
-    y = Math.round(content.y + state.at.y * zoom);
+    x = Math.round(content.x + state.at.x * z);
+    y = Math.round(content.y + state.at.y * z);
     const work = screen.getDisplayNearestPoint({ x, y }).workArea;
     if (x + width > work.x + work.width) x = Math.max(work.x, work.x + work.width - width);
     // No room below: above the point, as a context menu opens near the bottom of the screen.
@@ -221,15 +241,16 @@ function place(depth: number): void {
     const active = state.levels[depth - 1]?.active ?? -1;
     if (!parent?.shown || !parent.layout || active < 0) return;
     const p = parent.win.getBounds();
-    const left = p.x + MENU_PAD;
-    const right = p.x + p.width - MENU_PAD;
+    const left = p.x + pad;
+    const right = p.x + p.width - pad;
     const work = screen.getDisplayNearestPoint({ x: left, y: p.y }).workArea;
-    x = right - OVERLAP;
-    if (x + width > work.x + work.width) x = Math.max(work.x, left + OVERLAP - width);
-    y = p.y + MENU_PAD + (parent.layout.tops[active] ?? 0) - SUBMENU_LIFT;
+    const overlap = Math.round(OVERLAP * z);
+    x = right - overlap;
+    if (x + width > work.x + work.width) x = Math.max(work.x, left + overlap - width);
+    y = Math.round(p.y + pad + ((parent.layout.tops[active] ?? 0) - SUBMENU_LIFT) * z);
     if (y + height > work.y + work.height) y = Math.max(work.y, work.y + work.height - height);
   }
-  level.win.setBounds({ x: x - MENU_PAD, y: y - MENU_PAD, width: width + 2 * MENU_PAD, height: height + 2 * MENU_PAD });
+  level.win.setBounds({ x: x - pad, y: y - pad, width: width + 2 * pad, height: height + 2 * pad });
   if (!level.win.webContents.isDestroyed()) level.win.webContents.send('ui:event', { type: 'menu-level-placed', seq: level.layout.seq });
   if (!level.shown) {
     level.win.setIgnoreMouseEvents(false);

@@ -1088,7 +1088,7 @@
   }
  },
  "runs.messages": {
-  "arity": 4,
+  "arity": 5,
   "calls": [
    [
     "invoke",
@@ -1097,7 +1097,8 @@
      "a0",
      "a1",
      "a2",
-     "a3"
+     "a3",
+     "a4"
     ]
    ]
   ],
@@ -1435,6 +1436,20 @@
   ],
   "result": {}
  },
+ "chat.setMuted": {
+  "arity": 2,
+  "calls": [
+   [
+    "send",
+    "chat:setMuted",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {}
+ },
  "chat.setAutoContinue": {
   "arity": 2,
   "calls": [
@@ -1540,6 +1555,38 @@
   "result": {
    "err": "Error invoking remote method 'command:screen': Error: boom command:screen"
   }
+ },
+ "chat.commandPrompt": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "command:prompt",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'command:prompt': Error: boom command:prompt"
+  }
+ },
+ "chat.answerCommand": {
+  "arity": 4,
+  "calls": [
+   [
+    "send",
+    "command:answer",
+    [
+     "a0",
+     "a1",
+     "a2",
+     "a3"
+    ]
+   ]
+  ],
+  "result": {}
  },
  "chat.writeCommand": {
   "arity": 3,
@@ -1961,6 +2008,16 @@
   ],
   "result": {}
  },
+ "sessions.markUnread": {
+  "arity": 1,
+  "calls": [["send", "sessions:markUnread", ["a0"]]],
+  "result": {}
+ },
+ "sessions.reorder": {
+  "arity": 1,
+  "calls": [["send", "sessions:reorder", ["a0"]]],
+  "result": {}
+ },
  "sessions.close": {
   "arity": 1,
   "calls": [
@@ -2004,6 +2061,21 @@
   ],
   "result": {
    "err": "Error invoking remote method 'sessions:restart': Error: boom sessions:restart"
+  }
+ },
+ "sessions.continueInTerminal": {
+  "arity": 1,
+  "calls": [
+   [
+    "invoke",
+    "sessions:continueInTerminal",
+    [
+     "a0"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom sessions:continueInTerminal"
   }
  },
  "sessions.showContextMenu": {
@@ -2116,11 +2188,28 @@
   "result": {}
  },
  "sessions.backgroundOutput": {
-  "arity": 2,
+  "arity": 3,
   "calls": [
    [
     "invoke",
     "sessions:backgroundOutput",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'sessions:backgroundOutput': Error: boom sessions:backgroundOutput"
+  }
+ },
+ "sessions.stopBackground": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "sessions:stopBackground",
     [
      "a0",
      "a1"
@@ -2128,7 +2217,7 @@
    ]
   ],
   "result": {
-   "err": "Error invoking remote method 'sessions:backgroundOutput': Error: boom sessions:backgroundOutput"
+   "err": "boom sessions:stopBackground"
   }
  },
  "sessions.fileThumbnail": {
@@ -2197,6 +2286,54 @@
   ],
   "result": {
    "err": "boom sessions:openFile"
+  }
+ },
+ "sessions.saveFile": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "sessions:saveFile",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom sessions:saveFile"
+  }
+ },
+ "sessions.previewPage": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "sessions:previewPage",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'sessions:previewPage': Error: boom sessions:previewPage"
+  }
+ },
+ "sessions.openFileDefault": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "sessions:openFileDefault",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom sessions:openFileDefault"
   }
  },
  "history.list": {
@@ -2296,6 +2433,17 @@
    [
     "send",
     "history:open",
+    []
+   ]
+  ],
+  "result": {}
+ },
+ "history.openTasks": {
+  "arity": 0,
+  "calls": [
+   [
+    "send",
+    "history:openTasks",
     []
    ]
   ],
@@ -2680,6 +2828,22 @@
    "err": "boom remoteAccess:renameDevice"
   }
  },
+ "remoteAccess.setDeviceNotifications": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "remoteAccess:setDeviceNotifications",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "boom remoteAccess:setDeviceNotifications"
+  }
+ },
  "remoteAccess.suggestPort": {
   "arity": 0,
   "calls": [
@@ -2706,19 +2870,19 @@
    "err": "boom remoteAccess:openPair"
   }
  },
- "remoteAccess.openRename": {
+ "remoteAccess.openDevice": {
   "arity": 1,
   "calls": [
    [
     "invoke",
-    "remoteAccess:openRename",
+    "remoteAccess:openDevice",
     [
      "a0"
     ]
    ]
   ],
   "result": {
-   "err": "boom remoteAccess:openRename"
+   "err": "boom remoteAccess:openDevice"
   }
  },
  "remoteAccess.beginSignIn": {

@@ -4,7 +4,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mergeClaudeSettings, mergeSystemPrompt, readUserSettings } from '../src/engine/claude-settings';
-import { renderMod } from '../src/engine/claude-mod';
+import { backgroundStoppedNote, renderMod } from '../src/engine/claude-mod';
+import { REPL_DATA_MARKER } from '../src/engine/repl-state';
 import { Logger } from '../src/engine/log';
 import { startAgent } from '../src/engine/steps/agent';
 import type { RunContext } from '../src/engine/steps/common';
@@ -481,7 +482,96 @@ describe("the mod's messages for the agent", () => {
   });
 });
 
+describe("the mod's Stop on background work", () => {
+  it("stops each task the engine names once with Claude Code's TaskStop, and tells the agent the user stopped it", async () => {
+    const dir = tmp('looper-mod-bgstop-');
+    const control = path.join(dir, 'c.json');
+    const module = path.join(dir, 'register.mjs');
+    fs.writeFileSync(
+      module,
+      renderMod({
+        files: { ready: path.join(dir, 'mod.json'), control, turnEnd: path.join(dir, 'turn-end.json'), usage: path.join(dir, 'u.json'), turn: path.join(dir, 't.json') },
+        inbox: [],
+        userInbox: [],
+        signalCommands: [],
+        guardMessage: '',
+        headless: false,
+        prompted: false,
+        windows: false,
+      }),
+    );
+    type Hook = ($: unknown, e: Record<string, unknown>, next: (e: Record<string, unknown>) => unknown) => unknown;
+    const hooks: Record<string, Hook> = {};
+    const { register } = (await import(pathToFileURL(module).href)) as { register: (on: (name: string, hook: Hook) => void) => void };
+    register((name, hook) => (hooks[name] = hook));
+    let tick: () => Promise<void> = async () => {};
+    const calls: unknown[] = [];
+    const notes: unknown[] = [];
+    const aborts: unknown[] = [];
+    const $ = {
+      fs: {
+        write: async (p: string, text: string) => fs.writeFileSync(p, text),
+        read: async (p: string) => fs.readFileSync(p, 'utf8'),
+        exists: async (p: string) => fs.existsSync(p),
+      },
+      session: { id: async () => 's1', usage: async () => ({}), append: async (a: { message: unknown }) => (notes.push(a.message), { uuid: 'n1', message: a.message }) },
+      clock: { every: (_ms: number, fn: () => Promise<void>) => (tick = fn) },
+      turn: { abort: async (a: unknown) => void aborts.push(a) },
+      tool: {
+        // As claude 2.1.330 answers a plugin's TaskStop; one that has ended is an error.
+        call: async (input: { tool: string; task_id: string }) => {
+          calls.push(input);
+          if (input.task_id === 'gone') return { isError: true, result: 'No task found with ID: gone', text: 'No task found with ID: gone' };
+          return { result: { message: `Successfully stopped task: ${input.task_id}`, task_id: input.task_id, task_type: 'local_bash', command: 'sleep 600' }, text: '' };
+        },
+      },
+    };
+    // A task named before this session started (a reload) isn't stopped again.
+    fs.writeFileSync(control, JSON.stringify({ abort: 0, stop: ['old'] }));
+    await hooks['session.start']($, {}, async (x: unknown) => x);
+    fs.writeFileSync(control, JSON.stringify({ abort: 0, stop: ['old', 'b1', 'gone'] }));
+    await tick();
+    await tick();
+    expect(calls).toEqual([
+      { tool: 'TaskStop', task_id: 'b1' },
+      { tool: 'TaskStop', task_id: 'gone' },
+    ]);
+    expect(notes).toEqual([{ type: 'user', content: [{ type: 'text', text: backgroundStoppedNote('b1', 'sleep 600') }] }]);
+    // Stop on the turn ends only the turn: background work (a subagent included) keeps running (checked live on claude 2.1.330).
+    const turnId = 'turn-1';
+    await hooks['turn.start']($, { turnId }, async (x: unknown) => x);
+    fs.writeFileSync(control, JSON.stringify({ abort: 1, stop: ['old', 'b1', 'gone'] }));
+    await tick();
+    expect(aborts).toEqual([{ turnId }]);
+    expect(calls).toHaveLength(2);
+  });
+});
+
 describe('a Claude Code run on the mod', () => {
+  it("asks the mod to stop a background task, keeping the list when Stop ends a turn", async () => {
+    const ctx = makeCtx(`${MOD_READY}; sleep 30`);
+    const handle = await startAgent(ctx, { onData: () => {} });
+    const control = () => JSON.parse(fs.readFileSync(path.join(ctx.runDir, 'mod-control.json'), 'utf8'));
+    for (let i = 0; i < 100; i++) {
+      try {
+        handle.stopBackground('b1');
+        break;
+      } catch (err) {
+        // The mod hasn't reported yet.
+        expect((err as Error).message).toBe('The agent is still starting. Try again in a moment.');
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+    expect(control()).toEqual({ abort: 0, stop: ['b1'] });
+    handle.stopBackground('b2');
+    handle.stopBackground('b1');
+    expect(control()).toEqual({ abort: 0, stop: ['b1', 'b2'] });
+    handle.stopTurn();
+    expect(control()).toEqual({ abort: 1, stop: ['b1', 'b2'] });
+    await handle.stop('stopped', 'done');
+    expect(() => handle.stopBackground('b3')).toThrow('The agent has ended.');
+  }, 30_000);
+
   it("merges the harness's --settings and --append-system-prompt into Looper's, and passes neither on", async () => {
     const ctx = makeCtx(`${MOD_READY}; looper-done success "ok"; sleep 0.3; printf '{"last_assistant_message":"r"}' > "$LOOPER_STOP_FILE"; sleep 30`, {}, [
       '--settings',
@@ -529,9 +619,46 @@ describe('a Claude Code run on the mod', () => {
     const handle = await startAgent(ctx, { onData: () => {} });
     await new Promise((r) => setTimeout(r, 2500));
     handle.stopTurn();
-    expect(JSON.parse(fs.readFileSync(path.join(ctx.runDir, 'mod-control.json'), 'utf8'))).toEqual({ abort: 1 });
+    expect(JSON.parse(fs.readFileSync(path.join(ctx.runDir, 'mod-control.json'), 'utf8'))).toEqual({ abort: 1, stop: [] });
     expect(handle.turnOver).toBe(true);
     await handle.stop();
+  }, 30_000);
+
+  /** A fake whose mod answers the first REPL snapshot request with the id the script carries. */
+  const SAVES_REPL = [
+    MOD_READY,
+    'for i in $(seq 200); do [ -e "$LOOPER_RUN_DIR/repl-snapshot.js" ] && break; sleep 0.05; done',
+    String.raw`id=$(sed -n 's/.*, \([0-9]\{12,\}\), [0-9]*);$/\1/p' "$LOOPER_RUN_DIR/repl-snapshot.js")`,
+    `printf '{"version":2,"id":%s,"roots":["a"],"functions":[],"lost":[],"changed":[],"bytes":2}' "$id" > "$LOOPER_RUN_DIR/repl-snapshot.json"`,
+    'sleep 30',
+  ].join('\n');
+
+  it('asks the mod for the REPL state and reads its answer, or says it never came', async () => {
+    const ctx = makeCtx(SAVES_REPL);
+    const handle = await startAgent(ctx, { onData: () => {} });
+    let snapshot: Awaited<ReturnType<typeof handle.snapshotRepl>> | undefined;
+    for (let i = 0; i < 100 && !snapshot; i++) {
+      try {
+        snapshot = await handle.snapshotRepl(['a', 'b'], 5000);
+      } catch (err) {
+        expect((err as Error).message).toBe('The agent is still starting. Try again in a moment.');
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+    expect(snapshot).toEqual({ version: 2, id: expect.any(Number), roots: ['a'], functions: [], lost: [], changed: [], bytes: 2, parts: 1 });
+    const script = path.join(ctx.runDir, 'repl-snapshot.js');
+    expect(JSON.parse(fs.readFileSync(path.join(ctx.runDir, 'mod-control.json'), 'utf8'))).toEqual({
+      abort: 0,
+      stop: [],
+      snapshot: { id: snapshot!.id, script, out: path.join(ctx.runDir, 'repl-snapshot.json'), data: path.join(ctx.runDir, 'repl-data.json') },
+    });
+    expect(fs.readFileSync(script, 'utf8')).toContain('["b", () => b]');
+    // The fake answers once, so the next request runs out of time, under an id of its own.
+    const late = await handle.snapshotRepl(['a'], 400);
+    expect(late).toEqual({ version: 2, id: expect.any(Number), error: "The REPL didn't save its state in time." });
+    expect(late.id).toBeGreaterThan(snapshot!.id);
+    await handle.stop('stopped', 'done');
+    await expect(handle.snapshotRepl(['a'])).rejects.toThrow('The agent has ended.');
   }, 30_000);
 
   /** A fake that asks permission as the hook would, then copies Looper's answer where the test reads it. */
@@ -642,4 +769,136 @@ describe('a Claude Code run on the mod', () => {
     expect(end.headline).toBe('Fixed it');
     expect(end.body).toBe('The full report.');
   }, 30_000);
+});
+
+
+describe("the mod's REPL state across a compaction", () => {
+  type Hook = ($: unknown, e: Record<string, unknown>, next: (e: Record<string, unknown>) => unknown) => unknown;
+  type Step = ($: unknown, e: Record<string, unknown>, next: () => AsyncGenerator<unknown, unknown>) => AsyncGenerator<unknown, unknown>;
+
+  async function load(dir: string, name: string, prelude?: string, preludeData?: string[]) {
+    const module = path.join(dir, name);
+    fs.writeFileSync(
+      module,
+      renderMod({
+        files: { ready: path.join(dir, 'mod.json'), control: path.join(dir, 'c.json'), turnEnd: path.join(dir, 'turn-end.json'), usage: path.join(dir, 'u.json'), turn: path.join(dir, 't.json') },
+        inbox: [],
+        userInbox: [],
+        signalCommands: [],
+        guardMessage: '',
+        headless: false,
+        prompted: false,
+        windows: false,
+        ...(prelude ? { prelude } : {}),
+        ...(preludeData ? { preludeData } : {}),
+      }),
+    );
+    const hooks: Record<string, Hook> = {};
+    const { register } = (await import(pathToFileURL(module).href)) as { register: (on: (name: string, hook: Hook) => void) => void };
+    register((n, hook) => (hooks[n] = hook));
+    let every: (() => Promise<void>) | undefined;
+    const calls: Record<string, unknown>[] = [];
+    // Each call asks the mod's tool.check, as Claude Code's permission check does, and so do the calls its script makes.
+    const decisions: string[] = [];
+    const check = async (tool: string, input: Record<string, unknown>) =>
+      ((await hooks['tool.check']($, { tool, input }, async () => ({ decision: 'ask' }))) as { decision: string }).decision;
+    const tools = { names: ['REPL', 'Read'] };
+    const $ = {
+      fs: {
+        write: async (p: string, text: string) => (fs.mkdirSync(path.dirname(p), { recursive: true }), fs.writeFileSync(p, text)),
+        read: async (p: string) => fs.readFileSync(p, 'utf8'),
+        exists: async (p: string) => fs.existsSync(p),
+      },
+      session: { id: async () => 's1', usage: async () => ({}) },
+      clock: { every: (_ms: number, fn: () => Promise<void>) => void (every = fn) },
+      tool: {
+        list: async () => tools.names.map((n) => ({ name: n })),
+        call: async (input: Record<string, unknown>) => {
+          calls.push(input);
+          decisions.push(await check('REPL', { code: input.code }));
+          return { result: { result: '(dispatched #1)', asyncDispatched: true }, text: '(dispatched #1)' };
+        },
+      },
+    };
+    await hooks['session.start']($, {}, async (x) => x);
+    const step = async (turnId: string) => {
+      let asked = false;
+      const gen = (hooks['turn.step'] as unknown as Step)($, { turnId, index: 0 }, async function* () {
+        asked = true;
+        return { turnId, index: 0, answer: 'from the model', toolUses: [], stopReason: 'end_turn', usage: null };
+      });
+      let r = await gen.next();
+      while (!r.done) r = await gen.next();
+      return { asked, result: r.value };
+    };
+    return { hooks, $, calls, decisions, check, tools, poll: () => every!(), step };
+  }
+
+  it('saves the state between turns without asking, and the turn its result starts reaches no model', async () => {
+    const dir = tmp('looper-mod-repl-');
+    const m = await load(dir, 'snapshot.mjs');
+    const script = path.join(dir, 'repl-snapshot.js');
+    const out = path.join(dir, 'repl-snapshot.json');
+    const data = path.join(dir, 'repl-data.json');
+    fs.writeFileSync(script, 'SNAPSHOT SCRIPT');
+    fs.writeFileSync(path.join(dir, 'c.json'), JSON.stringify({ abort: 0, stop: [], snapshot: { id: 1, script, out, data } }));
+    await m.poll();
+    expect(m.calls).toEqual([{ tool: 'REPL', code: 'SNAPSHOT SCRIPT', description: 'Looper: save the REPL state for the next session' }]);
+    expect(m.decisions).toEqual(['allow']);
+    // The script's own writes of the snapshot go through, and nothing else does.
+    expect(await m.check('Write', { file_path: out })).toBe('allow');
+    expect(await m.check('Write', { file_path: data })).toBe('allow');
+    expect(await m.check('Write', { file_path: data + '.1' })).toBe('allow');
+    expect(await m.check('Write', { file_path: data + '.x' })).toBe('ask');
+    expect(await m.check('Write', { file_path: path.join(dir, 'other.json') })).toBe('ask');
+    expect(await m.check('REPL', { code: 'SNAPSHOT SCRIPT' })).toBe('ask');
+    // The same request again does nothing.
+    await m.poll();
+    expect(m.calls).toHaveLength(1);
+    // The script's result starts a turn with no prompt, which ends without a request to the model.
+    await m.hooks['turn.start'](m.$, { turnId: 'wake', text: '' }, async (x) => x);
+    expect(await m.step('wake')).toEqual({ asked: false, result: { turnId: 'wake', index: 0, answer: '', toolUses: [], stopReason: null, usage: null } });
+    expect(await m.check('Write', { file_path: out })).toBe('ask');
+    expect(await m.check('Write', { file_path: data })).toBe('ask');
+    await m.hooks['turn.complete'](m.$, { turnId: 'wake', reason: 'completed', answer: '' }, async (x) => x);
+    // The next turn is the user's and reaches the model.
+    await m.hooks['turn.start'](m.$, { turnId: 't2', text: 'hello' }, async (x) => x);
+    expect((await m.step('t2')).asked).toBe(true);
+  });
+
+  it("answers a request it can't run in the snapshot's file", async () => {
+    const dir = tmp('looper-mod-repl-');
+    const m = await load(dir, 'busy.mjs');
+    const out = path.join(dir, 'repl-snapshot.json');
+    const script = path.join(dir, 'repl-snapshot.js');
+    fs.writeFileSync(script, 'SNAPSHOT SCRIPT');
+    await m.hooks['turn.start'](m.$, { turnId: 't1', text: 'work' }, async (x) => x);
+    fs.writeFileSync(path.join(dir, 'c.json'), JSON.stringify({ abort: 0, stop: [], snapshot: { id: 2, script, out } }));
+    await m.poll();
+    expect(JSON.parse(fs.readFileSync(out, 'utf8'))).toEqual({ version: 1, id: 2, error: 'A turn was running.' });
+    await m.hooks['turn.complete'](m.$, { turnId: 't1', reason: 'completed', answer: '' }, async (x) => x);
+    m.tools.names = ['Read'];
+    fs.writeFileSync(path.join(dir, 'c.json'), JSON.stringify({ abort: 0, stop: [], snapshot: { id: 3, script, out } }));
+    await m.poll();
+    expect(JSON.parse(fs.readFileSync(out, 'utf8'))).toEqual({ version: 1, id: 3, error: 'The session has no REPL.' });
+    expect(m.calls).toEqual([]);
+  });
+
+  it('starts the first turn with the restore script and its data, once', async () => {
+    const dir = tmp('looper-mod-repl-');
+    const prelude = path.join(dir, 'repl-prelude.js');
+    const data = path.join(dir, 'repl-data.json');
+    fs.writeFileSync(prelude, `const data = ${REPL_DATA_MARKER}; 'RESTORE'`);
+    // The data comes in parts, joined in order.
+    fs.writeFileSync(data, '{"roots":[],"nodes":[],');
+    fs.writeFileSync(data + '.1', '"$&":1}');
+    const m = await load(dir, 'prelude.mjs', prelude, [data, data + '.1']);
+    await m.hooks['turn.start'](m.$, { turnId: 't1', text: 'go on' }, async (x) => x);
+    expect(m.calls).toEqual([{ tool: 'REPL', code: `const data = {"roots":[],"nodes":[],"$&":1}; 'RESTORE'`, description: "Looper: restore the earlier session's REPL state" }]);
+    expect(m.decisions).toEqual(['allow']);
+    expect((await m.step('t1')).asked).toBe(true);
+    await m.hooks['turn.complete'](m.$, { turnId: 't1', reason: 'completed', answer: '' }, async (x) => x);
+    await m.hooks['turn.start'](m.$, { turnId: 't2', text: 'more' }, async (x) => x);
+    expect(m.calls).toHaveLength(1);
+  });
 });

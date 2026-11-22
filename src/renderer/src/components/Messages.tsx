@@ -6,6 +6,7 @@ import { messagesToMarkdown } from '@shared/messages-md';
 import { groupRuns } from '@shared/runs';
 import type { RunRecord } from '@shared/types';
 import { subscribe } from '../events';
+import { useRunPermission } from '../live-state';
 import { capFirst, fmtHourMinute, fmtTime, formatDuration, resultLabel, stripAnsi } from '../format';
 import { resultTone } from '../phone-lists';
 import { initialRow, rowMatches, runTableRows, type ConversationRow, type RunTableRow, type StepRow } from '../run-rows';
@@ -198,7 +199,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
 
   // The window's menu bar (a phone's More), from the one list.
   const commandState = useCommandState();
-  const [canContinue, setCanContinue] = useState({ chat: false, terminal: false, guidance: false, compact: false });
+  const [canContinue, setCanContinue] = useState({ chat: false, terminal: false, guidance: false, compact: false, start: false });
   const [workFolder, setWorkFolder] = useState(false);
   const [inAttention, setInAttention] = useState(false);
   // Opening a run's window takes its notices off Needs attention; Close and Keep in Needs Attention puts them back.
@@ -301,6 +302,8 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
     [records],
   );
   const rows = useMemo(() => runTableRows(result?.rows ?? [], steps, { raw, running }), [result, steps, raw, running]);
+  // A permission request of the run's agent shows in its conversation, as in the Chats view.
+  const permission = useRunPermission(taskId, runId);
   const visible = useMemo(() => {
     const f = filter.trim().toLowerCase();
     return rows.filter((r) => !f || rowMatches(r, f));
@@ -410,6 +413,7 @@ export function MessagesView({ taskId, runId, agentId, running, refreshKey, focu
       waitingText={emptyText()}
       pendingGuidance={c.source === 'classifier' ? undefined : result?.pendingGuidance}
       drawAll={find !== null}
+      permission={c.source === 'classifier' || agentId ? undefined : permission}
     />
   );
 

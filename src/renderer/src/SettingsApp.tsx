@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Environment, Settings, Task, TaskFolder } from '@shared/types';
 import { CLI_LEVEL_CHOICES, CLI_LEVELS, type CliLevel } from '@shared/cli-levels';
+import { PREVIEW_NETWORK_CHOICES, PREVIEW_NETWORKS, type PreviewNetwork } from '@shared/preview';
 import { describeEnvironment, newEnvironment, withoutEnvironment } from '@shared/environments';
 import { plural } from '@shared/format';
+import { AUTO_COMPACT_MAX, AUTO_COMPACT_MIN, clampAutoCompactPercent } from '@shared/auto-compact';
 import { COMPACTION_RESULT_TOKENS, type CompactionResultTokens } from '@shared/compact';
 import { CheckboxField, EmptyWindow, Field, FormGroup, InlineField, NumberField, NumberInput, RadioField, SelectInput, StepFields, TabBar } from './components/ui';
 import { WindowActions } from './components/WindowActions';
@@ -58,6 +60,7 @@ export function SettingsApp() {
   const [terminal, setTerminal] = useState<Settings['terminal'] | null>(null);
   const [chats, setChats] = useState<Settings['chats'] | null>(null);
   const [cliCommands, setCliCommands] = useState<CliLevel | null>(null);
+  const [previewNetwork, setPreviewNetwork] = useState<PreviewNetwork | null>(null);
   const [tasksFile, setTasksFile] = useState<string | undefined>(undefined);
   const [templatesFile, setTemplatesFile] = useState<string | undefined>(undefined);
   const [moveTasksOnSave, setMoveTasksOnSave] = useState(false);
@@ -98,6 +101,7 @@ export function SettingsApp() {
       setTerminal((v) => v ?? info.settings.terminal);
       setChats((v) => v ?? info.settings.chats);
       setCliCommands((v) => v ?? info.settings.cliCommands);
+      setPreviewNetwork((v) => v ?? info.settings.previewNetwork);
       setTasksFile((v) => v ?? info.settings.tasksFile);
       setTemplatesFile((v) => v ?? info.settings.templatesFile);
       initTasksFile.current ??= info.settings.tasksFile;
@@ -128,7 +132,7 @@ export function SettingsApp() {
 
   useDialogKeys({ tabs: visibleTabs.map(([id]) => id), tab, onTab: setTab });
 
-  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || confirmQuitRuns === null || confirmQuitWatchers === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || binDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null || promptRunOptions === null || builderView === null || terminal === null || chats === null || cliCommands === null) return <EmptyWindow />;
+  if (!live || defaultEnvId === null || completedFolderId === null || closeToTray === null || confirmQuitRuns === null || confirmQuitWatchers === null || notificationsEnabled === null || startWithSystem === null || staggerEnabled === null || staggerMin === null || staggerMax === null || staggerInterval === null || retentionDays === null || engineLogDays === null || deleteCompleted === null || completedDays === null || binDays === null || restMinSleep === null || restGrace === null || restDisarmOnWake === null || promptRunOptions === null || builderView === null || terminal === null || chats === null || cliCommands === null || previewNetwork === null) return <EmptyWindow />;
 
   const envs = live.environments;
   const env = envs.find((e) => e.id === selected);
@@ -231,6 +235,7 @@ export function SettingsApp() {
       tasksFile,
       templatesFile,
       cliCommands,
+      previewNetwork,
       runRetentionDays: retentionDays,
       engineLogRetentionDays: engineLogDays,
       completedTaskRetention: { enabled: deleteCompleted, days: completedDays },
@@ -390,6 +395,22 @@ export function SettingsApp() {
               </InlineField>
             </FormGroup>
             <FormGroup>
+              <InlineField>
+                <CheckboxField
+                  label="Compact at turn end when the context passes"
+                  checked={chats.autoCompact.enabled}
+                  onChange={(on) => setChats({ ...chats, autoCompact: { ...chats.autoCompact, enabled: on } })}
+                />
+                <NumberInput
+                  label="Context share for compacting"
+                  suffix="%"
+                  min={AUTO_COMPACT_MIN}
+                  max={AUTO_COMPACT_MAX}
+                  disabled={!chats.autoCompact.enabled}
+                  value={chats.autoCompact.percent}
+                  onChange={(n) => setChats({ ...chats, autoCompact: { ...chats.autoCompact, percent: clampAutoCompactPercent(n) } })}
+                />
+              </InlineField>
               <Field label="Tool results when compacting">
                 <SelectInput
                   value={chats.compaction.resultTokens}
@@ -505,6 +526,15 @@ export function SettingsApp() {
                   {CLI_LEVELS.map((l) => (
                     <option key={l} value={l}>
                       {CLI_LEVEL_CHOICES[l]}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+              <Field label="Internet access for web pages in Preview">
+                <SelectInput value={previewNetwork} onChange={(e) => setPreviewNetwork(e.target.value as PreviewNetwork)}>
+                  {PREVIEW_NETWORKS.map((n) => (
+                    <option key={n} value={n}>
+                      {PREVIEW_NETWORK_CHOICES[n]}
                     </option>
                   ))}
                 </SelectInput>

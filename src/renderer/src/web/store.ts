@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { MenuItemSpec, MessageBoxSpec, FileDialogSpec, PopupButton, RemoteWindowSpec } from '../../../shared/remote-access';
+import { FRAME_PAGE, type MenuItemSpec, type MessageBoxSpec, type FileDialogSpec, type PopupButton, type RemoteWindowSpec } from '../../../shared/remote-access';
 import type { StoredShell } from './offline-store';
 import type { Session, ShellMessage } from './session';
 
@@ -84,7 +84,7 @@ export const initialShellState: ShellState = {
 };
 
 /** The iframe address of a window: the same bundle, its route in the hash. */
-export const windowSrc = (win: RemoteWindowSpec): string => `/index.html?w=${encodeURIComponent(win.w)}${win.hash ? `#${win.hash}` : ''}`;
+export const windowSrc = (win: RemoteWindowSpec): string => `${FRAME_PAGE}?w=${encodeURIComponent(win.w)}${win.hash ? `#${win.hash}` : ''}`;
 
 const patch = (windows: WebWindow[], w: string, p: Partial<WebWindow>): WebWindow[] => windows.map((x) => (x.w === w ? { ...x, ...p } : x));
 const toFront = (order: string[], w: string): string[] => [...order.filter((x) => x !== w), w];
@@ -126,6 +126,9 @@ export function reduceShell(s: ShellState, a: ShellAction): ShellState {
       const win = s.windows.find((x) => x.w === a.w);
       return win ? { ...s, windows: patch(s.windows, a.w, { hash: a.hash, nonce: win.nonce + 1 }) } : s;
     }
+    case 'window-hash':
+      // Only the part after # changes in the iframe's address: the page goes on as it is.
+      return { ...s, windows: patch(s.windows, a.w, { hash: a.hash }) };
     case 'reload': {
       const win = s.windows.find((x) => x.w === a.w);
       return win ? { ...s, windows: patch(s.windows, a.w, { nonce: win.nonce + 1 }) } : s;

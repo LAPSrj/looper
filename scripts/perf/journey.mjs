@@ -1,9 +1,20 @@
 // A day's use of the main window, measured step by step: startup, chats, the tabs, scrolling a long chat, typing,
-// opening the Engine Log, and the memory after startup and after use. `record(name, value)` gets each measurement.
+// closing a chat, opening the Engine Log, and the memory after startup and after use. `record(name, value)` gets each measurement.
 import * as path from 'node:path';
-import { sleep, launch, quit, watch, loadCost, typing, memory, profiled, ROOT } from './lib.mjs';
+import { sleep, launch, quit, watch, loadCost, typing, memory, profiled, ROOT, CHAT_SIZES } from './lib.mjs';
+import { settle, noteConditions } from './machine.mjs';
+
+/** A timed step, run once the computer is quiet (machine.mjs), keeping what it was measured in. */
+async function timed(label, fn) {
+  const settled = await settle();
+  const t0 = Date.now();
+  const out = await fn();
+  noteConditions(`journey: ${label}`, settled, t0);
+  return out;
+}
 
 export async function journey(chats, record) {
+  const settledStart = await settle();
   const t0 = Date.now();
   const { app, page } = await launch();
   const startup = await watch(page, async () => {}, { quietMs: 2000, maxMs: 30_000 });
@@ -14,6 +25,7 @@ export async function journey(chats, record) {
     fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime ?? 0,
   }));
   record('startup', { windowAtMs: Math.round(paint.origin - created), contentAtMs: Math.round(paint.origin + paint.fcp - created), wallMs: Date.now() - t0, ...startup });
+  noteConditions('journey: startup', settledStart, t0);
   record('memory after startup', await memory(app));
   // As the main process selects a chat (a notification, Compact): the Chats tab with that chat, '' for its dashboard of live cards.
   const select = (id) =>
@@ -41,14 +53,14 @@ export async function journey(chats, record) {
     await quit(app);
     return;
   }
-  record('chats tab', await watch(page, () => select('')));
+  record('chats tab', await timed('chats tab', () => watch(page, () => select(''))));
   for (const [label, id] of [
     ['open long chat', chats[0]],
     ['switch to another chat', chats[1]],
     ['switch back to the long chat', chats[0]],
     ['back to the chats dashboard', ''],
   ]) {
-    const step = await profiled(page, label, () => watch(page, () => select(id)));
+    const step = await timed(label, () => profiled(page, label, () => watch(page, () => select(id))));
     // A chat opens at its newest message: how far from the end it ended up (0 is right).
     const toEnd = id ? await page.evaluate(() => {
       const s = document.querySelector('.chat-scroll');
@@ -67,13 +79,13 @@ export async function journey(chats, record) {
   // The pane's state is saved: a run that stopped partway can leave it open.
   if (!(await page.$('.activity-tabs'))) await activity.click();
   await page.waitForSelector('.activity-tabs');
-  record('open the Files tab', await profiled(page, 'open the Files tab', () => watch(page, () => page.click('.activity-tabs [role="tab"]:has-text("Files")'))));
+  record('open the Files tab', await timed('open the Files tab', () => profiled(page, 'open the Files tab', () => watch(page, () => page.click('.activity-tabs [role="tab"]:has-text("Files")')))));
   if (process.env.BENCH_SHOT) await page.screenshot({ path: path.join(ROOT, 'files-tab.png') });
   for (const [label, id] of [
     ['switch chats with the Files tab open', chats[2]],
     ['switch back with the Files tab open', chats[1]],
   ]) {
-    record(label, await profiled(page, label, () => watch(page, () => select(id))));
+    record(label, await timed(label, () => profiled(page, label, () => watch(page, () => select(id)))));
   }
   await activity.click();
   await select('');
@@ -84,20 +96,22 @@ export async function journey(chats, record) {
   if (box) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   record(
     'scroll the chats dashboard',
-    await profiled(page, 'scroll the chats dashboard', () =>
-      watch(page, async () => {
-        for (let i = 0; i < 30; i++) {
-          await page.mouse.wheel(0, 300);
-          await sleep(16);
-        }
-      }),
+    await timed('scroll the chats dashboard', () =>
+      profiled(page, 'scroll the chats dashboard', () =>
+        watch(page, async () => {
+          for (let i = 0; i < 30; i++) {
+            await page.mouse.wheel(0, 300);
+            await sleep(16);
+          }
+        }),
+      ),
     ),
   );
   // The main window's tabs, clicked in the tab rail as a person would.
   for (const tab of ['Dashboard', 'Projects', 'Tasks', 'Chats']) {
     const label = `${tab} tab`;
     // By the tab's class: a text selector walks every text node of the page, and its time showed up as the app's.
-    record(label, await profiled(page, label, () => watch(page, () => page.click(`.view-tab:has-text("${tab}")`))));
+    record(label, await timed(label, () => profiled(page, label, () => watch(page, () => page.click(`.view-tab:has-text("${tab}")`)))));
     if (process.env.BENCH_SHOT) await page.screenshot({ path: path.join(ROOT, `${tab}.png`) });
   }
   await select(chats[0]);
@@ -105,22 +119,45 @@ export async function journey(chats, record) {
   await page.click('.chat-scroll');
   record(
     'scroll up the long chat',
-    await profiled(page, 'scroll up the long chat', () =>
-      watch(page, async () => {
-        for (let i = 0; i < 40; i++) {
-          await page.mouse.wheel(0, -600);
-          await sleep(16);
-        }
-      }),
+    await timed('scroll up the long chat', () =>
+      profiled(page, 'scroll up the long chat', () =>
+        watch(page, async () => {
+          for (let i = 0; i < 40; i++) {
+            await page.mouse.wheel(0, -600);
+            await sleep(16);
+          }
+        }),
+      ),
     ),
   );
   await page.click('textarea');
   // BENCH_BEFORE_TYPING: a script run in the main window first, to try a change to the message box.
   if (process.env.BENCH_BEFORE_TYPING) await page.evaluate(process.env.BENCH_BEFORE_TYPING);
-  record('typing in the message box', await profiled(page, 'typing in the message box', () => typing(page, 'check the sync script for the starter package and tell me')));
+  record('typing in the message box', await timed('typing in the message box', () => profiled(page, 'typing in the message box', () => typing(page, 'check the sync script for the starter package and tell me'))));
   await page.keyboard.press('Control+A');
   await page.keyboard.press('Delete');
+  // Close Conversation on the chat on screen, as from its right-click menu. A 400-row chat no other step opens, the
+  // last of them still open: each run of the bench closes another of the same size, and the others keep theirs.
+  const open = new Set((await page.evaluate(() => window.looper.sessions.state())).sessions.map((s) => s.id));
+  const closing = chats.filter((id, i) => i > 2 && CHAT_SIZES[i] === 400 && open.has(id)).at(-1);
+  if (closing) {
+    await select(closing);
+    await page.waitForSelector('.chat-scroll');
+    // With its agent running in a terminal, as a chat someone worked in has (interactive, Looper's primary session
+    // type): Restart Agent starts Claude Code without a message.
+    await page.evaluate((id) => window.looper.chat.configure(id, { mode: 'interactive' }), closing).catch(() => undefined);
+    await page.evaluate((id) => window.looper.sessions.restart(id), closing).catch(() => undefined);
+    for (let i = 0; i < 60; i++) {
+      const s = (await page.evaluate(() => window.looper.sessions.state())).sessions.find((x) => x.id === closing);
+      if (s?.status !== 'starting') break;
+      await sleep(500);
+    }
+    await sleep(3000);
+    record('close a chat', await timed('close a chat', () => profiled(page, 'close a chat', () => watch(page, () => page.evaluate((id) => window.looper.sessions.close(id), closing)))));
+  }
   const before = app.windows().length;
+  const settledLog = await settle();
+  const logAt = Date.now();
   const opened = watch(page, () => page.evaluate(() => window.looper.commands.host('engine-log')));
   let log = null;
   for (let i = 0; i < 100 && !log; i++) {
@@ -128,7 +165,10 @@ export async function journey(chats, record) {
     log = app.windows().length > before ? app.windows().find((w) => w.url().includes('engine-log')) : null;
   }
   await opened;
-  if (log) record('engine log window', await loadCost(log));
+  if (log) {
+    record('engine log window', await loadCost(log));
+    noteConditions('journey: engine log window', settledLog, logAt);
+  }
   await sleep(3000);
   record('memory after use', await memory(app));
   await away();

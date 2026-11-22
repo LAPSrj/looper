@@ -31,6 +31,12 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (m.type !== 'user') return;
   out({ type: 'system', subtype: 'init', session_id: 'chat-session', model: 'fake' });
   out({ ...m, parent_tool_use_id: null, isReplay: true });
+  // A message with FULL in it, unless it starts a compacted chat, ends its turn on a full context.
+  const text = typeof m.message.content === 'string' ? m.message.content : m.message.content.filter((c) => c.type === 'text').map((c) => c.text).join('\\n');
+  if (text.includes('FULL') && !text.startsWith('<compacted-conversation>')) {
+    out({ type: 'assistant', parent_tool_use_id: null, error: 'invalid_request', is_api_error_message: true, message: { model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text: 'Prompt is too long' }] } });
+    return out({ type: 'result', subtype: 'success', is_error: true, result: 'Prompt is too long', terminal_reason: 'blocking_limit' });
+  }
   out({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'ok' }] } });
   out({ type: 'result', subtype: 'success', result: 'ok' });
 }).on('close', () => process.exit(0));
@@ -60,6 +66,10 @@ function fakeAgent(starts: RunContext[], ends: (AgentEnd & { doneStatus?: string
       resize: () => undefined,
       deliverGuidance: () => undefined,
       stopTurn: () => undefined,
+      stopBackground: () => undefined,
+      snapshotRepl: async () => {
+        throw new Error('unused');
+      },
       turnOver: false,
       stop: async () => undefined,
       finished: new Promise((r) => setTimeout(() => r(end), 10)),
@@ -106,7 +116,7 @@ describe('a run opened in a chat', { timeout: 30_000 }, () => {
     expect(rt().lastResult).toBe('warning');
     const chatId = e.startChat('t1', runId).id;
     expect(rt().runs).toMatchObject([{ runId, state: 'running', chat: chatId, relatedId: 'a' }]);
-    expect(e.canContinueRun('t1', runId)).toMatchObject({ chat: true, terminal: false, guidance: false });
+    expect(await e.canContinueRun('t1', runId)).toMatchObject({ chat: true, terminal: false, guidance: false });
     // Continue in Chat on the run again brings the same chat.
     expect(e.startChat('t1', runId).id).toBe(chatId);
 
@@ -123,6 +133,56 @@ describe('a run opened in a chat', { timeout: 30_000 }, () => {
     expect(rt()).toMatchObject({ state: 'idle', lastRunId: runId, lastResult: 'success', lastDetail: 'reported' });
     const runs = await e.listRuns('t1', 100);
     expect(runs.filter((r) => r.runId === runId).at(-1)).toMatchObject({ phase: 'result', result: 'success', body: '# Report' });
+  });
+
+  it('compacted by itself, the chat hands the run to the new chat, which gets its events and writes its report', async () => {
+    const { e, starts, rt, event, runId } = await setUp([ended('first', 'warning'), ended('reported', 'success', '# Report')]);
+    const compacted: string[] = [];
+    e.on((ev) => {
+      if (ev.type === 'chat:compacted') compacted.push(ev.to);
+    });
+    const chatId = e.startChat('t1', runId).id;
+    const replies = (id: string) => (e.getChat(id)?.rows ?? []).filter((r) => r.kind === 'agent' && r.text === 'ok').length;
+    e.sendChat(chatId, 'one more thing', []);
+    await until(() => replies(chatId) === 1 && e.getChat(chatId)?.status === 'ready', 'the reply');
+    e.sendChat(chatId, 'now FULL', []);
+    await until(() => compacted.length === 1, 'the compaction');
+    const next = compacted[0];
+    await until(() => e.getChat(chatId) === undefined, 'the old chat to close');
+    // The run is still open, now in the new chat: closing the old one wrote no report.
+    expect(rt().runs).toMatchObject([{ runId, state: 'running', chat: next }]);
+    expect(starts).toHaveLength(1);
+    expect(e.startChat('t1', runId).id).toBe(next);
+    await until(() => replies(next) === 1 && e.getChat(next)?.status === 'ready', 'the message sent again');
+    await event('a');
+    await until(() => (e.getChat(next)?.rows ?? []).some((r) => r.kind === 'events'), "the run's event in the new chat");
+    await until(() => replies(next) === 2 && e.getChat(next)?.status === 'ready', 'the turn on the event');
+    await e.closeSession(next);
+    await until(() => rt().runs.length === 0, 'the report');
+    expect(starts).toHaveLength(2);
+    expect(rt()).toMatchObject({ state: 'idle', lastRunId: runId, lastResult: 'success', lastDetail: 'reported' });
+  });
+
+  it('after Compact into New Chat, the new chat holds the run, gets its events, and its close writes the report', async () => {
+    const { e, starts, rt, event, runId } = await setUp([ended('first', 'warning'), ended('reported', 'success', '# Report')]);
+    const chatId = e.startChat('t1', runId).id;
+    const replies = (id: string) => (e.getChat(id)?.rows ?? []).filter((r) => r.kind === 'agent' && r.text === 'ok').length;
+    e.sendChat(chatId, 'one more thing', []);
+    await until(() => replies(chatId) === 1 && e.getChat(chatId)?.status === 'ready', 'the reply');
+    const next = (await e.compactChat(chatId)).id;
+    // The old chat closed without ending the run or writing its report.
+    expect(e.getChat(chatId)).toBeUndefined();
+    expect(rt().runs).toMatchObject([{ runId, state: 'running', chat: next }]);
+    expect(starts).toHaveLength(1);
+    expect(e.startChat('t1', runId).id).toBe(next);
+    await event('a');
+    await until(() => (e.getChat(next)?.rows ?? []).some((r) => r.kind === 'events'), "the run's event in the new chat");
+    await until(() => replies(next) === 1 && e.getChat(next)?.status === 'ready', 'the turn on the event');
+    await e.closeSession(next);
+    await until(() => rt().runs.length === 0, 'the report');
+    expect(starts).toHaveLength(2);
+    expect(starts[1]).toMatchObject({ runId, agentSession: { id: 'chat-session', resume: true } });
+    expect(rt()).toMatchObject({ state: 'idle', lastRunId: runId, lastResult: 'success', lastDetail: 'reported' });
   });
 
   it("at Settings → Chats' idle limit, the agent writes the report on the chat's conversation, then the chat closes", async () => {
@@ -193,5 +253,55 @@ describe('a run opened in a chat', { timeout: 30_000 }, () => {
     expect(rt().runs).toEqual([]);
     expect(rt()).toMatchObject({ state: 'idle', lastResult: 'success', lastDetail: 'first' });
     expect(starts).toHaveLength(1);
+  });
+});
+
+describe('a run Run Options put on another harness', { timeout: 30_000 }, () => {
+  const engines: Engine[] = [];
+  afterEach(async () => {
+    for (const e of engines.splice(0)) await e.stop();
+  });
+
+  it('goes on in a chat on that harness, not in a terminal or with guidance, and its report is written there too', async () => {
+    const data = tmp('looper-engine-');
+    const dir = tmp('looper-chat-');
+    const starts: RunContext[] = [];
+    const e = createEngine({
+      dataDir: data,
+      steps: { startAgent: fakeAgent(starts, [ended('first', 'warning'), ended('reported', 'success', '# Report')]) },
+      authStatus: async () => Promise.reject(new Error('not asked in tests')),
+    });
+    engines.push(e);
+    e.start();
+    e.updateSettings({
+      environments: e.settings.environments.map((env) =>
+        env.id === 'local'
+          ? {
+              ...env,
+              shell: 'bash -c',
+              harnesses: [
+                { id: 'fake', name: 'Fake', kind: 'claude-code' as const, command: fakeClaude(dir) },
+                { id: 'other', name: 'Other', kind: 'claude-code' as const, command: fakeClaude(dir) },
+              ],
+            }
+          : env,
+      ),
+    });
+    e.saveTask(TaskSchema.parse({ id: 't1', name: 'T1', trigger: { mode: 'manual' }, environmentId: 'local', cwd: dir, agent: { harnessId: 'fake', mode: 'headless', prompt: 'x' } }));
+    const rt = () => e.listRuntimes().find((r) => r.taskId === 't1')!;
+    expect(e.runNow('t1', { harnessId: 'other' })).toBe(true);
+    await until(() => starts.length === 1 && rt().runs.length === 0, 'the run');
+    expect(starts[0].task.agent.harnessId).toBe('other');
+    const runId = rt().lastRunId!;
+    expect(await e.canContinueRun('t1', runId)).toEqual({ chat: true, terminal: false, guidance: false, compact: true, start: false });
+    const chat = e.startChat('t1', runId);
+    expect(chat.harnessId).toBe('other');
+    // A message reached its agent, so closing the chat writes the run's report.
+    await until(() => e.getChat(chat.id)?.status === 'ready', 'the chat to start');
+    e.sendChat(chat.id, 'go on', []);
+    await until(() => (e.getChat(chat.id)?.rows ?? []).some((r) => r.kind === 'agent'), "the chat's turn");
+    await e.closeSession(chat.id);
+    await until(() => rt().runs.length === 0 && starts.length === 2, 'the report');
+    expect(starts[1].task.agent.harnessId).toBe('other');
   });
 });

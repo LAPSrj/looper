@@ -1,8 +1,11 @@
 /**
- * The Chats window's desktop dashboard as a grid: column widths and row heights
- * the user set by dragging the gaps between the cards (0: automatic), the
- * columns and rows they come to at the dashboard's size, where each card goes,
- * and the gaps that can be dragged. Sizes are in CSS pixels.
+ * The Chats window's dashboard layouts (View → Dashboard Layout), each one entry
+ * of DASHBOARD_LAYOUTS: from the cards and the dashboard's size, where each card
+ * goes and which have their message box. Grid: column widths and row heights the
+ * user set by dragging the gaps between the cards (0: automatic), the columns
+ * and rows they come to at the dashboard's size, where each card goes, and the
+ * gaps that can be dragged. Focus: one large conversation, the others in a
+ * column beside it. Sizes are in CSS pixels.
  */
 
 /** A column narrower than this drops; room for one this wide brings another in. */
@@ -198,4 +201,114 @@ export function sizeRow(saved: number[], i: number, height: number): number[] {
 /** The saved sizes (columns' or rows') with track `i` back to automatic. */
 export function resetSize(saved: number[], i: number): number[] {
   return trim(saved.map((s, k) => (k === i ? 0 : s)));
+}
+
+/** What a layout places: the cards in the dashboard's order, and what the user set. */
+export interface LayoutInput {
+  cards: { id: string; big: boolean }[];
+  /** The dashboard's content box. */
+  width: number;
+  height: number;
+  /** Grid's saved column widths and row heights (0: automatic). */
+  columns: number[];
+  rows: number[];
+  /** Focus's large conversation (none, or one that's gone: the first card). */
+  focus?: string;
+  /** Focus's side column's saved width (0: automatic). */
+  side: number;
+}
+
+/** Where a card goes: its place in the dashboard's grid, whether it shows its message box, and `stays`: it stays in view, this tall, while the others scroll. */
+export interface LaidCard {
+  id: string;
+  place: CardPlace;
+  box: boolean;
+  stays?: number;
+}
+
+/**
+ * The dashboard laid out: its columns and rows as CSS grid tracks and the space
+ * between its cards, each card's place, the gaps that can be dragged (with the
+ * columns' widths and rows' heights they start from), and the splitter that
+ * sizes the last column, `at` pixels from the left.
+ */
+export interface DashboardLayout {
+  columns: string;
+  rows: string;
+  gap: number;
+  cards: LaidCard[];
+  widths: number[];
+  heights: number[];
+  bars: GapBar[];
+  split?: { at: number; width: number; min: number; max: number };
+}
+
+/** Grid: every card with its message box, in as many columns as fit, any card twice its size, the gaps between them dragged. */
+function gridLayout(input: LayoutInput): DashboardLayout {
+  const widths = columnWidths(input.columns, input.width);
+  const places = placeCards(input.cards.map((c) => c.big), widths.length);
+  const heights = rowHeights(input.rows, rowCount(places), autoRowHeight(input.height));
+  return {
+    columns: columnTracks(input.columns, input.width),
+    rows: heights.map((h) => `${h}px`).join(' '),
+    gap: CARD_GAP,
+    cards: input.cards.map((c, i) => ({ id: c.id, place: places[i], box: true })),
+    widths,
+    heights,
+    bars: gapBars(places, widths, heights),
+  };
+}
+
+/** Focus's side column: its automatic width, and the least it and the large conversation keep. */
+export const FOCUS_SIDE_WIDTH = 360;
+export const FOCUS_SIDE_MIN = 240;
+
+/** The side column's width in a dashboard `width` wide: the saved one (0: automatic), within what both columns keep. */
+export function focusSideWidth(saved: number, width: number): number {
+  const max = Math.max(FOCUS_SIDE_MIN, width - CARD_MIN_WIDTH - 1);
+  return Math.round(Math.min(max, Math.max(FOCUS_SIDE_MIN, saved > 0 ? saved : FOCUS_SIDE_WIDTH)));
+}
+
+/** A side card's least height: three to the column's view, at least the least a card is. */
+export const focusSideHeight = (height: number): number => Math.max(CARD_MIN_HEIGHT, Math.floor(height / 3));
+
+/**
+ * Focus: one large conversation with its message box, which stays in view, and
+ * the others stacked in a column on its right that scrolls, without message
+ * boxes. No gaps: the cards meet at a 1 px border, and the splitter on the one
+ * between the columns sizes the side column.
+ */
+function focusLayout(input: LayoutInput): DashboardLayout {
+  const main = input.cards.find((c) => c.id === input.focus) ?? input.cards[0];
+  const others = input.cards.filter((c) => c !== main);
+  const base = { gap: 0, widths: [], heights: [], bars: [] };
+  if (!main) return { ...base, columns: 'minmax(0, 1fr)', rows: '', cards: [] };
+  if (others.length === 0) {
+    return { ...base, columns: 'minmax(0, 1fr)', rows: 'minmax(0, 1fr)', cards: [{ id: main.id, place: { row: 0, col: 0, rows: 1, cols: 1 }, box: true }] };
+  }
+  const side = focusSideWidth(input.side, input.width);
+  return {
+    ...base,
+    columns: `minmax(0, 1fr) ${side}px`,
+    // The side cards share the column's height, each at least a third of it; past that the column scrolls.
+    rows: `repeat(${others.length}, minmax(${focusSideHeight(input.height)}px, 1fr))`,
+    cards: [
+      { id: main.id, place: { row: 0, col: 0, rows: others.length, cols: 1 }, box: true, stays: input.height },
+      ...others.map((c, i) => ({ id: c.id, place: { row: i, col: 1, rows: 1, cols: 1 }, box: false })),
+    ],
+    split: { at: input.width - side, width: side, min: FOCUS_SIDE_MIN, max: focusSideWidth(Number.MAX_SAFE_INTEGER, input.width) },
+  };
+}
+
+/** The dashboard's layouts, in View → Dashboard Layout's order: a new layout is a new entry. Their ids are View's `sessions.layout` values. */
+export const DASHBOARD_LAYOUTS = [
+  { id: 'grid', label: '&Grid', place: gridLayout },
+  { id: 'focus', label: '&Focus', place: focusLayout },
+] as const;
+
+export type DashboardLayoutId = (typeof DASHBOARD_LAYOUTS)[number]['id'];
+
+/** The dashboard laid out by the layout `id` (an unknown one: Grid). */
+export function layoutDashboard(id: string, input: LayoutInput): DashboardLayout {
+  return (DASHBOARD_LAYOUTS.find((l) => l.id === id) ?? DASHBOARD_LAYOUTS[0]).place(input);
 }

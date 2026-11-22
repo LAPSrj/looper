@@ -1,6 +1,6 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { MessageBoxSpec } from '../../../shared/remote-access';
+import { NOTIFY_TOPICS, type MessageBoxSpec } from '../../../shared/remote-access';
 import { Menu } from '../components/Menu';
 import { CheckboxField } from '../components/ui';
 import { BottomSheet } from './BottomSheet';
@@ -16,11 +16,13 @@ import { LocalMessageBox, NewFolderBox, useMessageAnswer, type MessageBoxProps }
 import { Notifications } from './Notifications';
 import { PathBar } from './PathBar';
 import { FileRows, FileViewBody, Switch } from './phone-files';
+import { viewToggles, type ViewOptions } from './file-view';
 import { deviceNoun, moreFor, PhoneWindows, pickMore, Scrim, screenBars, usePhoneShell, type PhoneShell, type Screen } from './phone-shell';
 import type { OpenDialog, PathRequest } from './store';
 import { noMnemonic } from '../../../shared/commands/command';
 import type { PageNavAction } from './nav-bar-model';
 import { MdBarRow } from './NavBarRow';
+import { installMotion } from './motion';
 import { BarHostContext, NavBar, type NavBarProps } from '../components/NavBar';
 import { ViewportContext } from './viewport-context';
 import './android.css';
@@ -35,6 +37,8 @@ const NEW_FOLDER = (
 export function AndroidFrame({ controller }: { controller: ShellController }) {
   const shell = usePhoneShell(controller, 'android');
   const { s, more } = shell;
+  // Windows pushed and popped move as Material's shared axis (web/motion.ts).
+  useEffect(() => installMotion(document), []);
 
   return (
     <div ref={shell.rootRef} className={`ph-root android${shell.tablet ? ' tablet' : ''}${shell.vp.keyboard ? ' kb' : ''}`}>
@@ -248,25 +252,21 @@ function FileScreen({ controller, shell, dialog }: { controller: ShellController
 
 function PathScreen({ controller, shell, req }: { controller: ShellController; shell: PhoneShell; req: PathRequest }) {
   const p = usePathRequest(controller, req);
+  const [options, setOptions] = useState<ViewOptions>({});
   if (p.view) {
     const steps = p.steps;
+    const actions = [
+      ...(steps
+        ? [
+            { id: 'previous', label: 'Previous', disabled: steps.index <= 0, run: () => steps.go(steps.index - 1) },
+            { id: 'next', label: 'Next', disabled: steps.index >= steps.count - 1, run: () => steps.go(steps.index + 1) },
+          ]
+        : []),
+      ...viewToggles(p.view.kind, options, setOptions),
+    ];
     return (
-      <FullDialog
-        shell={shell}
-        title={steps ? `${steps.index + 1} of ${steps.count}` : p.name}
-        onClose={p.close}
-        bar={
-          steps
-            ? {
-                actions: [
-                  { id: 'previous', label: 'Previous', disabled: steps.index <= 0, run: () => steps.go(steps.index - 1) },
-                  { id: 'next', label: 'Next', disabled: steps.index >= steps.count - 1, run: () => steps.go(steps.index + 1) },
-                ],
-              }
-            : undefined
-        }
-      >
-        <FileViewBody view={p.view} name={p.name} steps={steps} />
+      <FullDialog shell={shell} title={steps ? `${steps.index + 1} of ${steps.count}` : p.name} onClose={p.close} bar={actions.length ? { actions } : undefined}>
+        <FileViewBody view={p.view} name={p.name} steps={steps} options={options} />
         <div className="md-bottom-actions">
           <button className="md-text-btn" onClick={p.view.toHost}>
             Download to host computer
@@ -330,13 +330,24 @@ function DeviceSheet({ controller, onClose }: { controller: ShellController; onC
             <div className="md-list-supporting">{d.computer || ' '}</div>
           </div>
         </div>
+      </div>
+      <h3 className="md-list-title">Notifications</h3>
+      <div className="md-list">
         <div className="md-list-item">
           <div className="md-list-text">
-            <div className="md-list-headline">Notifications</div>
-            {d.hint && <div className="md-list-supporting">{d.hint}</div>}
+            <div className="md-list-headline">Allow notifications</div>
+            {d.hint && <div className="md-list-supporting wrap">{d.hint}</div>}
           </div>
-          <Switch os="android" on={d.push === 'on'} disabled={!d.usable || d.busy} label="Notifications" onChange={d.setNotifications} />
+          <Switch os="android" on={d.push === 'on'} disabled={!d.usable || d.busy} label="Allow notifications" onChange={d.setNotifications} />
         </div>
+        {NOTIFY_TOPICS.map((t) => (
+          <div key={t.id} className="md-list-item">
+            <div className="md-list-text">
+              <div className="md-list-headline wrap">{t.label}</div>
+            </div>
+            <Switch os="android" on={!!d.notify?.[t.id]} disabled={!d.notify} label={t.label} onChange={(on) => void d.setTopic(t.id, on)} />
+          </div>
+        ))}
       </div>
       <div className="md-sheet-actions">
         <button className="md-text-btn error" onClick={d.unpair}>

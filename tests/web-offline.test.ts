@@ -36,6 +36,16 @@ describe('the offline store', () => {
     for (const c of READ_CHANNELS) expect(c).not.toMatch(/runNow|save|remove|stop|close/);
   });
 
+  it("keeps a subagent's rows once for every version it was read with, and keeps nothing of an unchanged answer", async () => {
+    const store = await open();
+    const rows = { status: 'ok', rows: [{ id: 'a' }], version: '4:1' };
+    store.put('runs:messages', ['t1', 'r1', 'a1', undefined, undefined], rows);
+    store.put('runs:messages', ['t1', 'r1', 'a1', undefined, '4:1'], { status: 'ok', rows: [], version: '4:1', unchanged: true });
+    expect(store.keys('runs:messages')).toHaveLength(1);
+    // Read offline with whatever version the page holds, it gets the rows it kept.
+    expect(store.get('runs:messages', ['t1', 'r1', 'a1', undefined, '4:1'])?.value).toEqual(rows);
+  });
+
   it('writes what changed and loads it back, in a later page load', async () => {
     const backend = memoryBackend();
     const store = await open(backend);
@@ -164,6 +174,22 @@ describe('the offline store', () => {
     };
     const stored = (store: OfflineStore) => store.keys().map((e) => `${e.channel} ${JSON.stringify(e.args)}`).sort();
 
+    it('keeps one entry per background command, holding all of its output the phone has read', async () => {
+      const store = await seed();
+      store.put('sessions:backgroundOutput', ['c1', 'b1'], { end: 4, from: 0, text: 'one\n' });
+      store.put('sessions:backgroundOutput', ['c1', 'b1', 4], { end: 8, from: 4, text: 'two\n' });
+      store.put('sessions:backgroundOutput', ['c1', 'b1', 8], { end: 8, from: 8 });
+      store.put('sessions:backgroundOutput', ['c1', 'b1', 8], null);
+      expect(stored(store)).toEqual(['sessions:backgroundOutput ["c1","b1"]']);
+      // Without the computer: a reader with nothing gets all of it, one that has it all gets nothing new.
+      expect(store.get('sessions:backgroundOutput', ['c1', 'b1'])?.value).toEqual({ end: 8, from: 0, text: 'one\ntwo\n' });
+      expect(store.get('sessions:backgroundOutput', ['c1', 'b1', 4])?.value).toEqual({ end: 8, from: 0, text: 'one\ntwo\n' });
+      expect(store.get('sessions:backgroundOutput', ['c1', 'b1', 8])?.value).toEqual({ end: 8, from: 8 });
+      // A tail that doesn't follow on takes the kept output's place.
+      store.put('sessions:backgroundOutput', ['c1', 'b1', 8], { end: 900, from: 890, text: 'é\n' });
+      expect(store.get('sessions:backgroundOutput', ['c1', 'b1'])?.value).toEqual({ end: 900, from: 897, text: 'é\n' });
+    });
+
     it('drops what the connection no longer uses, 30 s after the welcome', async () => {
       vi.useFakeTimers();
       const store = await seed();
@@ -181,7 +207,7 @@ describe('the offline store', () => {
       store.put('chat:get', ['c1'], 1);
       store.put('chat:get', ['c2'], 1);
       store.put('sessions:activity', ['c2'], 1);
-      store.put('sessions:backgroundOutput', ['c2', 'b1'], 1);
+      store.put('sessions:backgroundOutput', ['c2', 'b1', 0], { end: 1, from: 0, text: 'x' });
       store.put('sessions:fileThumbnail', ['t1', 'a.png'], 1);
       store.put('addons:list', [], []);
       store.setLastLive(1);

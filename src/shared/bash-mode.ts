@@ -24,6 +24,21 @@ export interface CommandOutput {
   saved?: { stdout?: SavedOutput; stderr?: SavedOutput };
 }
 
+/**
+ * What a running "!" command asks the user for (sudo's password), shown by the
+ * device that ran it: the answer goes back to the command's program, and is
+ * kept nowhere.
+ */
+export interface CommandPrompt {
+  /** Names this ask, so an answer can't reach a later one. */
+  id: string;
+  text: string;
+  /** The answer is a password: its field hides it. */
+  secret: boolean;
+  /** The command asked this before and its answer didn't work. */
+  retry: boolean;
+}
+
 /** A command's whole output, saved to a file because it was too long to send. */
 export interface SavedOutput {
   /** The file, as the agent's target names it (the path the agent gets, and Open opens). */

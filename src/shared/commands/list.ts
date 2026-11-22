@@ -1,12 +1,17 @@
 // Relative imports only: the main process, the renderer and the unit tests all load the list.
 import { chatCanCompact, chatInteractive, type WatchableTask } from '../chat';
+import { DASHBOARD_LAYOUTS } from '../card-grid';
 import { chatSettingEntries } from '../chat-settings';
 import { folderTree, siblingOrder } from '../folders';
+import { resultLabel } from '../format';
 import { mainTabs } from '../main-tabs';
 import { ALL_FILTERS, FILTER_LABELS, PANES, type PaneId } from '../panes';
 import type { ProjectGroupBy } from '../projects';
 import { groupProjects, projectTaskId } from '../projects';
+import { RUN_RESULTS } from '../runs';
+import { canToggleUnread, isUnread } from '../sessions';
 import { SHORTCUTS } from '../shortcuts';
+import { MAIN_TOOLBARS, windowToolbars } from '../toolbars';
 import type { Project, TaskFilter, TaskListOptions } from '../types';
 import { NOT_MOBILE } from '../ui-platform';
 import { hasToolbarIn } from './addon-commands';
@@ -32,6 +37,8 @@ const isChat = (c: CommandContext): boolean => summaryOf(c)?.kind === 'chat';
 const isTerminal = (c: CommandContext): boolean => summaryOf(c)?.kind === 'terminal';
 const isRun = (c: CommandContext): boolean => summaryOf(c)?.kind === 'run';
 const inChatWindow = (c: CommandContext): boolean => !!c.chats?.single;
+/** The Chats window, or a single chat's: not the main window's Chats tab. */
+const inChatsWindow = (c: CommandContext): boolean => !!c.chats && !c.chats.tab;
 /** Open Working Directory's name in an iOS menu's top row, whose two lines fit "Open Folder". */
 const workFolderToolbarLabel = (c: CommandContext): string => (c.here === 'mobile' ? 'Open Folder' : 'Open Working Directory');
 
@@ -290,6 +297,23 @@ const tabEntries = (c: CommandContext): Entry[] => {
   ];
 };
 
+/**
+ * View → Toolbars, and a main window toolbar's right-click menu: the main window's toolbars this window can show
+ * (shared/toolbars.ts), then each addon's with a button here. A task's or project's own window has no addon buttons.
+ */
+export function toolbarEntries(c: CommandContext): Entry[] {
+  const view = viewOf(c);
+  if (!view) return [];
+  const own: Entry[] = windowToolbars(c.tab, !!c.fixed, !!c.item).map((id) => ({
+    id,
+    label: MAIN_TOOLBARS.find((t) => t.id === id)!.label,
+    checked: view.toolbars[id],
+    run: () => c.setView({ toolbars: { ...view.toolbars, [id]: !view.toolbars[id] } }),
+  }));
+  const addons = c.item ? [] : addonToolbarEntries(c, c.fixed ? c.tab : undefined);
+  return own.length && addons.length ? [...own, { separator: true }, ...addons] : [...own, ...addons];
+}
+
 /** "<Addon> Toolbar": whether each addon's buttons show. A view window lists the addons with a button for its view. */
 export function addonToolbarEntries(c: CommandContext, only?: string): Entry[] {
   const view = viewOf(c);
@@ -484,7 +508,7 @@ export const COMMANDS: readonly Command[] = [
     accelerator: (c) => (summaryOf(c)?.projectId ? SHORTCUTS.newTerminal : undefined),
     pageKey: true,
     hide: [{ if: (c) => !onChatsTab(c), view: 'new', why: 'New Terminal shows on the Chats tab; the Project menu has it elsewhere.' }],
-    entries: (c) => [...projectChoices(c, 'terminal'), { id: 'new-project', label: 'New P&roject…', run: () => void c.looper.projects.openEditor() }],
+    entries: (c) => projectChoices(c, 'terminal'),
     dropdown: 'New Terminal in Project',
     runnable: (c) => !!summaryOf(c)?.projectId,
     run: (c) => {
@@ -512,6 +536,15 @@ export const COMMANDS: readonly Command[] = [
     hide: [{ on: ON_PHONE, why: 'A phone’s Dashboard tab shows the dashboard.' }],
     run: (c) => c.selectTask?.(null),
     in: { tasks: { menu: 'view', toolbar: true, context: false } },
+  },
+  {
+    id: 'taskHistory',
+    label: 'Task &History',
+    group: 'views',
+    toolbarGroup: 'views',
+    icon: 'history',
+    run: (c) => c.looper.history.openTasks(),
+    in: { app: { menu: 'view' }, tasks: { toolbar: true } },
   },
 
   // ---------- a task ----------
@@ -788,18 +821,28 @@ export const COMMANDS: readonly Command[] = [
     id: 'toolbar',
     label: '&Toolbar',
     group: 'bars',
-    checked: (c) => (c.chats && !c.chats.tab ? (c.chats.single ? c.chats.shown.windowToolbar : c.chats.shown.toolbar) : (viewOf(c)?.toolbar ?? true)),
+    checked: (c) => !!c.chats && (c.chats.single ? c.chats.shown.windowToolbar : c.chats.shown.toolbar),
     hide: [
       { on: ON_PHONE, why: 'A phone has no toolbar row: its commands are on the bar and in More.' },
-      // A window of the Dashboard alone has an empty toolbar unless an addon has a button for it.
-      { if: (c) => !!c.fixed && c.tab === 'dashboard' && !c.addons.some((a) => a.enabled && hasToolbarIn(a, 'dashboard')), why: 'Its toolbar would be empty.' },
+      { if: (c) => !inChatsWindow(c), why: 'The main window has a toolbar for each kind of item: View → Toolbars.' },
     ],
     run: (c) => {
-      if (c.chats && !c.chats.tab) {
-        if (c.chats.single) c.chats.setShown({ windowToolbar: !c.chats.shown.windowToolbar });
-        else c.chats.setShown({ toolbar: !c.chats.shown.toolbar });
-      } else if (viewOf(c)) c.setView({ toolbar: !viewOf(c)!.toolbar });
+      if (!c.chats) return;
+      if (c.chats.single) c.chats.setShown({ windowToolbar: !c.chats.shown.windowToolbar });
+      else c.chats.setShown({ toolbar: !c.chats.shown.toolbar });
     },
+    in: { frame: { menu: 'view' } },
+  },
+  {
+    id: 'toolbars',
+    label: '&Toolbars',
+    group: 'bars',
+    hide: [
+      { on: ON_PHONE, why: 'A phone has no toolbar row: its commands are on the bar and in More.' },
+      { if: inChatsWindow, why: 'The Chats window has one toolbar: View → Toolbar.' },
+      { if: (c) => !toolbarEntries(c).length, why: 'The window has no toolbar.' },
+    ],
+    entries: toolbarEntries,
     in: { frame: { menu: 'view' } },
   },
   {
@@ -807,8 +850,12 @@ export const COMMANDS: readonly Command[] = [
     label: 'Addon Toolbars',
     group: 'bars',
     inline: true,
-    hide: [{ on: ON_PHONE, why: 'Addons are in the More view, each with its own screen.' }, { if: (c) => !!c.item || inChatWindow(c), why: 'A single item’s window has no addon buttons.' }],
-    entries: (c) => addonToolbarEntries(c, c.fixed ? c.tab : c.chats && !c.chats.tab ? 'chats' : undefined),
+    hide: [
+      { on: ON_PHONE, why: 'Addons are in the More view, each with its own screen.' },
+      { if: (c) => !inChatsWindow(c), why: 'The main window lists them in View → Toolbars.' },
+      { if: inChatWindow, why: 'A single chat’s window has no addon buttons.' },
+    ],
+    entries: (c) => addonToolbarEntries(c, 'chats'),
     in: { frame: { menu: 'view' } },
   },
   {
@@ -844,6 +891,40 @@ export const COMMANDS: readonly Command[] = [
     checked: (c) => !c.chats?.selected,
     hide: [{ on: ON_PHONE, why: 'The Overview switch above the list shows it.' }],
     run: (c) => c.chats?.setSelected(null),
+    in: { chats: { menu: 'view', toolbar: true } },
+  },
+  {
+    id: 'dashboardFilter',
+    label: 'Dashboard &Filter',
+    toolbarLabel: 'Filter',
+    group: 'dashboard',
+    toolbarGroup: 'views',
+    icon: 'filter',
+    entries: (c) => {
+      const chats = c.chats;
+      if (!chats) return [];
+      const { cardsListedOnly, showHiddenCards } = chats.shown;
+      return [
+        { id: 'listed', label: '&Only Chats Shown in the List', checked: cardsListedOnly, run: () => chats.setShown({ cardsListedOnly: !cardsListedOnly }) },
+        { id: 'hidden', label: 'Show &Hidden Chats', checked: showHiddenCards, run: () => chats.setShown({ showHiddenCards: !showHiddenCards }) },
+      ];
+    },
+    hide: [{ surface: 'toolbar', if: (c) => !!c.chats?.selected, why: 'Its button shows while the dashboard does.' }],
+    in: { chats: { menu: 'view', toolbar: true } },
+  },
+  {
+    id: 'dashboardLayout',
+    label: 'Dashboard La&yout',
+    toolbarLabel: 'Layout',
+    group: 'dashboard',
+    toolbarGroup: 'views',
+    icon: 'layout',
+    entries: (c) => {
+      const chats = c.chats;
+      if (!chats) return [];
+      return DASHBOARD_LAYOUTS.map((l) => ({ id: l.id, label: l.label, radio: true, checked: chats.shown.layout === l.id, run: () => chats.setShown({ layout: l.id }) }));
+    },
+    hide: [{ surface: 'toolbar', if: (c) => !!c.chats?.selected, why: 'Its button shows while the dashboard does.' }],
     in: { chats: { menu: 'view', toolbar: true } },
   },
   {
@@ -899,9 +980,9 @@ export const COMMANDS: readonly Command[] = [
     run: (c) => summaryOf(c) && void c.looper.sessions.restart(summaryOf(c)!.id).catch(failed(c)),
     in: { conversation: { menu: 'chat', toolbar: true } },
   },
-  ...(['harness', 'model', 'effort', 'permission', 'mode'] as const).map((which): Command => ({
+  ...(['harness', 'model', 'effort', 'permission', 'mode', 'compact'] as const).map((which): Command => ({
     id: `chat-${which}`,
-    label: { harness: '&Harness', model: '&Model', effort: '&Effort', permission: '&Permission Mode', mode: 'Session T&ype' }[which],
+    label: { harness: '&Harness', model: '&Model', effort: '&Effort', permission: '&Permission Mode', mode: 'Session T&ype', compact: 'A&uto Compact' }[which],
     group: 'settings',
     hide: [{ if: (c) => !isChat(c), why: 'Only a chat has these settings.' }, { on: ON_PHONE, why: 'The Usage sheet has them, beside the usage facts.' }],
     entries: (c) => (c.chats?.chat ? chatSettingEntries(c.chats.chat, c.looper)[which] : []),
@@ -930,6 +1011,17 @@ export const COMMANDS: readonly Command[] = [
     in: { conversation: { menu: 'chat', toolbar: true } },
   },
   {
+    id: 'continueInTerminal',
+    // Not Continue in &Terminal: Show &Terminal has that letter.
+    label: 'C&ontinue in Terminal',
+    group: 'conversation',
+    // Once the harness has started the conversation, which the terminal resumes.
+    enabled: (c) => !!c.chats?.chat && !!c.chats.sessionId,
+    hide: [{ if: (c) => !isChat(c), why: 'A terminal is one already, and a task run goes on from its run’s menu.' }],
+    run: (c) => c.chats?.chat && void c.looper.sessions.continueInTerminal(c.chats.chat.id).catch(failed(c)),
+    in: { conversation: { menu: 'chat' } },
+  },
+  {
     id: 'rename',
     // Not Re&name or &Rename: Send &Now and &Restart Agent have those letters.
     label: 'Ren&ame…',
@@ -950,11 +1042,35 @@ export const COMMANDS: readonly Command[] = [
     in: { conversation: { menu: 'chat' } },
   },
   {
+    id: 'muteNotifications',
+    label: (c) => (c.chats?.chat?.muted ? 'Unmute Noti&fications' : 'Mute Noti&fications'),
+    group: 'conversation',
+    hide: [{ if: (c) => !isChat(c), why: 'Only a chat’s turns and questions are pushed to the devices.' }],
+    run: (c) => c.chats?.chat && c.looper.chat.setMuted(c.chats.chat.id, !c.chats.chat.muted),
+    in: { conversation: { menu: 'chat' } },
+  },
+  {
     id: 'watchTaskEvents',
     label: 'Watch Task E&vents',
     group: 'conversation',
     hide: [{ if: (c) => !isChat(c), why: 'Only a chat’s agent watches the tasks of its project.' }],
     entries: watchTaskEntries,
+    in: { conversation: { menu: 'chat' } },
+  },
+  {
+    id: 'markUnread',
+    // Not &Unread or &Read: Unmute Notifications (before it moved to f) and Restart Agent have those letters.
+    label: (c) => (isUnread(summaryOf(c)) ? 'Mark as Rea&d' : 'Mark as Unrea&d'),
+    group: 'conversation',
+    // Read: once its agent is ready (see canToggleUnread). Unread: always, and it's marked seen.
+    enabled: (c) => canToggleUnread(summaryOf(c)),
+    hide: [NOT_IN_CHAT_MENU, { if: (c) => !isChat(c) && !isTerminal(c), why: 'A task run’s agent has no conversation of its own to read again.' }],
+    run: (c) => {
+      const s = summaryOf(c);
+      if (!s || !canToggleUnread(s)) return;
+      if (isUnread(s)) c.looper.sessions.seen(s.id);
+      else c.looper.sessions.markUnread(s.id);
+    },
     in: { conversation: { menu: 'chat' } },
   },
   {
@@ -1118,6 +1234,21 @@ export const COMMANDS: readonly Command[] = [
     in: { chats: { menu: 'view' } },
   },
   {
+    id: 'groupChats',
+    label: '&Group Chats By',
+    group: 'list',
+    entries: (c) => {
+      const chats = c.chats;
+      if (!chats) return [];
+      return ([
+        ['project', '&Project'],
+        ['folder', 'Project &Folder'],
+        ['none', '&None'],
+      ] as const).map(([k, label]) => ({ id: k, label, radio: true, checked: chats.shown.groupBy === k, run: () => chats.setShown({ groupBy: k }) }));
+    },
+    in: { chats: { menu: 'view' } },
+  },
+  {
     id: 'waitingFirst',
     label: '&Waiting Chats First',
     group: 'list',
@@ -1158,10 +1289,10 @@ export const COMMANDS: readonly Command[] = [
     in: { conversation: { menu: 'window' }, chatWindow: { menu: 'window' } },
   })),
   ...([
-    ['previousWaiting', 'Pre&vious Waiting Chat', 'F8', -1, true],
-    ['nextWaiting', 'Next W&aiting Chat', 'F9', 1, true],
-    ['previousChat', 'P&revious Chat', 'Shift+F8', -1, false],
-    ['nextChat', '&Next Chat', 'Shift+F9', 1, false],
+    ['previousWaiting', 'Pre&vious Waiting Chat', 'Shift+F8', -1, true],
+    ['nextWaiting', 'Next W&aiting Chat', 'Shift+F9', 1, true],
+    ['previousChat', 'P&revious Chat', 'F8', -1, false],
+    ['nextChat', '&Next Chat', 'F9', 1, false],
   ] as const).map(([id, label, accelerator, dir, waiting]): Command => ({
     id,
     label,
@@ -1254,6 +1385,8 @@ export const COMMANDS: readonly Command[] = [
     in: { run: { menu: 'file' } },
   },
   ...([
+    // A run stopped before its agent started has no conversation to go on with: this starts the agent on its events.
+    ['runStart', 'Contin&ue Run', 'start', 'run-start'],
     ['runTerminal', 'Continue in &Terminal', 'terminal', 'run-terminal'],
     ['runChat', 'Continue in &Chat', 'chat', 'run-chat'],
     ['runCompact', 'Continue Co&mpacted', 'compact', 'run-compact'],
@@ -1438,11 +1571,43 @@ export const COMMANDS: readonly Command[] = [
     in: { history: { menu: 'view' } },
   },
   {
-    id: 'historyShowRuns',
-    label: 'Show Task &Runs',
+    id: 'historyTaskFilter',
+    label: '&Task',
     group: 'history-filter',
-    checked: (c) => !!c.history?.shown.showRuns,
-    run: (c) => c.history?.setShown({ showRuns: !c.history.shown.showRuns }),
+    hide: [{ view: 'history', if: (c) => c.history?.kind !== 'runs', why: 'Only Task History lists task runs.' }],
+    entries: (c) => {
+      const h = c.history;
+      if (!h) return [];
+      return [
+        { id: 'all', label: '&All Tasks', radio: true, checked: h.task === '', run: () => h.setTask('') },
+        ...(h.tasks.length ? [{ separator: true } as const] : []),
+        ...h.tasks.map((t): Entry => ({ id: t.id, label: menuText(t.name), radio: true, checked: h.task === t.id, run: () => h.setTask(t.id) })),
+      ];
+    },
+    in: { history: { menu: 'view' } },
+  },
+  {
+    id: 'historyResultFilter',
+    label: 'Re&sult',
+    group: 'history-filter',
+    hide: [{ view: 'history', if: (c) => c.history?.kind !== 'runs', why: 'Only Task History lists task runs.' }],
+    entries: (c) => {
+      const h = c.history;
+      if (!h) return [];
+      return [
+        { id: 'all', label: '&All Results', radio: true, checked: h.result === '', run: () => h.setResult('') },
+        { separator: true },
+        ...RUN_RESULTS.map((r): Entry => ({ id: r, label: menuText(resultLabel(r)), radio: true, checked: h.result === r, run: () => h.setResult(r) })),
+      ];
+    },
+    in: { history: { menu: 'view' } },
+  },
+  {
+    id: 'historyTaskRuns',
+    label: 'Task &Runs',
+    group: 'history-filter',
+    hide: [{ view: 'history', if: (c) => c.history?.kind !== 'runs', why: 'Only Task History lists task runs.' }],
+    entries: taskRunEntries,
     in: { history: { menu: 'view' } },
   },
   {

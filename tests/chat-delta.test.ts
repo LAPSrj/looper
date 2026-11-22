@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatState } from '../src/shared/chat';
-import { applyChatWire, ChatEncoder } from '../src/shared/chat-delta';
+import { applyChatWire, ChatEncoder, keepRows } from '../src/shared/chat-delta';
 import type { MessageRow } from '../src/shared/messages';
 
 const row = (id: string, text: string, extra: Partial<MessageRow> = {}): MessageRow => ({ id, kind: 'agent', preview: text.slice(0, 20), text, ...extra });
@@ -94,5 +94,21 @@ describe('chat events as what changed', () => {
     const att = (output: string) => ({ kind: 'command', name: 'ls', command: 'ls', output }) as never;
     enc.encode(state([row('p', 'hi', { kind: 'prompt', attachments: [att('')] })]));
     expect(enc.encode(state([row('p', 'hi', { kind: 'prompt', attachments: [att('a.txt b.txt')] })])).delta?.changed).toHaveLength(1);
+  });
+});
+
+describe('keepRows', () => {
+  it('keeps the rows that did not change as the same objects, and the whole array when none did', () => {
+    const prev = [row('a', 'one'), row('b', 'two')];
+    expect(keepRows(prev, clone(prev))).toBe(prev);
+    const next = keepRows(prev, [...clone(prev.slice(0, 1)), row('b', 'two, longer'), row('c', 'three')]);
+    expect(next).not.toBe(prev);
+    expect(next[0]).toBe(prev[0]);
+    expect(next[1]).not.toBe(prev[1]);
+    expect(next.map((r) => r.text)).toEqual(['one', 'two, longer', 'three']);
+    // A row that went away makes a new array of the ones kept.
+    const fewer = keepRows(prev, clone(prev.slice(0, 1)));
+    expect(fewer).toHaveLength(1);
+    expect(fewer[0]).toBe(prev[0]);
   });
 });

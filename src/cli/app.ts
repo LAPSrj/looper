@@ -141,7 +141,7 @@ export function registerAppCommands(program: Command, ctx: CliContext): void {
     .option('--reason <r>', "a stopped run's reason")
     .action((id: string, opts: Opts & { reason?: string }) => act('end', { id, ...(opts.reason ? { reason: opts.reason } : {}) }, opts));
 
-  app(program, 'interrupt <id>', "end the agent's turn in a chat, terminal session or task run; the conversation goes on with the next message")
+  app(program, 'interrupt <id>', "end the agent's turn in a chat or terminal session, and the whole run of a task run (Stop); a chat goes on with the next message, and its background work keeps running")
     .action((id: string, opts: Opts) => act('interrupt', { id }, opts));
 
   app(program, 'send-now <id>', "send a chat's queued messages, or a run's waiting guidance, at once, ending the agent's turn")
@@ -164,18 +164,20 @@ export function registerAppCommands(program: Command, ctx: CliContext): void {
   app(program, 'rename <id> [name...]', 'rename a chat or terminal session; no name gives it back its automatic one')
     .action((id: string, words: string[], opts: Opts) => act('rename', { id, name: words.join(' ') }, opts));
 
-  app(program, 'configure <chatId>', "change a chat's model or effort")
+  app(program, 'configure <chatId>', "change a chat's model, effort or auto compact")
     .option('--model <model>', 'the model')
     .option('--effort <effort>', 'the effort')
+    .option('--auto-compact <choice>', 'on, off, or default (as Settings → Chats says)')
     .option('--permission-mode <mode>', 'the permission mode (Unrestricted)')
     .option('--harness <harnessId>', 'another harness of its environment, only before anything was said (Unrestricted)')
-    .action((chatId: string, opts: Opts & { model?: string; effort?: string; permissionMode?: string; harness?: string }) =>
+    .action((chatId: string, opts: Opts & { model?: string; effort?: string; autoCompact?: string; permissionMode?: string; harness?: string }) =>
       act(
         'configure',
         {
           id: chatId,
           ...(opts.model ? { model: opts.model } : {}),
           ...(opts.effort ? { effort: opts.effort } : {}),
+          ...(opts.autoCompact ? { autoCompact: opts.autoCompact } : {}),
           ...(opts.permissionMode !== undefined ? { permissionMode: opts.permissionMode } : {}),
           ...(opts.harness ? { harnessId: opts.harness } : {}),
         },
@@ -183,7 +185,7 @@ export function registerAppCommands(program: Command, ctx: CliContext): void {
       ),
     );
 
-  app(program, 'compact <id>', "start a new chat from a chat's or run's messages, without its tool calls; prints the new chat's id")
+  app(program, 'compact <id>', "start a new chat from a compacted copy of a chat's or run's conversation (its messages, the latest session's tool calls and the results that fit), which takes a chat's place; prints the new chat's id")
     .action((id: string, opts: Opts) => act('compact', { id }, opts));
 
   app(program, 'fork <chatId>', "start a new chat from a chat's conversation up to a row (the row numbers looper transcript --json counts from 0)")
@@ -197,6 +199,15 @@ export function registerAppCommands(program: Command, ctx: CliContext): void {
         process.exit(2);
       }
       return act('auto-continue', { id: chatId, on: onOrOff === 'on' }, opts);
+    });
+
+  app(program, 'mute <chatId> <onOrOff>', "Mute Notifications, on or off, for a chat: no paired device gets a push for it")
+    .action((chatId: string, onOrOff: string, opts: Opts) => {
+      if (onOrOff !== 'on' && onOrOff !== 'off') {
+        console.error('give on or off');
+        process.exit(2);
+      }
+      return act('mute', { id: chatId, on: onOrOff === 'on' }, opts);
     });
 
   app(program, 'continue-anyway <chatId>', "let a chat continue even though Settings → Chats' prompt-cache rule would stop it")
@@ -514,16 +525,32 @@ export function registerAppCommands(program: Command, ctx: CliContext): void {
       .option('--no-tools', 'leave out the tool calls')
       .option('--plain', 'plain text instead of Markdown')
       .option('--json', 'print the rows as JSON');
-  const history = app(program, 'history', "list the newest conversations: Looper's, and Claude Code's and Codex's from outside it")
+  const history = app(program, 'history', "list the newest conversations: Looper's, and Claude Code's and Codex's from outside it; with --runs, the task runs (Task History)")
     .option('--search <text>', 'only the ones whose messages contain the text')
     .option('--project <id>', "only a project's")
+    .option('--runs', 'list the task runs instead of the conversations')
+    .option('--task <id>', "only a task's runs (implies --runs)")
+    .option('--result <result>', 'only the runs that ended with it, such as success, error or noop (implies --runs)')
+    .option('--hide-skipped', 'leave out the runs the scheduler skipped (with --runs)')
+    .option('--hide-no-action', 'leave out the runs whose check found nothing to do (with --runs)')
     .option('-n, --limit <n>', 'how many to look through', '50')
-    .option('--runs', 'include task runs')
     .option('--json', 'print JSON')
-    .action(async (opts: Opts & { search?: string; project?: string; limit: string; runs?: boolean }) => {
-      type H = { id: string; title: string; folder: string; lastActive: string };
-      const params = { limit: Number(opts.limit), ...(opts.search ? { search: opts.search } : {}), ...(opts.project ? { project: opts.project } : {}), ...(opts.runs ? { runs: true } : {}) };
-      show(await run<H[]>('history', params, opts), opts.json, (list) => columns(list.map((h) => [h.id, local(h.lastActive), h.folder, h.title]), 'no conversations'));
+    .action(async (opts: Opts & { search?: string; project?: string; runs?: boolean; task?: string; result?: string; hideSkipped?: boolean; hideNoAction?: boolean; limit: string }) => {
+      type H = { id: string; title: string; folder: string; lastActive: string; result?: string };
+      const params = {
+        limit: Number(opts.limit),
+        ...(opts.search ? { search: opts.search } : {}),
+        ...(opts.project ? { project: opts.project } : {}),
+        ...(opts.runs ? { runs: true } : {}),
+        ...(opts.task ? { task: opts.task } : {}),
+        ...(opts.result ? { result: opts.result } : {}),
+        ...(opts.hideSkipped ? { hideSkipped: true } : {}),
+        ...(opts.hideNoAction ? { hideNoAction: true } : {}),
+      };
+      const runs = opts.runs || opts.task || opts.result;
+      show(await run<H[]>('history', params, opts), opts.json, (list) =>
+        columns(list.map((h) => [h.id, local(h.lastActive), ...(runs ? [h.result ?? ''] : []), h.folder, h.title]), runs ? 'no runs' : 'no conversations'),
+      );
     });
   transcriptOpts(app(history, 'show <id>', 'print a conversation from the history as Markdown')).action(
     async (id: string, opts: Opts & { agent?: string; thinking: boolean; tools: boolean; plain?: boolean }) =>
@@ -600,6 +627,24 @@ export function registerAppCommands(program: Command, ctx: CliContext): void {
     });
   app(devices, 'rename <id> <name...>', 'rename a paired device').action((id: string, words: string[], opts: Opts) => act('devices-rename', { id, name: words.join(' ') }, opts));
   app(devices, 'remove <id>', 'unpair a device').action((id: string, opts: Opts) => act('devices-remove', { id }, opts));
+  app(devices, 'notify <id>', 'choose what a paired device is notified of; with no option, print it')
+    .option('--turns <onOrOff>', 'chat turn ends')
+    .option('--questions <onOrOff>', 'questions and permission requests')
+    .option('--runs <onOrOff>', "task runs (each task's own notification settings still apply)")
+    .option('--warnings <onOrOff>', 'login and usage warnings')
+    .action((id: string, opts: Opts & Partial<Record<'turns' | 'questions' | 'runs' | 'warnings', string>>) => {
+      const notify: Record<string, boolean> = {};
+      for (const key of ['turns', 'questions', 'runs', 'warnings'] as const) {
+        const v = opts[key];
+        if (v === undefined) continue;
+        if (v !== 'on' && v !== 'off') {
+          console.error(`--${key}: give on or off`);
+          process.exit(2);
+        }
+        notify[key] = v === 'on';
+      }
+      return act('devices-notify', { id, notify }, opts);
+    });
   app(devices, 'pair', 'print a code to pair a new device with Remote Access', 'extended')
     .option('--json', 'print JSON')
     .action(async (opts: Opts) => {

@@ -50,7 +50,7 @@ acts on it use that shape:
   object's shape. A conversation's toolbar shows only in a conversation, so its
   buttons are the action alone: Stop is the task's `stop` square, Close
   Conversation the `close` X, Send Now fast-forward, Restart Agent a circular
-  arrow around Run's triangle, and Compact arrows meeting at a line.
+  arrow, and Compact arrows meeting at a line.
 
 ## Compound icons
 
@@ -82,8 +82,8 @@ or button shown at the same time looks like it.
 - `delete`, the can with a lid, is Delete. The Recycle Bin (`recycleBin`) is
   the same can with slats, so its button on the Tasks toolbar isn't read as
   deleting the selected task.
-- Restart Agent's circular arrow holds Run's triangle, so it isn't read as
-  `refresh`, which an addon can put on the same toolbar.
+- Restart Agent's circular arrow turns the other way from `refresh`'s, which an
+  addon can put on the same toolbar.
 - The pencil is Edit. Don't put a pencil on another icon, because Edit Task is
   next to Guidance on the Tasks tab.
 - Activity Pane is a window with a right column, so it isn't read as another

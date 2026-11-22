@@ -19,7 +19,7 @@ import {
 } from '../shared/messages';
 import { commandAttachment, parseCommands, parseFileList, parseOutputOnly, withOutput } from '../shared/bash-mode';
 import type { Attachment } from '../shared/chat';
-import { parseTaskNotification, type SlashCommand } from '../shared/sessions';
+import { parseTaskNotification, type BackgroundTask, type SlashCommand } from '../shared/sessions';
 import { compactRows, proseRows, withoutCompacted } from '../shared/compact';
 import { readCodexLastResponse, readContextTokens, readSubagentStats, type SubagentStats } from './context';
 import { readPendingGuidance } from './guidance';
@@ -31,6 +31,8 @@ import { convertWslPath } from './host';
 import { errMsg, type Logger } from './log';
 import type { WorkflowRun } from '../shared/workflows';
 import { SessionWorkflows, workflowAgentTranscript, type WorkflowLaunch } from './workflows';
+import { readOutputFrom } from './output-read';
+import type { OutputRead } from '../shared/output-tail';
 
 /** The most transcript row ids kept to tell a row whose copy from the mod comes after it (LiveRows). */
 const TRANSCRIPT_IDS_KEPT = 2000;
@@ -189,11 +191,74 @@ const MAX_TEXT = 65_536;
 /** Code Mode: the delivered scripts kept to find whose calls a batch of them is (several can end together). */
 const SETTLED_KEPT = 16;
 const MAX_PREVIEW = 200;
-/** Transcript readers kept warm for polling; least recently used beyond this are dropped. */
+/** Readers kept warm for polling; least recently used beyond this are dropped (a transcript's, once unused for READER_KEEP_MS). */
 const MAX_READERS = 16;
-/** Images kept per transcript (oldest evicted) and the largest base64 payload accepted. */
+/**
+ * A transcript reader used this recently stays, past MAX_READERS: the Chats dashboard's poll reads every open session
+ * every 2 s, and with more open than that each dropped one read its whole transcript again on the next poll (20 chats:
+ * 200-300 MB every 15 s, held by the main process until its next collection).
+ */
+const READER_KEEP_MS = 60_000;
+/** MessagesService.newest: the end of a transcript it reads, and the shortest transcript it reads it of (below, the whole is as quick). */
+const NEWEST_BYTES = 4 * 1024 * 1024;
+const NEWEST_MIN = 32 * 1024 * 1024;
+/** Image payloads an accumulator holds (oldest evicted; a transcript's images are only where they are, all kept), and the largest base64 payload accepted. */
 const MAX_IMAGES = 40;
 const MAX_IMAGE_BYTES = 10_000_000;
+
+/** Where a line is in the transcript a TranscriptReader read it from. */
+export interface LineAt {
+  offset: number;
+  length: number;
+}
+
+/**
+ * The image a row's marker stands for: its payload, or a transcript's record that holds it and which of its images
+ * it is (the tool call's result, or the message's block), read again when it's shown. Kept as payloads, a 1,000-row
+ * chat's screenshots held 31 MB for as long as its reader stayed cached.
+ */
+export type StoredImage = MessageImage | { mediaType: string; at: LineAt; toolUseId?: string; block?: number };
+
+/** The first base64 image in a message's or a tool result's content, if it's no larger than MAX_IMAGE_BYTES. */
+function imageOf(content: unknown): MessageImage | null {
+  if (!Array.isArray(content)) return null;
+  for (const block of content as Rec[]) {
+    if (block?.type !== 'image') continue;
+    const source = block.source as Rec | undefined;
+    const data = source?.data;
+    const mediaType = source?.media_type;
+    if (source?.type !== 'base64' || typeof data !== 'string' || typeof mediaType !== 'string') continue;
+    if (data.length > MAX_IMAGE_BYTES) continue;
+    return { mediaType, data };
+  }
+  return null;
+}
+
+/** A StoredImage's payload: a transcript's is read again from its record in `file`. Null when the record doesn't hold it. */
+async function imagePayload(stored: StoredImage | null | undefined, file: string | null): Promise<MessageImage | null> {
+  if (!stored) return null;
+  if ('data' in stored) return stored;
+  if (!file) return null;
+  const buf = Buffer.allocUnsafe(stored.at.length);
+  const fh = await fs.promises.open(file, 'r').catch(() => null);
+  if (!fh) return null; // the transcript is gone
+  try {
+    const { bytesRead } = await fh.read(buf, 0, buf.length, stored.at.offset);
+    if (bytesRead < buf.length) return null;
+  } finally {
+    await fh.close();
+  }
+  let rec: Rec | null;
+  try {
+    rec = JSON.parse(buf.toString('utf8')) as Rec | null;
+  } catch {
+    return null;
+  }
+  const content = (rec?.message as Rec | undefined)?.content;
+  if (!Array.isArray(content)) return null;
+  if (stored.toolUseId !== undefined) return imageOf((content as Rec[]).find((b) => b?.type === 'tool_result' && b.tool_use_id === stored.toolUseId)?.content);
+  return stored.block !== undefined ? imageOf([content[stored.block]]) : null;
+}
 
 /** A REPL row's calls with these failed calls (their indices, in order) and running count; `running` and `failures` show only while there are some. */
 function callCounts(calls: NonNullable<MessageRow['calls']>, failures: number[], running: number): NonNullable<MessageRow['calls']> {
@@ -203,8 +268,21 @@ function callCounts(calls: NonNullable<MessageRow['calls']>, failures: number[],
   return { ...rest, failed: failures.length, ...(failures.length ? { failures } : {}), ...(running > 0 ? { running } : {}) };
 }
 
+/**
+ * `s` as a string of its own. V8 keeps a slice of a longer string as a view of it, so a row's 64 kB cap of a 400 kB
+ * tool result kept all 400 kB for as long as the row lived (300 of them: 116 MB against 39 MB).
+ */
+function ownCopy(s: string): string {
+  return JSON.parse(JSON.stringify(s)) as string;
+}
+
 function cap(text: string, max: number): string {
-  return text.length > max ? text.slice(0, max) + '\n… (truncated)' : text;
+  return text.length > max ? ownCopy(text.slice(0, max) + '\n… (truncated)') : text;
+}
+
+/** The first `max` characters, without keeping the rest (ownCopy). */
+function clip(text: string, max: number): string {
+  return text.length > max ? ownCopy(text.slice(0, max)) : text;
 }
 
 /** First meaningful line, system-reminder-style tag blocks stripped, whitespace collapsed. */
@@ -212,7 +290,7 @@ function previewOf(text: string): string {
   let t = text.replace(/<(\w[\w-]*)>[\s\S]*?<\/\1>/g, '').replace(/<[^>\n]+>/g, '');
   t = t.replace(/\s+/g, ' ').trim();
   if (!t) t = text.replace(/\s+/g, ' ').trim();
-  return t.slice(0, MAX_PREVIEW);
+  return clip(t, MAX_PREVIEW);
 }
 
 /** The input fields most tools center on, tried in order for the table preview. */
@@ -308,6 +386,15 @@ function resultText(content: unknown): string {
 }
 
 type Rec = Record<string, unknown>;
+
+/** Claude's notice that a background command, Monitor, subagent or workflow ended (parseTaskNotification). */
+const isTaskNotification = (text: string): boolean => TASK_NOTIFICATION_START.test(text);
+/**
+ * A task notification starts the text, or follows the notice Claude Code puts before it when it hands one over as a
+ * message of its own ("<system-reminder>[SYSTEM NOTIFICATION - NOT USER INPUT] …", which a Poll result's event and a
+ * user turn both carry): either way it's no message of the user's.
+ */
+const TASK_NOTIFICATION_START = /^\s*(?:<system-reminder>\s*)?(?:\[SYSTEM NOTIFICATION - NOT USER INPUT\][\s\S]*?)?<task-notification>/;
 
 /**
  * "/name args" from the record Claude Code writes when the user runs a slash
@@ -564,12 +651,22 @@ export class TranscriptAccumulator {
   private callRepl = new Map<string, MessageRow>();
   /** Code Mode: the files each script's calls read or changed, by its REPL call's tool_use id. */
   private scriptFiles = new Map<string, Map<string, { changed: boolean; index: number }>>();
-  /** Image payloads by row id; the rows only carry a marker. */
-  readonly images = new Map<string, MessageImage>();
+  /** Image payloads by row id, or where a transcript has them (StoredImage); the rows only carry a marker. */
+  readonly images = new Map<string, StoredImage>();
+  /** Where the line addLine is folding is in its transcript, when a TranscriptReader reads one: its images stay there. */
+  lineAt: LineAt | undefined;
+  /** The rows of `images` that hold their payload, oldest first: only these are evicted past MAX_IMAGES. */
+  private readonly payloadIds = new Set<string>();
   private nextId = 0;
   private byToolId = new Map<string, MessageRow>();
   /** Rows that started background work, by Claude's background task id (a subagent's is its agent id). */
   private byBackgroundId = new Map<string, MessageRow>();
+  /**
+   * How a background task ended, by its id, from its notifications: a subagent a subagent started has its Agent call
+   * in the subagent's transcript, and one a Code Mode script started is under the script's REPL call, so neither
+   * has a row of its own among the rows, only the notification.
+   */
+  readonly ended = new Map<string, BackgroundTask['status']>();
   /** The subagents this session started, by agent id: their type (web-fetch), which names their messages. */
   private agentTypes = new Map<string, string>();
   /** The agent rows StructuredOutput calls became, by the call's tool_use id, until their results arrive. */
@@ -628,7 +725,9 @@ export class TranscriptAccumulator {
     this.replByEval.clear();
     this.pollIds.clear();
     this.byBackgroundId.clear();
+    this.ended.clear();
     this.images.clear();
+    this.payloadIds.clear();
     this.turnEnd = undefined;
     this.messageIds.clear();
   }
@@ -673,6 +772,17 @@ export class TranscriptAccumulator {
   }
 
   /**
+   * A stream's task event (stream-json, claude 2.1.330): a background task the stop_task control request stopped
+   * says so only here until the agent's next turn. Its summary is the task's description, not how it ended, and a
+   * subagent's completion can still be waiting on its own work, so only a stop counts.
+   */
+  private takeTaskEvent(rec: Rec): void {
+    const row = typeof rec.task_id === 'string' ? this.byBackgroundId.get(rec.task_id) : undefined;
+    if (row?.background?.status !== 'running' || (rec.status !== 'stopped' && rec.status !== 'killed')) return;
+    row.background = { ...row.background, status: 'stopped' };
+  }
+
+  /**
    * A background command's or subagent's task notification: its row gets how it ended.
    * A subagent that stopped with background work of its own still running is reported
    * as completed ("… is waiting on its own background work", with a note that it may
@@ -682,7 +792,11 @@ export class TranscriptAccumulator {
     this.turnEnd = undefined;
     const n = parseTaskNotification(text);
     const row = n ? this.byBackgroundId.get(n.id) : undefined;
-    if (!n || !row?.background) return;
+    if (!n) return;
+    // Kept for any task, with a row or not: a call a Code Mode script made is under its REPL call, not among the rows.
+    if (n.status === 'completed' && WAITING_ON_OWN_WORK.test(text)) this.ended.set(n.id, 'running');
+    else this.ended.set(n.id, n.status);
+    if (!row?.background) return;
     if (n.status === 'completed' && WAITING_ON_OWN_WORK.test(text)) {
       row.background = { ...row.background, status: 'running' };
       delete row.background.summary;
@@ -694,6 +808,20 @@ export class TranscriptAccumulator {
       ...(n.summary ? { summary: n.summary } : {}),
       ...(n.outputFile && !row.background.outputFile ? { outputFile: n.outputFile } : {}),
     };
+  }
+
+  /**
+   * A SendMessage that woke an agent which had finished ("Resuming agent a3bb017", its result's resumedAgentId or
+   * revivedAgentId): it runs again until its next notification, whatever its last one said.
+   */
+  private takeResume(tur: Rec | undefined): void {
+    const id = tur?.resumedAgentId ?? tur?.revivedAgentId;
+    if (typeof id !== 'string' || !id) return;
+    this.ended.set(id, 'running');
+    const row = this.byBackgroundId.get(id);
+    if (!row?.background || row.background.status === 'running') return;
+    row.background = { ...row.background, status: 'running' };
+    delete row.background.summary;
   }
 
   addLine(line: string): void {
@@ -712,8 +840,17 @@ export class TranscriptAccumulator {
     this.addParsed(rec);
   }
 
+  /** A notification Claude queued for a task's end: a task with no row of its own here (a subagent's subagent) ended, though nothing else in this transcript says so. */
+  private noteQueuedEnd(text: string): void {
+    const n = parseTaskNotification(text);
+    if (!n) return;
+    if (n.status === 'completed' && WAITING_ON_OWN_WORK.test(text)) this.ended.set(n.id, 'running');
+    else this.ended.set(n.id, n.status);
+  }
+
   /** A record addLine has parsed, or one the mod handed over (LiveRows). */
   addParsed(rec: Rec): void {
+    if (rec.type === 'queue-operation' && rec.operation === 'enqueue' && typeof rec.content === 'string' && isTaskNotification(rec.content)) this.noteQueuedEnd(rec.content);
     this.recordUuid = typeof rec.uuid === 'string' && rec.uuid ? rec.uuid : undefined;
     try {
       this.addRecord(rec);
@@ -740,9 +877,18 @@ export class TranscriptAccumulator {
         // A Stop hook's context makes the agent go on, as a block does (claude 2.1.328).
         if (att.hookEvent === 'Stop' || att.hookEvent === 'SubagentStop') this.supersedeTurnEnd();
       }
-      // Looper's mod hands guidance over mid-turn as a note of its own (claude-mod.ts, claude 2.1.327).
-      if (att?.type === 'plugin_note' && att.plugin === 'looper' && Array.isArray(att.content)) {
-        for (const c of att.content) if (typeof c === 'string') this.takeModNote(c, ts);
+      // Looper's mod hands guidance over mid-turn as a note of its own (claude-mod.ts, claude 2.1.327), and tells the agent
+      // when it stopped a background task (backgroundStoppedNote): the task's end, from when the note is stored, before the
+      // agent's next request carries it (heldContent, claude 2.1.330).
+      if (att?.type === 'plugin_note' && att.plugin === 'looper') {
+        if (Array.isArray(att.heldContent)) for (const c of att.heldContent) if (typeof c === 'string' && isTaskNotification(c)) this.takeNotification(c);
+        if (Array.isArray(att.content)) {
+          for (const c of att.content) {
+            if (typeof c !== 'string') continue;
+            if (isTaskNotification(c)) this.takeNotification(c);
+            else this.takeModNote(c, ts);
+          }
+        }
       }
       // A background command or subagent ended: Claude queues its notification for the agent.
       if (att?.type === 'queued_command' && att.commandMode === 'task-notification' && typeof att.prompt === 'string') {
@@ -766,6 +912,7 @@ export class TranscriptAccumulator {
     }
     // A headless turn's end (stream-json): the next reply answers new input, even input the stream doesn't show, such as a cron job's prompt.
     if (rec.type === 'result') this.turnEnd = undefined;
+    if (rec.type === 'system' && rec.subtype === 'task_notification') this.takeTaskEvent(rec);
     if (rec.type !== 'user' && rec.type !== 'assistant') return;
     const msg = rec.message;
     if (msg === null || typeof msg !== 'object') return;
@@ -778,7 +925,7 @@ export class TranscriptAccumulator {
       // A wake-up or another session's message starts a turn. Mid-turn meta text (an image's size) follows a tool call.
       if (this.rows.at(-1)?.kind !== 'tool' && !stopBlock) this.turnEnd = undefined;
       // A background job's end can come as a meta record too (a stream's isSynthetic).
-      if (text.trimStart().startsWith('<task-notification>')) this.takeNotification(text);
+      if (isTaskNotification(text)) this.takeNotification(text);
       else if (text) this.pushGuidance(text, ts);
       if (stopBlock) this.supersedeTurnEnd();
       return;
@@ -787,7 +934,7 @@ export class TranscriptAccumulator {
     if (rec.type === 'user') {
       // In -p mode a background job's end comes as a user message of its own: no prompt of the user's.
       const only = typeof content === 'string' ? content : Array.isArray(content) && content.length === 1 ? (content[0] as Rec)?.text : undefined;
-      if (typeof only === 'string' && only.trimStart().startsWith('<task-notification>')) {
+      if (typeof only === 'string' && isTaskNotification(only)) {
         this.takeNotification(only);
         return;
       }
@@ -808,6 +955,7 @@ export class TranscriptAccumulator {
         if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string' && this.pollIds.delete(block.tool_use_id)) {
           this.takeReplResults(resultText(block.content));
         } else if (block?.type === 'tool_result') {
+          this.takeResume(rec.toolUseResult as Rec | undefined);
           // A StructuredOutput call already became the agent's reply; a rejected one (schema mismatch) is retried, so its reply goes.
           const answer = typeof block.tool_use_id === 'string' ? this.structuredAnswers.get(block.tool_use_id) : undefined;
           if (answer) {
@@ -837,7 +985,7 @@ export class TranscriptAccumulator {
             delete row.result;
             this.replByEval.set(dispatched[1], row);
           }
-          this.takeImage(row, block.content);
+          this.takeImage(row, block.content, { toolUseId: block.tool_use_id as string });
           const patch = takePatch(rec.toolUseResult);
           if (patch) row.patch = patch;
           // The record-level toolUseResult carries the subagent id of a Task call.
@@ -863,7 +1011,7 @@ export class TranscriptAccumulator {
           if (!this.pushGuidance(block.text, ts)) this.pushPrompt(block.text, ts);
         } else if (block?.type === 'image') {
           const row = this.push({ kind: 'prompt', ts, text: '(image)' });
-          this.takeImage(row, [block]);
+          this.takeImage(row, [block], { block: (content as Rec[]).indexOf(block) });
         }
       }
       return;
@@ -932,13 +1080,16 @@ export class TranscriptAccumulator {
    * stamped with when it was written, a few ms after the script ended (claude 2.1.329): they go under the REPL row
    * whose script ended last before then. Looper's mod hands each call over as it starts (`live`), before the script
    * has ended: it goes under the newest script still running, and the transcript's copy moves it if another script
-   * made it. False when no delivered script can have made them.
+   * made it. A reader that comes to the transcript after the script's result was delivered (a chat opened, or one
+   * poll covering the whole script) sees no script running when it reads the mod's calls: they go under the script
+   * that ended first after they started, as the transcript's copies, written a moment after the result, would put
+   * them. False when no delivered script can have made them.
    */
   private takeScriptCalls(content: Rec[], ts: string | undefined, live: boolean): boolean {
     let owner: { row: MessageRow; at: string } | undefined;
     if (!live) for (const s of this.settled) if ((ts === undefined || s.at <= ts) && (!owner || s.at >= owner.at)) owner = s;
-    const row = live ? this.runningRepl() : owner?.row;
-    // A call the mod saw start with no script running waits for the transcript's copy.
+    const row = live ? (this.runningRepl() ?? this.endedAfter(ts)) : owner?.row;
+    // A call the mod saw start with no script it can belong to waits for the transcript's copy.
     if (!row?.toolUseId) return live;
     for (const block of content) {
       if (block?.type !== 'tool_use') continue;
@@ -950,6 +1101,14 @@ export class TranscriptAccumulator {
       this.addScriptCall(row, this.toolRow(block, ts));
     }
     return true;
+  }
+
+  /** Code Mode: the delivered script that ended first at or after `ts` (a call started before it ended). */
+  private endedAfter(ts: string | undefined): MessageRow | undefined {
+    if (ts === undefined) return undefined;
+    let found: { row: MessageRow; at: string } | undefined;
+    for (const s of this.settled) if (s.at >= ts && (!found || s.at < found.at)) found = s;
+    return found?.row;
   }
 
   /** Code Mode: the newest REPL row whose script hasn't ended. */
@@ -1041,7 +1200,7 @@ export class TranscriptAccumulator {
     } catch {
       /* torn or foreign line: keep it verbatim */
     }
-    this.push({ kind: 'raw', ts, tool: type, text, preview: line.replace(/\s+/g, ' ').trim().slice(0, MAX_PREVIEW) });
+    this.push({ kind: 'raw', ts, tool: type, text, preview: clip(line.replace(/\s+/g, ' ').trim(), MAX_PREVIEW) });
   }
 
   /**
@@ -1069,7 +1228,7 @@ export class TranscriptAccumulator {
       delegateText(text) === null &&
       taskEventsText(text) === null &&
       peerMessages(text) === null &&
-      !text.trimStart().startsWith('<task-notification>')
+      !isTaskNotification(text)
         ? last
         : undefined);
     if (row?.tool !== 'Skill') return false;
@@ -1119,10 +1278,18 @@ export class TranscriptAccumulator {
       const row = evalNo !== undefined && nonces.has(m[1]) ? this.replByEval.get(evalNo) : undefined;
       if (row) this.settleRepl(row, evalNo!, m[2], m[3]);
     }
+    // A background task's end comes in the same delivery, as an event of its own.
+    for (const m of text.matchAll(/<event nonce="([^"]+)" kind="task-notification"[^>]*>([\s\S]*?)<\/event>/g)) {
+      if (nonces.has(m[1])) this.takeNotification(m[2]);
+    }
   }
 
   /** One event the engine delivered (a poll_events record's own): nothing quoted it, so no nonce list vouches for it. */
   private takeReplEvent(envelope: string): void {
+    if (/^<event nonce="[^"]+" kind="task-notification"/.test(envelope.trim())) {
+      this.takeNotification(envelope);
+      return;
+    }
     const m = /^<event nonce="[^"]+" kind="repl-eval"([^>]*)>([\s\S]*)<\/event>$/.exec(envelope.trim());
     const evalNo = m ? /\beval="(\d+)"/.exec(m[1])?.[1] : undefined;
     const row = evalNo !== undefined ? this.replByEval.get(evalNo) : undefined;
@@ -1146,30 +1313,30 @@ export class TranscriptAccumulator {
     this.settle(row, attrs);
   }
 
-  /** The image a tool call's result carried, by the call's tool_use id. */
-  toolImage(toolUseId: string): MessageImage | null {
+  /** The image a tool call's result carried, by the call's tool_use id (TranscriptReader.toolImage reads a transcript's). */
+  toolImage(toolUseId: string): StoredImage | null {
     const row = this.byToolId.get(toolUseId);
     return (row && this.images.get(row.id)) ?? null;
   }
 
-  /** Keep the first image block's payload engine-side and mark the row. */
-  private takeImage(row: MessageRow, content: unknown): void {
-    if (!Array.isArray(content)) return;
-    for (const block of content as Rec[]) {
-      if (block?.type !== 'image') continue;
-      const source = block.source as Rec | undefined;
-      const data = source?.data;
-      const mediaType = source?.media_type;
-      if (source?.type !== 'base64' || typeof data !== 'string' || typeof mediaType !== 'string') continue;
-      if (data.length > MAX_IMAGE_BYTES) continue;
-      row.image = { mediaType };
-      this.images.set(row.id, { mediaType, data });
-      while (this.images.size > MAX_IMAGES) {
-        const oldest = this.images.keys().next().value;
-        if (oldest === undefined) break;
-        this.images.delete(oldest);
-      }
+  /**
+   * Keep the first image block's payload engine-side and mark the row: a transcript's stays in it, found again by
+   * `which` (the tool call whose result it is, or the message's block).
+   */
+  private takeImage(row: MessageRow, content: unknown, which: { toolUseId: string } | { block: number }): void {
+    const image = imageOf(content);
+    if (!image) return;
+    row.image = { mediaType: image.mediaType };
+    if (this.lineAt) {
+      this.images.set(row.id, { mediaType: image.mediaType, at: this.lineAt, ...which });
       return;
+    }
+    this.images.set(row.id, image);
+    this.payloadIds.add(row.id);
+    for (const oldest of this.payloadIds) {
+      if (this.payloadIds.size <= MAX_IMAGES) break;
+      this.payloadIds.delete(oldest);
+      this.images.delete(oldest);
     }
   }
 
@@ -1389,18 +1556,92 @@ export class CodexAccumulator extends TranscriptAccumulator {
   }
 }
 
+/** How long a transcript read parses before it lets the rest of the main process run. */
+const READ_SLICE_MS = 10;
+/** The bytes a transcript read takes from its file at a time: read whole, a transcript held as much memory again as its size. */
+const READ_CHUNK = 1024 * 1024;
+
+/**
+ * The record types anything reads from a Claude Code transcript: the accumulator's (addRecord), and repl-mode, which a
+ * chat follows. A line that starts with another type ({"type":"queue-operation", api-request, file-history-snapshot…)
+ * is skipped before it's decoded or parsed: Claude Code's bookkeeping was 82% of a 160 MB transcript and 76% of another.
+ * A queue-operation that holds a task notification is read: a subagent's end can be known only from it (noteQueuedEnd).
+ */
+const READ_TYPES = new Set(['user', 'assistant', 'attachment', 'system', 'result', 'ai-title', 'custom-title', 'repl-mode']);
+const TYPE_FIRST = Buffer.from('{"type":"');
+const TASK_NOTIFICATION = Buffer.from('<task-notification>');
+
+/** Whether a line's record has a type nothing reads (READ_TYPES), told by the type it starts with. */
+function unread(line: Buffer): boolean {
+  if (line.length < TYPE_FIRST.length || line.compare(TYPE_FIRST, 0, TYPE_FIRST.length, 0, TYPE_FIRST.length) !== 0) return false;
+  const end = line.subarray(TYPE_FIRST.length, TYPE_FIRST.length + 41).indexOf(0x22);
+  if (end === -1) return false;
+  const type = line.toString('latin1', TYPE_FIRST.length, TYPE_FIRST.length + end);
+  if (type === 'queue-operation') return line.indexOf(TASK_NOTIFICATION) === -1;
+  return !READ_TYPES.has(type);
+}
+
+/** Keys whose long values are base64 payloads: an image block's data, and the copy of a Read image in its toolUseResult. */
+const PAYLOAD_KEYS = [Buffer.from('"data":"'), Buffer.from('"base64":"')];
+/** A line longer than this has its payloads cut before it's decoded (clipPayloads). */
+const CLIP_LINE = 256 * 1024;
+
+/**
+ * A long line decoded with each base64 payload in it (PAYLOAD_KEYS, a string without escapes) cut to MAX_TEXT + 1
+ * characters, which everything that reads the parsed record treats as the whole: text is capped at MAX_TEXT, and an
+ * image is only marked, then read again whole from its line when it's shown (imagePayload). Decoded whole, each
+ * screenshot's line made 3-4 MB of strings that were garbage as soon as it was parsed.
+ */
+function clipPayloads(line: Buffer): string {
+  const cuts: [number, number][] = [];
+  for (const key of PAYLOAD_KEYS) {
+    for (let i = line.indexOf(key); i !== -1; ) {
+      const start = i + key.length;
+      const end = line.indexOf(0x22, start);
+      if (end === -1) break;
+      const escape = line.indexOf(0x5c, start);
+      if (end - start > MAX_TEXT + 1 && (escape === -1 || escape > end)) cuts.push([start + MAX_TEXT + 1, end]);
+      i = line.indexOf(key, end);
+    }
+  }
+  if (!cuts.length) return line.toString('utf8');
+  cuts.sort((a, b) => a[0] - b[0]);
+  const parts: string[] = [];
+  let from = 0;
+  for (const [cut, end] of cuts) {
+    parts.push(line.toString('utf8', from, cut));
+    from = end;
+  }
+  parts.push(line.toString('utf8', from));
+  return parts.join('');
+}
+
 /**
  * Incremental transcript tail: only bytes appended since the last read are
  * parsed, so 2-second polling stays cheap even over a \\wsl.localhost mount.
  * Lines split on raw \n bytes before decoding, so a read boundary inside a
  * UTF-8 sequence or a line cannot corrupt anything.
  */
+let readers = 0;
+
 export class TranscriptReader {
   readonly acc: TranscriptAccumulator;
+  /** Names this reader, and counts its reads that found something new: together they tell a caller whether its rows are current. */
+  private readonly id = ++readers;
+  private rev = 0;
+  get version(): string {
+    return `${this.id}:${this.rev}`;
+  }
   private readonly candidates: string[];
   private file: string | null = null;
+  /** Where the next line starts: a line the file doesn't have the end of yet is read again from here. */
   private offset = 0;
-  private remainder: Buffer = Buffer.alloc(0);
+  /** How much of the file has been read, so a poll that finds it the same size reads nothing. */
+  private end = 0;
+  /** Lines of a record type nothing reads are skipped: a Claude transcript's, unless every line shows (raw). */
+  private readonly skipUnread: boolean;
+  /** The next line is only the end of one (readTail started inside it): skipped. */
+  private torn = false;
 
   /**
    * Several candidate paths may be given (e.g. a subagent under either parent
@@ -1420,15 +1661,16 @@ export class TranscriptReader {
   ) {
     this.candidates = Array.isArray(file) ? file : [file];
     this.acc = format === 'codex' ? new CodexAccumulator(opts) : new TranscriptAccumulator(opts);
+    this.skipUnread = format === 'claude' && !opts.raw;
     this.live = liveDir && format === 'claude' && !opts.raw ? new LiveRows(liveDir, (liveId, apiId) => this.acc.sameMessage(liveId, apiId)) : null;
   }
 
   /** Read from the transcript's end as it is now: what it already holds is left out (none yet: all of it). */
   async skipExisting(): Promise<void> {
     try {
-      this.offset = (await fs.promises.stat(await this.resolve())).size;
+      this.offset = this.end = (await fs.promises.stat(await this.resolve())).size;
     } catch {
-      this.offset = 0;
+      this.offset = this.end = 0;
     }
   }
 
@@ -1448,13 +1690,28 @@ export class TranscriptReader {
     throw lastErr ?? new Error('no transcript');
   }
 
+  /**
+   * Reads only the transcript's last `bytes`, from the first line that starts in them, when it's at least `min`
+   * long; false when it's shorter, and nothing is read. Then read() goes on from its end.
+   */
+  async readTail(bytes: number, min: number): Promise<boolean> {
+    const size = (await fs.promises.stat(await this.resolve())).size;
+    if (size < min) return false;
+    this.offset = size - bytes;
+    this.torn = true;
+    await this.read();
+    return true;
+  }
+
   /** Reads one at a time: two overlapping ones would both start at the same offset and add the new lines twice. Resolves with whether the file grew. */
   private queue: Promise<unknown> = Promise.resolve();
 
   read(): Promise<boolean> {
     const next = this.queue.then(async () => {
       const grew = await this.readNew();
-      return this.live ? (await this.live.read((rec) => this.acc.addParsed(rec))) || grew : grew;
+      const all = this.live ? (await this.live.read((rec) => this.acc.addParsed(rec))) || grew : grew;
+      if (all) this.rev++;
+      return all;
     });
     this.queue = next.catch(() => undefined);
     return next;
@@ -1463,33 +1720,87 @@ export class TranscriptReader {
   private async readNew(): Promise<boolean> {
     const file = await this.resolve();
     const st = await fs.promises.stat(file);
-    if (st.size < this.offset) {
+    if (st.size < this.end) {
       // The file shrank (should not happen to a transcript): start over.
-      this.offset = 0;
-      this.remainder = Buffer.alloc(0);
+      this.offset = this.end = 0;
       this.acc.reset();
+      this.rev++;
     }
-    if (st.size === this.offset) return false;
+    if (st.size === this.end) return false;
     const fh = await fs.promises.open(file, 'r');
     try {
-      const buf = Buffer.alloc(st.size - this.offset);
-      const { bytesRead } = await fh.read(buf, 0, buf.length, this.offset);
-      this.offset += bytesRead;
-      let data = Buffer.concat([this.remainder, buf.subarray(0, bytesRead)]);
-      let nl: number;
-      while ((nl = data.indexOf(0x0a)) !== -1) {
-        const line = data.subarray(0, nl).toString('utf8').trim();
-        data = data.subarray(nl + 1);
-        if (!line) continue;
-        if (this.sink) this.sink(line);
-        else if (this.live) this.addTranscriptLine(line, this.live);
-        else this.acc.addLine(line);
+      // One buffer for the read, a chunk at a time: the line a chunk ends inside moves to the buffer's start and the
+      // next chunk goes after it, and a line longer than the buffer doubles it, so no line is copied piece by piece.
+      // Copying them (Buffer.from of each piece, then Buffer.concat) left 35-43 MB of garbage reading a 68 MB transcript.
+      let buf = Buffer.allocUnsafe(Math.min(READ_CHUNK, st.size - this.offset));
+      /** Bytes in buf, which holds the file from this.offset; the first `scanned` of them have no line's end past the last line taken. */
+      let held = 0;
+      let scanned = 0;
+      let since = performance.now();
+      while (this.offset + held < st.size) {
+        if (held === buf.length) {
+          const bigger = Buffer.allocUnsafe(Math.min(buf.length * 2, st.size - this.offset));
+          buf.copy(bigger, 0, 0, held);
+          buf = bigger;
+        }
+        const { bytesRead } = await fh.read(buf, held, Math.min(buf.length - held, st.size - this.offset - held), this.offset + held);
+        if (bytesRead === 0) break;
+        held += bytesRead;
+        const data = buf.subarray(0, held);
+        let from = 0;
+        let nl: number;
+        while ((nl = data.indexOf(0x0a, scanned)) !== -1) {
+          const line = data.subarray(from, nl);
+          const at = this.offset + from;
+          from = scanned = nl + 1;
+          if (this.torn) this.torn = false;
+          else this.take(line, at);
+          // A whole transcript read at once (a chat shown for the first time) held the main process 520 ms for 72 MB.
+          if (performance.now() - since > READ_SLICE_MS) {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            since = performance.now();
+          }
+        }
+        scanned = held - from;
+        if (from) {
+          buf.copyWithin(0, from, held);
+          this.offset += from;
+          held -= from;
+        }
       }
-      this.remainder = Buffer.from(data);
+      this.end = this.offset + held;
     } finally {
       await fh.close();
     }
     return true;
+  }
+
+  /** One line of the transcript, which starts at `at` in the file. */
+  private take(bytes: Buffer, at: number): void {
+    if (this.skipUnread && unread(bytes)) return;
+    const line = (this.skipUnread && !this.sink && bytes.length > CLIP_LINE ? clipPayloads(bytes) : bytes.toString('utf8')).trim();
+    if (!line) return;
+    if (this.sink) {
+      this.sink(line);
+      return;
+    }
+    this.acc.lineAt = { offset: at, length: bytes.length };
+    try {
+      if (this.live) this.addTranscriptLine(line, this.live);
+      else this.acc.addLine(line);
+    } finally {
+      this.acc.lineAt = undefined;
+    }
+  }
+
+  /** The image a row's marker stands for, by its row id: a transcript's is read again from the file. */
+  image(rowId: string): Promise<MessageImage | null> {
+    return imagePayload(this.acc.images.get(rowId), this.file);
+  }
+
+  /** The image a tool call's result carried, by the call's tool_use id. */
+  toolImage(toolUseId: string): Promise<MessageImage | null> {
+    return imagePayload(this.acc.toolImage(toolUseId), this.file);
   }
 
   private addTranscriptLine(line: string, live: LiveRows): void {
@@ -1507,47 +1818,68 @@ export class TranscriptReader {
 /** A compacted chat's run folder keeps the conversation it was compacted from, as rows, once its first message makes it a run. */
 export const COMPACTED_FILE = 'compacted.json';
 
-/** compacted.json: the compacted rows (compactRows, then layered), with every call of the newest session. */
+/**
+ * compacted.json: the compacted rows (compactRows, then layered), with every
+ * call of the newest session, and in Code Mode the names the new session's
+ * REPL got back from the earlier one's (replPrelude), which its own compaction
+ * snapshots first.
+ */
 export interface CompactedFile {
-  version: 2;
+  version: 3;
   rows: MessageRow[];
+  replNames?: string[];
 }
 
-export const compactedFile = (rows: MessageRow[]): CompactedFile => ({ version: 2, rows });
+export const compactedFile = (rows: MessageRow[], replNames?: string[]): CompactedFile => ({ version: 3, rows, ...(replNames?.length ? { replNames } : {}) });
 
 /** compacted.json files read, by path, while their size and modified time stay the same: a reopened chat's history reads its file on every poll. */
-const compactedCache = new Map<string, { size: number; mtimeMs: number; rows: MessageRow[] }>();
+const compactedCache = new Map<string, { size: number; mtimeMs: number; ino: number; file: CompactedFile }>();
 const MAX_COMPACTED_CACHE = 16;
 
-/** The rows of a compacted chat's compacted.json; empty for any other run. */
-export function readCompactedRows(runDir: string): MessageRow[] {
+/** A compacted chat's compacted.json; null for any other run. */
+function readCompacted(runDir: string): CompactedFile | null {
   const file = path.join(runDir, COMPACTED_FILE);
   let st: fs.Stats;
   try {
     st = fs.statSync(file);
   } catch {
-    return []; // not a compacted chat
+    return null; // not a compacted chat
   }
   const hit = compactedCache.get(file);
-  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.rows;
-  let rows: MessageRow[] = [];
+  // The inode too: a file rewritten (writeJsonAtomic renames a new one over it) can keep its size and time to the ms.
+  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs && hit.ino === st.ino) return hit.file;
+  let read: CompactedFile = { version: 3, rows: [] };
   try {
     const data = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<CompactedFile>;
-    if (data.version === 2 && Array.isArray(data.rows)) rows = data.rows;
+    if (data.version === 3 && Array.isArray(data.rows)) {
+      const names = Array.isArray(data.replNames) ? data.replNames.filter((n): n is string => typeof n === 'string') : [];
+      read = compactedFile(data.rows, names);
+    }
   } catch {
     /* torn file: no rows */
   }
   compactedCache.delete(file);
-  compactedCache.set(file, { size: st.size, mtimeMs: st.mtimeMs, rows });
+  compactedCache.set(file, { size: st.size, mtimeMs: st.mtimeMs, ino: st.ino, file: read });
   if (compactedCache.size > MAX_COMPACTED_CACHE) compactedCache.delete(compactedCache.keys().next().value!);
-  return rows;
+  return read;
+}
+
+/** The rows of a compacted chat's compacted.json; empty for any other run. */
+export function readCompactedRows(runDir: string): MessageRow[] {
+  return readCompacted(runDir)?.rows ?? [];
+}
+
+/** Code Mode: the names a compacted chat's REPL got back from the session it was compacted from; empty for any other run. */
+export function readCompactedReplNames(runDir: string): string[] {
+  return readCompacted(runDir)?.replNames ?? [];
 }
 
 /**
- * The first compacted.json was an array of the messages alone: it becomes a
- * version 2 file whose rows are the oldest session's. Its first character
- * tells the versions apart, so a run without one costs a failed open. True
- * when it rewrote the file.
+ * The earlier compacted.json files become version 3. The first was an array
+ * of the messages alone, whose rows become the oldest session's; version 2
+ * has version 3's shape without its REPL names. The file's start tells them
+ * apart (its first character, or the version that leads its object), so a run
+ * without one costs a failed open. True when it rewrote the file.
  */
 export async function migrateCompactedFile(runDir: string): Promise<boolean> {
   const file = path.join(runDir, COMPACTED_FILE);
@@ -1557,15 +1889,22 @@ export async function migrateCompactedFile(runDir: string): Promise<boolean> {
   } catch {
     return false; // not a compacted chat
   }
-  const head = Buffer.alloc(1);
+  const head = Buffer.alloc(32);
+  let read = 0;
   try {
-    await fh.read(head, 0, 1, 0);
+    ({ bytesRead: read } = await fh.read(head, 0, head.length, 0));
   } finally {
     await fh.close();
   }
-  if (head.toString('utf8') !== '[') return false;
-  const rows = JSON.parse(await fs.promises.readFile(file, 'utf8')) as MessageRow[];
-  await writeJsonAtomicAsync(file, compactedFile(rows.map((r) => ({ ...r, layer: 0 }))));
+  const start = head.toString('utf8', 0, read);
+  if (start.startsWith('[')) {
+    const rows = JSON.parse(await fs.promises.readFile(file, 'utf8')) as MessageRow[];
+    await writeJsonAtomicAsync(file, compactedFile(rows.map((r) => ({ ...r, layer: 0 }))));
+    return true;
+  }
+  if (!/^\{\s*"version"\s*:\s*2\s*,/.test(start)) return false;
+  const v2 = JSON.parse(await fs.promises.readFile(file, 'utf8')) as { rows?: unknown };
+  await writeJsonAtomicAsync(file, compactedFile(Array.isArray(v2.rows) ? (v2.rows as MessageRow[]) : []));
   return true;
 }
 
@@ -1743,7 +2082,7 @@ export interface MessagesDeps {
  * cached per run for cheap incremental polling.
  */
 export class MessagesService {
-  private readers = new Map<string, TranscriptReader>();
+  private readers = new Map<string, { reader: TranscriptReader; used: number }>();
   /** Settles once migrateCompacted has gone through every run: nothing reads a compacted.json before. */
   private compactedReady: Promise<unknown> = Promise.resolve();
 
@@ -1769,7 +2108,8 @@ export class MessagesService {
     return done;
   }
 
-  async read(taskId: string, runId: string, agentId?: string, raw = false): Promise<MessagesResult> {
+  /** `known`: the `version` an earlier read of this subagent's transcript returned; while it's current, no rows are sent. */
+  async read(taskId: string, runId: string, agentId?: string, raw = false, known?: string): Promise<MessagesResult> {
     const none = (status: 'no-session' | 'no-transcript'): MessagesResult => ({ status, rows: [] });
     if (agentId !== undefined) {
       const reader = await this.subagentReader(taskId, runId, agentId, raw);
@@ -1779,7 +2119,8 @@ export class MessagesService {
       } catch {
         return none('no-transcript'); // not written yet, or cleaned up by the harness
       }
-      return { status: 'ok', rows: reader.acc.rows };
+      const version = reader.version;
+      return known === version ? { status: 'ok', rows: [], version, unchanged: true } : { status: 'ok', rows: reader.acc.rows, version };
     }
     const pendingGuidance = readPendingGuidance(this.deps.runDir(taskId, runId)) ?? undefined;
     // A compacted chat's run starts with the messages of the conversation it was compacted from.
@@ -1788,6 +2129,7 @@ export class MessagesService {
     let refs = 0;
     let readable = 0;
     let commands: SlashCommand[] = [];
+    const ended: NonNullable<MessagesResult['ended']> = {};
     // The classifier first, then the agent sessions in the order they ran.
     const sources: ('classifier' | 'agent' | number)[] = [
       'classifier',
@@ -1805,12 +2147,26 @@ export class MessagesService {
         continue; // this step's transcript is not written yet (or was cleaned up)
       }
       rows.push(...reader.acc.rows);
+      for (const [id, status] of reader.acc.ended) ended[id] = status;
       // The classifier's session isn't the one guidance goes to; the newest agent session's list counts.
       if (source !== 'classifier' && reader.acc.commands.length) commands = reader.acc.commands;
     }
     if (refs === 0) return { ...none('no-session'), pendingGuidance };
     if (readable === 0) return { ...none('no-transcript'), pendingGuidance };
-    return { status: 'ok', rows, pendingGuidance, ...(commands.length ? { commands } : {}) };
+    return { status: 'ok', rows, pendingGuidance, ...(commands.length ? { commands } : {}), ...(Object.keys(ended).length ? { ended } : {}) };
+  }
+
+  /**
+   * The newest rows of a run's conversation, from the end of its agent session's Claude transcript when that's at
+   * least NEWEST_MIN long: what a chat shows while all of it is read. Over \\wsl.localhost a 170 MB one took 0.8 s
+   * whole and 60 ms for its last 4 MB. Empty for a shorter one, or a Codex one.
+   */
+  async newest(taskId: string, runId: string): Promise<MessageRow[]> {
+    const ref = readTranscriptRef(this.deps.runDir(taskId, runId));
+    const hostPath = ref ? await this.toHostPath(ref, taskId) : undefined;
+    if (!hostPath) return [];
+    const reader = new TranscriptReader(hostPath, { attachment: this.deps.attachment });
+    return (await reader.readTail(NEWEST_BYTES, NEWEST_MIN)) ? reader.acc.rows : [];
   }
 
   /** The run's whole conversation as a compacted one keeps it (compactRows); empty when it recorded none. */
@@ -1875,7 +2231,7 @@ export class MessagesService {
       } catch {
         /* rows already parsed may still hold the image */
       }
-      const image = toolId ? reader.acc.toolImage(toolId) : (reader.acc.images.get(rowId) ?? null);
+      const image = toolId ? await reader.toolImage(toolId) : await reader.image(rowId);
       if (image) return image;
     }
     return null;
@@ -1903,6 +2259,25 @@ export class MessagesService {
       if (calls) return scriptCallsPage(calls, before, count);
     }
     return null;
+  }
+
+  /**
+   * The same page from a transcript read by its host path: the conversation
+   * from outside Looper that a chat went on with, which the chat's own
+   * session hasn't written (its agent hasn't started yet, or never did).
+   */
+  async transcriptScriptCalls(hostPath: string, format: 'claude' | 'codex', toolUseId: string, before: number | null, count: number): Promise<ScriptCalls | null> {
+    const reader = await this.cached(`transcript ${format} ${hostPath}`, async () =>
+      (await exists(hostPath)) ? new TranscriptReader(hostPath, { attachment: this.deps.attachment }, format) : null,
+    );
+    if (typeof reader === 'string') return null;
+    try {
+      await reader.read();
+    } catch {
+      /* rows already parsed may still hold them */
+    }
+    const calls = reader.acc.scriptCalls.get(toolUseId);
+    return calls ? scriptCallsPage(calls, before, count) : null;
   }
 
   /**
@@ -1991,18 +2366,18 @@ export class MessagesService {
     key: string,
     make: () => Promise<TranscriptReader | null>,
   ): Promise<TranscriptReader | 'no-transcript'> {
-    let reader = this.readers.get(key);
+    let reader = this.readers.get(key)?.reader;
     if (!reader) {
       const made = await make();
       if (!made) return 'no-transcript';
       reader = made;
     }
-    // Refresh LRU order; evict the oldest beyond the cap.
+    // Refresh LRU order; evict the oldest beyond the cap that nothing has read for READER_KEEP_MS.
+    const now = Date.now();
     this.readers.delete(key);
-    this.readers.set(key, reader);
-    while (this.readers.size > MAX_READERS) {
-      const oldest = this.readers.keys().next().value;
-      if (oldest === undefined) break;
+    this.readers.set(key, { reader, used: now });
+    for (const [oldest, { used }] of this.readers) {
+      if (this.readers.size <= MAX_READERS || now - used < READER_KEEP_MS) break;
       this.readers.delete(oldest);
     }
     return reader;
@@ -2106,6 +2481,17 @@ export class MessagesService {
       } finally {
         await fh.close();
       }
+    } catch {
+      return null;
+    }
+  }
+
+  /** A background command's output from byte `known` on, in the agent's own path form (readOutputFrom); null when it can't be read. */
+  async readOutput(taskId: string, targetPath: string, known?: number): Promise<OutputRead | null> {
+    const hostPath = await this.toHostPath(targetPath, taskId);
+    if (!hostPath) return null;
+    try {
+      return await readOutputFrom(hostPath, known);
     } catch {
       return null;
     }

@@ -45,6 +45,30 @@ function ScreenFailed({ addonId, addonName, error, retry }: { addonId: string; a
 }
 
 /**
+ * The screen's property lists share one label column, as wide as the widest label on the screen, so their values
+ * line up from one section to the next (--props-label, which `.addon-screen .props` reads). It adds no box of its own.
+ */
+function SharedLabels({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Each list's own column is its widest label's width, so measuring them as they are gives the widest on the screen.
+    el.style.removeProperty('--props-label');
+    const labels = el.querySelectorAll('.props > dt');
+    if (labels.length < 2) return;
+    let widest = 0;
+    for (const dt of labels) widest = Math.max(widest, dt.getBoundingClientRect().width);
+    if (widest > 0) el.style.setProperty('--props-label', `${Math.ceil(widest)}px`);
+  });
+  return (
+    <div ref={ref} style={{ display: 'contents' }}>
+      {children}
+    </div>
+  );
+}
+
+/**
  * An addon's screen, drawn from the nodes it sent: in the main window's
  * detail area (`main`), as the whole of an addon window (`window`, with its
  * footer as the window's Save | Cancel | Apply), or as its body alone inside
@@ -564,7 +588,7 @@ export function AddonScreenView({
             node={n}
             picked={listSel[n.id]}
             onPick={(id) => setListSel((m) => ({ ...m, [n.id]: id }))}
-            stack={narrow}
+            stack={narrow || !!n.stack}
             busy={busy}
             onMenuPick={(b, row: AddonListRow) => void send('click', b.id, b.confirm, undefined, row.id)}
             onMore={() => void window.looper.addons.event(addonId, { source: { ...source.current }, kind: 'more', id: n.id }).catch(reportError)}
@@ -638,10 +662,10 @@ export function AddonScreenView({
 
   const instruction = screen?.instruction && !pushed && <MainInstruction>{screen.instruction}</MainInstruction>;
   const page = failed || (screen && (
-    <>
+    <SharedLabels>
       {filling && instruction ? <div className="addon-fill-part">{instruction}</div> : instruction}
       {filling ? parts(screen.body) : nodes(screen.body)}
-    </>
+    </SharedLabels>
   ));
 
   if (mode === 'inline') return <div className="addon-screen addon-inline">{page}</div>;

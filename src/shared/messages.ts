@@ -178,6 +178,12 @@ export interface MessagesResult {
   pendingGuidance?: string;
   /** The skills the agent's session was offered, from its transcript: a task run's "/" list. */
   commands?: SlashCommand[];
+  /** How the background tasks ended whose notification has no row of its own in the transcript (a subagent a subagent started), by task id. */
+  ended?: Record<string, 'running' | 'completed' | 'failed' | 'stopped'>;
+  /** A subagent's read: which state of its transcript the rows are of. A caller that sends it back as `known` gets `unchanged` while nothing was written. */
+  version?: string;
+  /** The transcript is as it was at `known`: no rows are sent, the caller's still hold. */
+  unchanged?: true;
 }
 
 /** Opens every guidance message Looper hands a running agent; the Messages view keys its Guidance rows on it. */

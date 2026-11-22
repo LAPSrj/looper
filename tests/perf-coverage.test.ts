@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { LOOPER_TABS } from '../src/shared/main-tabs';
 import { PHONE_TABS } from '../src/renderer/src/phone-nav';
-import { MAIN_SCREENS, PHONE_SCREENS, PHONES, WINDOWS } from '../scripts/perf/screens.mjs';
+import { DEVICES, MAIN_SCREENS, PHONE_SCREENS, PHONES, WINDOWS, parseDevices } from '../scripts/perf/screens.mjs';
 
 const renderer = path.join(__dirname, '..', 'src', 'renderer', 'src');
 const main = fs.readFileSync(path.join(renderer, 'main.tsx'), 'utf8');
@@ -49,14 +49,23 @@ describe('the performance check covers every screen (scripts/perf/check.mjs)', (
     expect(MAIN_SCREENS.some((s) => s.addon)).toBe(true);
   });
 
-  it("shows every phone tab and each kind of screen pushed over one, on iOS and Android", () => {
-    expect(PHONES).toEqual(['ios', 'android']);
+  it('shows every phone tab and each kind of screen pushed over one, on an iPhone, an iPad, a phone and a tablet of Android', () => {
+    expect(PHONES).toEqual(['ios', 'ipad', 'android', 'android-tablet']);
     const names = new Set(PHONE_SCREENS.map((s) => s.tab));
     for (const [, label] of PHONE_TABS) expect(names, label).toContain(label);
     const nav = fs.readFileSync(path.join(renderer, 'phone-nav.ts'), 'utf8');
     const kinds = [...(/export type PhoneScreen =([\s\S]+?);\n/.exec(nav)?.[1] ?? '').matchAll(/kind: '(\w+)'/g)].map((m) => m[1]);
     expect(kinds.length).toBeGreaterThan(3);
     for (const k of kinds) expect(PHONE_SCREENS.some((s) => s.push === k), k).toBe(true);
+  });
+
+  it('takes the devices to measure by name, every one by default', () => {
+    expect(DEVICES).toEqual(['desktop', 'ios', 'ipad', 'android', 'android-tablet']);
+    expect(parseDevices('')).toEqual(DEVICES);
+    expect(parseDevices(undefined)).toEqual(DEVICES);
+    expect(parseDevices('all')).toEqual(DEVICES);
+    expect(parseDevices('android-tablet, iphone')).toEqual(['ios', 'android-tablet']);
+    expect(() => parseDevices('watch')).toThrow(/watch/);
   });
 
   it('names each screen once', () => {

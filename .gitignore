@@ -7,4 +7,5 @@ release/
 .vite/
 e2e-tmp/
 *.tsbuildinfo
+*.syso
 CLAUDE.local.md

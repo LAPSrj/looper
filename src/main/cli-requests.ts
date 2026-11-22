@@ -1,5 +1,6 @@
 import { closeBuild, flag, liveOf, named, optText, runTaskOf, startBuild, text, type RequestHandler } from '../engine/cli-requests';
 import type { Engine } from '../engine/engine';
+import { NOTIFY_TOPICS } from '../shared/remote-access';
 import type { AddonHost } from './addon-host';
 import { setAddonEnabled } from './addons';
 import type { RemoteAccess } from './remote-access';
@@ -62,7 +63,7 @@ export function mainCliRequests(d: MainRequestDeps): Record<string, RequestHandl
       const id = text(p, 'id');
       const t = liveOf(e, id);
       if (t?.kind === 'chat' || t?.kind === 'terminal') {
-        d.showChat(id);
+        d.showChat(t.id);
         return `Showed the ${named(t)}.`;
       }
       const task = e.getTask(id);
@@ -136,6 +137,20 @@ export function mainCliRequests(d: MainRequestDeps): Record<string, RequestHandl
       const dev = device(text(p, 'id'));
       await remoteAccess().removeDevice(dev.id);
       return `Removed "${dev.name}"; it has to pair again to reach Looper.`;
+    },
+    'devices-notify': (p) => {
+      const dev = device(text(p, 'id'));
+      const given = p.notify && typeof p.notify === 'object' ? (p.notify as Record<string, unknown>) : {};
+      const notify = { ...dev.notify };
+      for (const { id } of NOTIFY_TOPICS) {
+        const v = given[id];
+        if (v === undefined) continue;
+        if (typeof v !== 'boolean') throw new Error(`notify.${id} must be true or false`);
+        notify[id] = v;
+      }
+      if (NOTIFY_TOPICS.some(({ id }) => given[id] !== undefined)) remoteAccess().setDeviceNotifications(dev.id, notify);
+      const on = NOTIFY_TOPICS.filter(({ id }) => notify[id]).map(({ label }) => label.toLowerCase());
+      return `"${dev.name}" is notified of ${on.length ? on.join(', ') : 'nothing'}.`;
     },
     'devices-pair': () => remoteAccess().newPairingCode(),
   };

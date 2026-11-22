@@ -75,10 +75,12 @@ screens show, such as **Edit Server…** for the selected server. Its New comman
 are in **File** with Looper's New items, and its other tools are in **Tools**,
 before Agent Settings.
 
-The View menu has a check box for each started addon with toolbar buttons, after
-**Toolbar**, such as **Servers Toolbar** (the addon can give it another name), and
-right-clicking the toolbar lists the same check boxes. Clearing one leaves all of
-that addon's buttons out of the toolbar. Its commands stay in its menus.
+An addon's buttons are a toolbar of their own, which you can drag like Looper's
+(see [The toolbar](monitoring.md#the-toolbar)). **View → Toolbars** has a check box
+for each started addon with toolbar buttons, after Looper's own, such as
+**Servers Toolbar** (the addon can give it another name), and right-clicking the
+toolbar lists the same check boxes. Clearing one leaves all of that addon's
+buttons out of the toolbars. Its commands stay in its menus.
 
 On a phone or tablet, a command shows on the screen's bar or in its More menu.
 One that no screen has is listed under the addon on the **More** tab.

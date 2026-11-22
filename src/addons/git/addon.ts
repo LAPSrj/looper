@@ -1,4 +1,4 @@
-import { readdir, stat } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type {
@@ -98,6 +98,35 @@ const AFTER_ACTION: AddonRefresh = { views: ['repo', 'project', 'branches'], pan
 /** Thrown for a request the addon doesn't know, so its answer has JSON-RPC's code for that. */
 export class UnknownMethodError extends Error {
   readonly code = -32601;
+}
+
+/** Where the diff goes in a list of files or commits: beside the list or under it. */
+export type DiffLayout = 'side' | 'stack';
+const LAYOUT_ENTRIES: { id: string; layout: DiffLayout }[] = [
+  { id: 'layout-side', layout: 'side' },
+  { id: 'layout-stack', layout: 'stack' },
+];
+
+/** The Layout menu as it is for a layout: its items, the current one checked. */
+export function layoutState(layout: DiffLayout): AddonCommandStates[string] {
+  return {
+    hidden: false,
+    enabled: true,
+    entries: [
+      { id: 'layout-side', label: '&Side by Side', check: 'radio', checked: layout === 'side' },
+      { id: 'layout-stack', label: '&One Above the Other', check: 'radio', checked: layout === 'stack' },
+    ],
+  };
+}
+
+/** The addon's saved settings, as its file holds them. */
+export function readOptions(text: string): { layout: DiffLayout } {
+  try {
+    const v = JSON.parse(text) as { layout?: unknown };
+    return { layout: v.layout === 'stack' ? 'stack' : 'side' };
+  } catch {
+    return { layout: 'side' };
+  }
 }
 
 const ALL_COMMANDS: RepoCommand[] = ['commit', 'pull', 'push', 'sync', 'fetch', 'branch', 'repo-settings', 'init'];
@@ -240,6 +269,25 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
   let locale: string | undefined;
   /** A date as Looper shows it; formatDateTime keeps one formatter per locale. */
   const date = (at: number): string => formatDateTime(at, locale);
+  /** Where the lists put their diff (Layout in the View menu), kept in the addon's own file in Looper's data folder. */
+  let layout: DiffLayout = 'side';
+  const optionsFile = (): string | undefined => (dataDir ? path.join(dataDir, 'addon-data', 'git', 'options.json') : undefined);
+  async function loadOptions(): Promise<void> {
+    const file = optionsFile();
+    if (file) layout = readOptions(await readFile(file, 'utf8').catch(() => '')).layout;
+  }
+  async function saveOptions(): Promise<void> {
+    const file = optionsFile();
+    if (!file) return;
+    try {
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(`${file}.tmp`, JSON.stringify({ layout }, null, 2));
+      await rename(`${file}.tmp`, file);
+    } catch (e) {
+      log(`Couldn't save the Git addon's options: ${(e as Error).message}`);
+    }
+  }
+  const stacked = (): { stack?: true } => (layout === 'stack' ? { stack: true } : {});
 
   // ---------- Repositories ----------
 
@@ -519,6 +567,7 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
       type: 'listDetail',
       id: 'changes',
       label: 'Changes',
+      ...stacked(),
       items: s.changes.map((c) =>
         fileRow(c.path, c.origPath, changeText(c), {
           view: 'change',
@@ -532,6 +581,7 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
       type: 'listDetail',
       id: 'history',
       label: 'Commits',
+      ...stacked(),
       items: commits.map((c) => ({
         id: c.hash,
         title: c.subject,
@@ -563,11 +613,11 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
     const choose: AddonNode[] =
       all.length > 1 ? [{ type: 'field', id: 'repo', label: 'Repository', input: 'select', value: ref.sub, options: all.map((sub) => ({ value: sub, label: sub })), change: true }] : [];
     if (!s.repo) {
-      return { title: repoTitle(ref), commands: commandStates(s), status: [subCwd(ref.proj, ref.sub)], body: [...choose, await notRepo(ref.proj, s)], ...(s.missing ? { refreshSec: MISSING_REFRESH_SEC } : {}) };
+      return { title: repoTitle(ref), commands: { ...commandStates(s), layout: { hidden: true } }, status: [subCwd(ref.proj, ref.sub)], body: [...choose, await notRepo(ref.proj, s)], ...(s.missing ? { refreshSec: MISSING_REFRESH_SEC } : {}) };
     }
     return {
       title: repoTitle(ref),
-      commands: commandStates(s),
+      commands: { ...commandStates(s), layout: layoutState(layout) },
       status: [headText(s), syncText(s), changesText(s.changes.length)],
       body: [...choose, await repoTabs(ref, s, inProject ? branchText(s) : undefined)],
       refreshSec: 60,
@@ -857,6 +907,15 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
   async function command(ev: AddonEvent, request?: number): Promise<AddonEventResult> {
     if (ev.id === 'clone') return { actions: [{ type: 'openWindow', view: 'clone', title: 'Clone Repository', width: 560, height: 440 }] };
     if (ev.id === 'settings') return settingsWindow({});
+    const chosen = LAYOUT_ENTRIES.find((e) => e.id === ev.id);
+    if (chosen) {
+      if (chosen.layout !== layout) {
+        layout = chosen.layout;
+        await saveOptions();
+        looper.refresh({ views: ['repo', 'project'] });
+      }
+      return {};
+    }
     const ref = await eventRef(ev);
     git.forget(ref.proj.id);
     const branch = branchOfEntry(ev.id);
@@ -1204,6 +1263,7 @@ export function createGitAddon(looper: LooperLink, opts: GitAddonOptions = {}): 
         locale = typeof params.locale === 'string' && params.locale ? params.locale : undefined;
         if (params.host === 'windows' || params.host === 'wsl' || params.host === 'linux' || params.host === 'mac') host = params.host;
         dataDir = typeof params.dataDir === 'string' && params.dataDir ? params.dataDir : undefined;
+        await loadOptions();
         return {};
       }
       askActivity();

@@ -9,13 +9,15 @@ import type {
   AddonValue,
 } from './addons';
 import type { BuilderSetup, BuilderState } from './builder';
+import type { PreviewNetwork } from './preview';
 import type { RecentRun } from './dashboard';
 import type { RunFilter } from './runs';
-import type { CommandOutput } from './bash-mode';
+import type { CommandOutput, CommandPrompt } from './bash-mode';
 import type { Attachment, ChatSettings, ChatState, QueuedMessage } from './chat';
 import type { HostCommand } from './commands/context';
 import type { ClaudeLogin } from './logins';
 import type { SessionActivity, SessionsState, SlashCommand } from './sessions';
+import type { OutputRead } from './output-tail';
 import type { GitChange, GitCommit, GitCommitDetail, GitFileDiff, GitStatusResult } from './git';
 import type { HistoryCommand, HistoryCommands, HistoryConversation, HistoryList, HistoryListOptions } from './history';
 import type { MessageImage, ScriptCalls, MessagesResult, SentFileInfo } from './messages';
@@ -24,7 +26,7 @@ import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
 import type { AgentSettingsData, AgentSettingsSave, AgentSettingsScope, McpServer, McpServerRequest, McpTool } from './agent-config';
 import type { RemoteMessage, RemoteState } from './remote';
-import type { MenuItemSpec, PairingCode, PopupButton, RemoteAccessProviderId, RemoteAccessState } from './remote-access';
+import type { DeviceNotifications, MenuItemSpec, PairingCode, PopupButton, RemoteAccessProviderId, RemoteAccessState } from './remote-access';
 import type { EngineEvent, PreventSleepState, Project, ProjectFolder, RecycleBinEntry, RestState, RunRecord, Settings, Task, TaskFolder, TaskRuntime, Template } from './types';
 
 export interface AppInfo {
@@ -177,15 +179,15 @@ export interface LooperApi {
   runs: {
     list(id: string, limit?: number): Promise<RunRecord[]>;
     /** What a finished run can continue in. */
-    canContinue(id: string, runId: string): Promise<{ chat: boolean; terminal: boolean; guidance: boolean; compact: boolean }>;
+    canContinue(id: string, runId: string): Promise<{ chat: boolean; terminal: boolean; guidance: boolean; compact: boolean; start: boolean }>;
     /** The newest `limit` runs the filter shows, and every one that started at `since` (epoch ms) or later, across every task and Remote Control folder project and helper. */
     recent(limit: number, filter: RunFilter, since: number): Promise<RecentRun[]>;
     output(id: string, runId: string, raw?: boolean): Promise<string>;
     openDir(id: string, runId: string): Promise<void>;
     /** Delete a task's run history. Rejects while the task is mid-cycle. */
     clear(id: string): Promise<void>;
-    /** The run's conversation from the harness transcript (agentId: a subagent's instead; raw: every record as JSON). */
-    messages(id: string, runId: string, agentId?: string, raw?: boolean): Promise<MessagesResult>;
+    /** The run's conversation from the harness transcript (agentId: a subagent's instead; raw: every record as JSON; known: the `version` of that subagent's rows the caller holds, and an unchanged transcript answers `unchanged` without them). */
+    messages(id: string, runId: string, agentId?: string, raw?: boolean, known?: string): Promise<MessagesResult>;
     /** The image payload behind a message row's image marker. */
     messageImage(id: string, runId: string, rowId: string, agentId?: string): Promise<MessageImage | null>;
     /** `count` of the tool calls a Code Mode script made, before the `before`th (the newest without it), by its REPL call's tool_use id; null when the run's conversations don't have them. */
@@ -253,6 +255,8 @@ export interface LooperApi {
     answer(id: string, requestId: string, allow: boolean): void;
     /** Continue When Limit Resets, on or off. */
     setAutoContinue(id: string, on: boolean): void;
+    /** Mute Notifications, on or off: no device gets a push for the chat. */
+    setMuted(id: string, on: boolean): void;
     /** Continue Anyway: the continue goes even though Settings → Chats' cache rule would stop it. */
     continueAnyway(id: string): void;
     /** Chat → Watch Task Events: the agent gets the task's trigger events with `eventId` as their related id ('' all of them), or stops (`on` false). */
@@ -278,6 +282,13 @@ export interface LooperApi {
     commandScreen(ownerId: string, commandId: string): Promise<string | null>;
     writeCommand(ownerId: string, commandId: string, data: string): void;
     resizeCommand(ownerId: string, commandId: string, cols: number, rows: number): void;
+    /**
+     * What a running "!" command asks the user now (sudo's password; `chat:command-prompt` events bring
+     * the next), null when nothing, and the answer (null: cancelled), which goes to the program that
+     * asked and isn't kept.
+     */
+    commandPrompt(ownerId: string, commandId: string): Promise<CommandPrompt | null>;
+    answerCommand(ownerId: string, commandId: string, promptId: string, answer: string | null): void;
     /** A running "!" command's terminal's right-click menu (Copy, Paste), whose choice comes back as a terminal-copy or terminal-paste ui event. */
     showCommandMenu(hasSelection: boolean): void;
     /** The chat's model, effort or permission mode; rejects with the reason. */
@@ -308,6 +319,8 @@ export interface LooperApi {
       textLabel?: string;
       result?: string;
       file?: string;
+      /** `file` is one the agent sent (SendUserFile): Open File reads a relative path from the session's folder, and the menu has Save As…. */
+      sent?: boolean;
       resend?: { text: string; attachments: Attachment[] };
       fork?: number;
       /** The message has text to select: Select Text, which comes back as a message-select-text ui event with this key. */
@@ -329,15 +342,21 @@ export interface LooperApi {
     showCards(ids: string[]): void;
     /** The user looked at the session: a finished turn or a notification stops waiting. */
     seen(id: string): void;
+    /** Mark as Unread: a session that's ready waits as a finished turn again ("Marked as unread", bold) until the user opens it. Mark as Read is `seen`. */
+    markUnread(id: string): void;
+    /** The list's rows dragged into this order with Group Chats By None (SessionsState.order); kept while Looper runs. */
+    reorder(ids: string[]): void;
     /** Close Conversation, asking first when the agent is working. */
     close(id: string): Promise<void>;
     /** Stop: end the agent's turn (Claude's interrupt in a chat, Esc in a terminal session). */
     stop(id: string): Promise<void>;
     /** Restart Agent: the harness starts again on the same conversation, ending a turn in progress. Rejects with the reason. */
     restart(id: string): Promise<void>;
+    /** Continue in Terminal on an open chat: it closes, asking first when it's working, and its conversation goes on in a terminal. Rejects with the reason. */
+    continueInTerminal(id: string): Promise<void>;
     /** A session's right-click menu; `card`: on its dashboard card, which adds Double Size or Normal Size. */
     showContextMenu(id: string, card?: boolean): void;
-    /** A list group's right-click menu (`group`: sessionGroupKey): New Chat in its project, Send to Chats… with its chats checked, and Close All Conversations in it. */
+    /** A list group's right-click menu (`group`: ChatGroup.key): New Chat in its project, Send to Chats… with its chats checked, and Close All Conversations in it. */
     showGroupContextMenu(group: string): void;
     /** The Send to Sessions window. */
     openSend(): void;
@@ -353,16 +372,31 @@ export interface LooperApi {
     showHistoryMenu(x: number, y: number): void;
     /** The message to each chat (queued while it works), typed into each terminal session; files go as their paths. */
     send(ids: string[], text: string, attachments?: Attachment[]): void;
-    /** The end of a background command's output; null when it can't be read. */
-    backgroundOutput(id: string, taskId: string): Promise<string | null>;
+    /** A background command's output from byte `known` on, its tail without it; no text when it hasn't grown (a poll reads nothing then); null when it can't be read. */
+    backgroundOutput(id: string, taskId: string, known?: number): Promise<OutputRead | null>;
+    /** Stop on a chat's or task run's background command, Monitor, subagent or workflow (Claude's task id). Rejects with the reason. */
+    stopBackground(id: string, taskId: string): Promise<void>;
     /** A thumbnail of an image file the agent read or wrote (a path in the session's own form); null for any other file. */
     fileThumbnail(taskId: string, path: string): Promise<string | null>;
     /** A file the agent sent (a path in the session's own form): its size, and a thumbnail for an image; null when the file is gone. */
     sentFile(taskId: string, path: string): Promise<SentFileInfo | null>;
     /** A file the agent sent, whole, for Now to show (base64); why it can't be shown when it's gone or bigger than `maxBytes`. */
-    readSentFile(taskId: string, path: string, maxBytes: number): Promise<{ data: string } | { error: string }>;
-    /** Click on a sent file: `image` opens it in the image window (a device gets its file viewer), any other file in its default app. */
+    /** A file the agent sent, whole: its bytes, or why it can't be shown. */
+    readSentFile(taskId: string, path: string, maxBytes: number): Promise<{ data: Uint8Array } | { error: string }>;
+    /**
+     * Click on a file the agent sent, read or wrote: a kind the Preview window shows opens there (`images`, every
+     * image of the message, it steps through when `image`), any other in its default app; a device gets its file viewer.
+     */
     openFile(taskId: string, runId: string, path: string, image: boolean, images?: string[]): Promise<void>;
+    /** The Preview window's Open in Default Program: the file opens in the program the computer opens it with. */
+    openFileDefault(taskId: string, path: string): Promise<void>;
+    /**
+     * An HTML file as a page Preview's frame loads, served apart from Looper with the network access Settings →
+     * Advanced allows; `load`: the Ask setting's Load was chosen for it. Resolves its address and that setting.
+     */
+    previewPage(html: string, load: boolean): Promise<{ url: string; network: PreviewNetwork }>;
+    /** Save As… on a file the agent sent or changed: asks where, then copies it there from where the agent runs. Resolves when the file is saved or the dialog is cancelled. */
+    saveFile(taskId: string, path: string): Promise<void>;
   };
   /** The History window: the conversations on this computer, to read or continue. */
   history: {
@@ -380,6 +414,8 @@ export interface LooperApi {
     showContextMenu(id: string): void;
     /** The History window, opened or brought forward. */
     open(): void;
+    /** The Task History window, opened or brought forward. */
+    openTasks(): void;
   };
   /** A project's git repository, read-only, for the Git tabs. */
   git: {
@@ -441,10 +477,13 @@ export interface LooperApi {
     /** Unpair it: its open connections close. */
     removeDevice(id: string): Promise<void>;
     renameDevice(id: string, name: string): Promise<void>;
+    /** What the device is notified of. */
+    setDeviceNotifications(id: string, notify: DeviceNotifications): Promise<void>;
     /** The port the server listens on now, or else a free one. */
     suggestPort(): Promise<number>;
     openPair(): Promise<void>;
-    openRename(id: string): Promise<void>;
+    /** Edit Device: its name and notifications. */
+    openDevice(id: string): Promise<void>;
     /** Set Up: run Tailscale's helper with this machine name until the computer is signed in (state.setup, or Tailscale's own status while it runs). */
     beginSignIn(hostname: string): Promise<void>;
     endSignIn(): Promise<void>;
@@ -571,13 +610,13 @@ export interface LooperApi {
   showFolderContextMenu(info: { folderId: string }): void;
   showRunContextMenu(info: { taskId: string; runId: string; details: string }): void;
   /** `selectText`: as in chat.showContextMenu. */
-  showMessageContextMenu(info: { taskId: string; runId: string; agentId?: string; file?: string; text?: string; label?: string; selectText?: string }): void;
+  showMessageContextMenu(info: { taskId: string; runId: string; agentId?: string; file?: string; sent?: boolean; text?: string; label?: string; selectText?: string }): void;
   /** Filter window only: apply this filter to the window that opened it and close. */
   applyFilter(value: string): void;
   /** Export-options window only: confirm the Save-as-Markdown choice and close. */
   applyMarkdownExport(opts: { includeThinking: boolean; includeTools: boolean; plain: boolean }): void;
   /** Run-options window only: start the manual run with these steps (true = run the step) and close. */
-  applyRunOptions(opts: { check: boolean; classifier: boolean; agent: boolean }): void;
+  applyRunOptions(opts: { check: boolean; classifier: boolean; agent: boolean; harnessId?: string }): void;
   /** Installed addons and their screens (docs/addons.md). */
   addons: {
     list(): Promise<AddonInfo[]>;
@@ -656,6 +695,8 @@ export type UiEvent =
   | { type: 'chat-quote'; chatId: string; text: string }
   /** Sessions window: show this session (a chat or terminal opened elsewhere). */
   | { type: 'sessions-select'; id: string }
+  /** Show that chat with its Terminal tab open (Open in Terminal). */
+  | { type: 'sessions-terminal'; id: string }
   /** Send to Chats window: check the open chats of this list group (sessionGroupKey) instead. */
   | { type: 'send-to-sessions-pick'; group: string }
   /** History window: the list a `history.list` call (by its `request`) has read so far. */

@@ -1,4 +1,4 @@
-import { useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from 'react';
+import { useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from 'react';
 import { useDragResize } from './hooks';
 
 const DIVIDER = 5;
@@ -91,9 +91,21 @@ export function SplitPane({ axis, initial, unit = 'px', min, max, maxShare, stor
   };
   // A pixel pane's largest size depends on the room, so it's only stated when `max` is.
   const high = unit === '%' ? Math.min(max ?? 100, (maxShare ?? 1) * 100) : max;
+  // A window narrower than the size it was left at leaves the second pane its share, not a sliver.
+  const [room, setRoom] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || maxShare === undefined) return;
+    const read = () => setRoom(axis === 'x' ? el.clientWidth : el.clientHeight);
+    read();
+    const observer = new ResizeObserver(read);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [axis, maxShare]);
+  const shown = room === null || maxShare === undefined ? size : clamp(size, room);
   return (
     <div ref={ref} className={`split-pane ${axis}`}>
-      <div className="split-cell" style={{ flex: `0 1 ${size}${unit}` }}>
+      <div className="split-cell" style={{ flex: `0 1 ${shown}${unit}` }}>
         {first}
       </div>
       <Splitter

@@ -350,7 +350,24 @@ Springs, not eased curves, with no bounce unless the motion is small and quick
 - A half-height sheet pulled to full height turns more opaque (LG guide).
 - A pushed screen slides in from the trailing edge while the one under it
   moves a third of the way out; back reverses it, and the back swipe follows
-  the finger (unverified distances).
+  the finger (unverified distances). On iPad it does the same inside the
+  detail column, or across the width on a tab with no list column. A row of
+  the list column puts its screen in the detail column without a slide: a
+  split view "installs vc as the secondary view controller"
+  (UISplitViewController, showDetailViewController).
+- A tap on the status bar scrolls the screen's list to its top, on UIKit's
+  animation. WebKit leaves the tap to UIKit, which moves only the top
+  document's scroll view, so the shell keeps 1 px of it to scroll back
+  (`status-bar-tap.ts`).
+- Safari's own back swipe, in a tab and in the Home Screen app, wins whenever
+  there's a history entry to go back to: from the edge, or across content that
+  takes no sideways drag, and the page gets no touch until it fails (WebKit:
+  `ViewGestureController::canSwipeInDirection`,
+  `_canStartNavigationSwipeAtLastInteractionLocation`). It is UIKit's own
+  back transition over a picture of the screen under it, so the back it asks
+  for shows at once, without the app playing it again (`phone-shell.tsx`,
+  `data-instant-back`). Anything that takes a sideways drag sets a
+  `touch-action` without `pan-x`, so the swipe leaves it alone.
 - A sheet rises from the bottom and follows the finger down; what's behind
   only dims (kit).
 - The selection of a segmented control, the tab bar and the iPad tab bar

@@ -66,8 +66,10 @@ end, held runs, idle detection) is in
 
 ## Quick start
 
-No compiler toolchain needed — the terminal component ships prebuilt binaries
-for Windows, Linux and macOS.
+The terminal component ships prebuilt binaries for Windows, Linux and macOS.
+Building the Tailscale helper (`npm run build:tsnet`, part of `build:all`)
+needs [Go](https://go.dev/dl/) 1.27.3 or newer, on your `PATH` or named by the
+`GO` environment variable.
 
 ```bash
 npm install

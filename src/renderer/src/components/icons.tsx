@@ -168,7 +168,9 @@ export const ICONS: Record<
   | 'home'
   | 'latest'
   | 'list'
-  | 'source',
+  | 'source'
+  | 'desktopWidth'
+  | 'layout',
   ReactNode
 > = {
   previous: <path d="M10 3.5 5.5 8l4.5 4.5" />,
@@ -184,6 +186,14 @@ export const ICONS: Record<
       <rect x="9.5" y="2.5" width="4" height="4" rx="0.5" />
       <rect x="2.5" y="9.5" width="4" height="4" rx="0.5" />
       <rect x="9.5" y="9.5" width="4" height="4" rx="0.5" />
+    </>
+  ),
+  // A large tile and a column of small ones: the dashboard's layout (Grid, Focus), apart from Dashboard's even grid.
+  layout: (
+    <>
+      <rect x="2.5" y="2.5" width="7" height="11" rx="0.5" />
+      <rect x="11.5" y="2.5" width="2" height="4.5" rx="0.5" />
+      <rect x="11.5" y="9" width="2" height="4.5" rx="0.5" />
     </>
   ),
   run: <path d="M4.5 2.8v10.4L13 8Z" />,
@@ -228,13 +238,8 @@ export const ICONS: Record<
   sendNow: <path d="M2 3.5v9L7.5 8ZM8.5 3.5v9L14 8Z" />,
   // Arrows from above and below meeting at a line: the conversation goes on in a new, shorter one.
   compact: <path d="M8 1.5v4.3M5.8 3.6 8 5.8l2.2-2.2M8 14.5v-4.3M5.8 12.4 8 10.2l2.2 2.2M2.5 8h11" />,
-  // A circular arrow around Run's triangle: the agent starts again on the same conversation, unlike Refresh.
-  restartAgent: (
-    <>
-      <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v2.5h-2.5" />
-      <path d="M7 6.2v3.6L10 8Z" />
-    </>
-  ),
+  // Refresh's circular arrow turning the other way: the agent starts again on the same conversation.
+  restartAgent: <path d="M3 8a5 5 0 1 0 1.5-3.6M3 2.5v2.5h2.5" />,
   // Delete's can with slats down its side: where deleted tasks wait.
   recycleBin: <path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.8 9h6.4l.8-9M6.7 7v4M9.3 7v4" />,
   // A window with a column on its right: the activity pane, so it doesn't read as another chat button.
@@ -420,6 +425,13 @@ export const ICONS: Record<
   list: <path d="M2.5 4h.01M2.5 8h.01M2.5 12h.01M5.5 4h8M5.5 8h8M5.5 12h8" />,
   // Angle brackets: a document as its source text.
   source: <path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5" />,
+  // A monitor on its stand: a page laid out at a desktop's width.
+  desktopWidth: (
+    <>
+      <rect x="1.5" y="2.5" width="13" height="8.5" rx="1" />
+      <path d="M5.5 13.5h5M8 11v2.5" />
+    </>
+  ),
 };
 
 const ATTRIBUTE_PROPS: Record<string, string> = { 'fill-rule': 'fillRule', 'clip-rule': 'clipRule' };

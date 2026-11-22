@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ChatManager } from '../src/engine/chat';
 import { detectHost } from '../src/engine/host';
 import { Logger } from '../src/engine/log';
-import { CodexAccumulator, COMPACTED_FILE, compactedFile, MessagesService, migrateCompactedFile, readCompactedRows, TranscriptAccumulator } from '../src/engine/messages';
+import { CodexAccumulator, COMPACTED_FILE, compactedFile, MessagesService, migrateCompactedFile, readCompactedReplNames, readCompactedRows, TranscriptAccumulator } from '../src/engine/messages';
 import { loadSettings } from '../src/engine/store/settings';
 import { chatCanCompact } from '../src/shared/chat';
 import { compactedText, compactRows, isCall, layered, proseRows, RESULT_MAX_CHARS, withoutCompacted } from '../src/shared/compact';
@@ -260,24 +260,51 @@ describe("a compacted chat's run", () => {
     ]);
   });
 
-  it('migrates a first-version compacted.json, an array of messages, to version 2 once, and reads wait for it', async () => {
+  it('migrates a first-version compacted.json, an array of messages, to version 3 once, and reads wait for it', async () => {
     const runDir = mkdtempSync(join(tmpdir(), 'looper-compacted-v1-'));
     const plain = mkdtempSync(join(tmpdir(), 'looper-plain-run-'));
     const file = join(runDir, COMPACTED_FILE);
     writeFileSync(file, JSON.stringify([row({ id: 'c0', kind: 'prompt', text: 'q1' }), row({ id: 'c1', kind: 'agent', text: 'a1' })]));
-    // The readers take only version 2.
+    // The readers take only version 3.
     expect(readCompactedRows(runDir)).toEqual([]);
     const service = new MessagesService({ getTask: () => undefined, runDir: () => runDir, attachment: () => null, host: 'linux', settings: SettingsSchema.parse({}), log: new Logger() });
     const migrated = service.migrateCompacted(Promise.resolve([runDir, plain]));
-    // Asked while the migration runs, it answers once the file is version 2.
+    // Asked while the migration runs, it answers once the file is version 3.
     expect((await service.compactable('t1', 'r1')).map((r) => [r.text, r.layer])).toEqual([
       ['q1', 0],
       ['a1', 0],
     ]);
     expect(await migrated).toBe(1);
-    expect((JSON.parse(readFileSync(file, 'utf8')) as { version: number }).version).toBe(2);
+    expect((JSON.parse(readFileSync(file, 'utf8')) as { version: number }).version).toBe(3);
     expect(await migrateCompactedFile(runDir)).toBe(false);
     expect(await migrateCompactedFile(plain)).toBe(false);
+  });
+
+  it('migrates a version 2 compacted.json to version 3, keeping its rows, and keeps the REPL names a Code Mode chat got back', async () => {
+    const runDir = mkdtempSync(join(tmpdir(), 'looper-compacted-v2-'));
+    const file = join(runDir, COMPACTED_FILE);
+    const rows = [row({ id: 'c0', kind: 'prompt', text: 'q1', layer: 0 }), row({ id: 'c1', kind: 'agent', text: 'a1', layer: 0 })];
+    // As writeJsonAtomic wrote it, and as JSON.stringify alone would.
+    for (const text of [JSON.stringify({ version: 2, rows }, null, 2), JSON.stringify({ version: 2, rows })]) {
+      writeFileSync(file, text);
+      expect(readCompactedRows(runDir)).toEqual([]);
+      expect(await migrateCompactedFile(runDir)).toBe(true);
+      expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ version: 3, rows });
+      expect(readCompactedRows(runDir)).toEqual(rows);
+      expect(await migrateCompactedFile(runDir)).toBe(false);
+    }
+    expect(readCompactedReplNames(runDir)).toEqual([]);
+    writeFileSync(file, JSON.stringify(compactedFile(rows, ['total', 'hello'])));
+    expect(readCompactedReplNames(runDir)).toEqual(['total', 'hello']);
+    expect(compactedFile(rows, [])).toEqual({ version: 3, rows });
+  });
+
+  it("tells the agent what the new session's REPL starts with, at the end of the compacted conversation", () => {
+    const rows = [row({ kind: 'prompt', text: 'q1' }), row({ kind: 'agent', text: 'a1' })];
+    const text = compactedText(rows, { replNote: 'The REPL starts with total.\n[User] is text here' });
+    expect(text).toMatch(/\[Agent\]\na1\n\n\[Compaction: the REPL\]\nThe REPL starts with total\.\n\\\[User\] is text here\n<\/compacted-conversation>$/);
+    expect(compactedText(rows)).not.toContain('[Compaction: the REPL]');
+    expect(withoutCompacted(`${text}\n\nnext`)).toBe('next');
   });
 });
 
@@ -384,7 +411,7 @@ describe.skipIf(process.platform === 'win32')('Compact into New Chat', { timeout
     const saved = join(runDir(task.id, next.id), COMPACTED_FILE);
     expect(existsSync(saved)).toBe(true);
     const file = JSON.parse(readFileSync(saved, 'utf8')) as { version: number; rows: MessageRow[] };
-    expect(file.version).toBe(2);
+    expect(file.version).toBe(3);
     expect(file.rows.map((r) => [r.text, r.layer])).toEqual([
       ['first question', 0],
       ['command: ls', 0],

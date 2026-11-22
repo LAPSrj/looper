@@ -36,7 +36,7 @@ describe('a chat’s session type', () => {
   it('changes from the Chat menu between turns, and a Codex chat stays headless', () => {
     const looper = { chat: { configure: async () => undefined, setHarness: async () => undefined }, showError: () => undefined } as unknown as LooperApi;
     const chat = (over: Partial<ChatState>): ChatState =>
-      ({ id: 'c', harnessKind: 'claude-code', harnesses: [], harnessId: 'h', harnessLocked: true, models: [], settings: { permissionMode: 'auto', mode: 'interactive' }, status: 'ready', permissions: [], ...over }) as ChatState;
+      ({ id: 'c', harnessKind: 'claude-code', harnesses: [], harnessId: 'h', harnessLocked: true, models: [], settings: { permissionMode: 'auto', mode: 'interactive' }, autoCompactDefault: { enabled: false, percent: 90 }, status: 'ready', permissions: [], ...over }) as ChatState;
     const mode = (s: ChatState) => chatSettingEntries(s, looper).mode.map((e) => ('label' in e ? [e.id, e.checked, e.enabled] : []));
     expect(mode(chat({}))).toEqual([
       ['interactive', true, true],
@@ -54,5 +54,29 @@ describe('a chat’s session type', () => {
     const plan = (s: ChatState) => chatSettingEntries(s, looper).permission.find((e) => 'id' in e && e.id === 'plan');
     expect(plan(chat({ status: 'working' }))).toMatchObject({ enabled: false });
     expect(plan(chat({ status: 'working', settings: { permissionMode: 'auto', mode: 'headless' } }))).toMatchObject({ enabled: true });
+  });
+});
+
+describe("a chat's Harness menu", () => {
+  it('offers every harness until the conversation starts, then only those of its kind', () => {
+    const looper = { chat: { setHarness: async () => undefined }, showError: () => undefined } as unknown as LooperApi;
+    const harnesses: ChatState['harnesses'] = [
+      { id: 'own', name: 'Own', kind: 'claude-code' },
+      { id: 'other', name: 'Other', kind: 'claude-code' },
+      { id: 'codex', name: 'Codex', kind: 'codex' },
+    ];
+    const chat = (harnessLocked: boolean): ChatState =>
+      ({ id: 'c', harnessKind: 'claude-code', harnesses, harnessId: 'own', harnessLocked, models: [], settings: { permissionMode: 'auto' }, autoCompactDefault: { enabled: false, percent: 90 }, status: 'ready', permissions: [] }) as unknown as ChatState;
+    const harness = (s: ChatState) => chatSettingEntries(s, looper).harness.map((e) => ('label' in e ? [e.id, e.checked, e.enabled] : []));
+    expect(harness(chat(false))).toEqual([
+      ['own', true, true],
+      ['other', false, true],
+      ['codex', false, true],
+    ]);
+    expect(harness(chat(true))).toEqual([
+      ['own', true, true],
+      ['other', false, true],
+      ['codex', false, false],
+    ]);
   });
 });

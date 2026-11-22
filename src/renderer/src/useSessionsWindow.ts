@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { chatInteractive, chatRows, type ChatState } from '@shared/chat';
 import type { ChatsContext } from '@shared/commands/context';
 import type { MessageRow } from '@shared/messages';
-import { canStop, dashboardOrder, placeCard, waitingOf, type SessionActivity, type SessionsState, type SessionSummary } from '@shared/sessions';
+import { canStop, chatGroups, dashboardOrder, listOrder, placeCard, waitingOf, type SessionActivity, type SessionsState, type SessionSummary } from '@shared/sessions';
 import { ViewSchema, type View } from '@shared/types';
 import { openWorkflow } from '@shared/workflows';
+import { readAgentRows, type AgentRows } from './agent-rows';
 import { useGitRepo } from './components/hooks';
 import { getChat, subscribe } from './events';
-import { useSessionsState } from './live-state';
+import { useLiveState, useSessionsState } from './live-state';
 
 /**
  * F6 and Shift+F6, as in Windows apps: the focus moves to the next or
@@ -42,7 +43,7 @@ function focusPane(dir: 1 | -1): void {
 export const DEFAULT_SHOWN: View['sessions'] = ViewSchema.parse({}).sessions;
 
 /** The list before it's read: one object, so the window's memos keep it. */
-const NO_SESSIONS: SessionsState = { sessions: [], limits: {} };
+const NO_SESSIONS: SessionsState = { sessions: [], limits: {}, order: [] };
 
 /** The session list's order, for F8/F9 and the other keys that step through it. */
 function stepTo(sessions: SessionSummary[], selected: string | null, dir: 1 | -1, waiting: boolean): string | null {
@@ -61,13 +62,14 @@ function stepTo(sessions: SessionSummary[], selected: string | null, dir: 1 | -1
  * keys that move through the list. `tab`: the main window's Chats tab, which
  * takes the keys and counts as looking at the session only while `active`.
  */
-export function useSessionsWindow(initial?: string, single = false, tab?: { active: boolean }) {
+export function useSessionsWindow(initial?: string, single = false, tab?: { active: boolean }, initialTerminal = false) {
   const active = tab?.active ?? true;
   const activeRef = useRef(active);
   activeRef.current = active;
   const live = useSessionsState();
   const loaded = live !== null;
   const state = live ?? NO_SESSIONS;
+  const { projects, projectFolders, projectLayout } = useLiveState();
   const [selected, setSelected] = useState<string | null>(initial ?? null);
   const [chat, setChat] = useState<ChatState | null>(null);
   const [activity, setActivity] = useState<SessionActivity | null>(null);
@@ -76,6 +78,8 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
   const [workflowOpen, setWorkflowOpen] = useState<{ runId: string; agentId: string | null } | null>(null);
   // An interactive chat's Terminal tab is open.
   const [terminalOpen, setTerminalOpen] = useState(false);
+  // The chat that opens on its Terminal tab once it's selected (Open in Terminal).
+  const terminalFor = useRef<string | null>(initialTerminal ? (initial ?? null) : null);
   const workflow = openWorkflow(activity?.workflows ?? [], workflowOpen);
   // The conversation shown instead of the session's, which Now follows: a subagent's or a workflow agent's.
   const watchedAgent = follow ?? workflow?.agent?.agentId ?? null;
@@ -104,8 +108,19 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
   const [view, setView] = useState<View | null>(null);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
-  const stateRef = useRef(state);
-  stateRef.current = state;
+  const terminalOpenRef = useRef(terminalOpen);
+  terminalOpenRef.current = terminalOpen;
+  /** The chat the shown one compacted into last: it shows as the same chat, its sheets and tabs as they were. */
+  const compactedInto = useRef<string | null>(null);
+  const shown = view?.sessions ?? DEFAULT_SHOWN;
+  // The list's groups (View → Group Chats By), and its rows top to bottom, which the keys step through.
+  const groups = useMemo(
+    () => chatGroups(state.sessions, shown.groupBy, { projects, folders: projectFolders, layout: projectLayout }, state.order),
+    [state.sessions, state.order, shown.groupBy, projects, projectFolders, projectLayout],
+  );
+  const ordered = useMemo(() => listOrder(groups), [groups]);
+  const orderedRef = useRef(ordered);
+  orderedRef.current = ordered;
 
   useEffect(() => {
     if (!single && !tab) document.title = 'Chats';
@@ -114,13 +129,34 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
       if (e.type === 'chat' && e.state.id === selectedRef.current) setChat(e.state);
       else if (e.type === 'session:activity' && e.activity.id === selectedRef.current) setActivity(e.activity);
       else if (e.type === 'settings') setView(e.settings.view);
+      // The chat shown compacted into a new one (by itself too): the new one takes its place, on its Terminal tab
+      // when that was open, and the window's route names it, so the page loaded again shows it.
+      else if (e.type === 'chat:compacted' && e.from === selectedRef.current) {
+        if (terminalOpenRef.current) terminalFor.current = e.to;
+        compactedInto.current = e.to;
+        const from = `#sessions/${encodeURIComponent(e.from)}`;
+        if (location.hash === from || location.hash.startsWith(`${from}/`)) {
+          history.replaceState(history.state, '', `#sessions/${encodeURIComponent(e.to)}${location.hash.slice(from.length)}`);
+        }
+        setSelected(e.to);
+      }
     });
     const unsubUi = window.looper.onUi((e) => {
       if (e.type === 'sessions-select') setSelected(e.id);
+      else if (e.type === 'sessions-terminal') {
+        if (selectedRef.current === e.id) {
+          setFollowed(null);
+          setWorkflowOpen(null);
+          setTerminalOpen(true);
+        } else {
+          terminalFor.current = e.id;
+          setSelected(e.id);
+        }
+      }
     });
     // Capture phase, so a terminal doesn't get the keys the window takes.
     const onKey = (e: KeyboardEvent) => {
-      const shown = stateRef.current.sessions.find((s) => s.id === selectedRef.current);
+      const shown = orderedRef.current.find((s) => s.id === selectedRef.current);
       const take = () => {
         e.preventDefault();
         e.stopPropagation();
@@ -140,13 +176,13 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
       // The keys without Fn: Ctrl+PageUp/PageDown, and with Shift for the waiting sessions.
       if (e.ctrlKey && (e.key === 'PageUp' || e.key === 'PageDown')) {
         take();
-        setSelected(stepTo(stateRef.current.sessions, selectedRef.current, e.key === 'PageDown' ? 1 : -1, e.shiftKey));
+        setSelected(stepTo(orderedRef.current, selectedRef.current, e.key === 'PageDown' ? 1 : -1, e.shiftKey));
       } else if (e.key === 'F6' && !e.ctrlKey) {
         take();
         focusPane(e.shiftKey ? -1 : 1);
       } else if (e.ctrlKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
-        // As in browsers: Ctrl+1 to Ctrl+8 the session at that place in project order (Waiting for you aside), Ctrl+9 the last.
-        const list = stateRef.current.sessions;
+        // As in browsers: Ctrl+1 to Ctrl+8 the session at that place in the list (Waiting for you aside), Ctrl+9 the last.
+        const list = orderedRef.current;
         const target = e.key === '9' ? list.at(-1) : list[Number(e.key) - 1];
         if (!target) return;
         take();
@@ -174,6 +210,11 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
   }, []);
 
   const summary = state.sessions.find((s) => s.id === selected);
+  // Marked unread: looking at it doesn't clear that; opening it again does.
+  // What the window's focus can end by looking: a finished turn or a notification, and the restored limit's mark. A session
+  // that waits for nothing has nothing to see, and one just marked unread (whose state hasn't come back yet) mustn't be seen.
+  const looksRef = useRef(false);
+  looksRef.current = !!summary && ((!!summary.waiting && summary.waiting.reason !== 'permission' && !summary.waiting.unread) || !!summary.limit?.restored);
   const gitRepo = useGitRepo(summary?.projectId);
 
   // A single chat's window is titled with the chat's name, which its first message gives it.
@@ -201,7 +242,8 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     setActivity(null);
     setFollowed(null);
     setWorkflowOpen(null);
-    setTerminalOpen(false);
+    setTerminalOpen(selected !== null && terminalFor.current === selected);
+    terminalFor.current = null;
     if (selected && activeRef.current) window.looper.sessions.seen(selected);
   }, [selected]);
 
@@ -221,13 +263,13 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
   const restored = !!summary?.limit?.restored;
   const waitKey = summary?.waiting ? `${summary.id}:${summary.waiting.reason}:${summary.waiting.since}` : restored ? `${summary!.id}:restored` : '';
   useEffect(() => {
-    if (!summary || (!summary.waiting && !restored) || summary.waiting?.reason === 'permission' || !active) return;
+    if (!summary || (!summary.waiting && !restored) || summary.waiting?.reason === 'permission' || summary.waiting?.unread || !active) return;
     if (document.hasFocus()) window.looper.sessions.seen(summary.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [waitKey, active]);
   useEffect(() => {
     const onFocus = () => {
-      if (selectedRef.current && activeRef.current) window.looper.sessions.seen(selectedRef.current);
+      if (selectedRef.current && activeRef.current && looksRef.current) window.looper.sessions.seen(selectedRef.current);
     };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
@@ -238,9 +280,12 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     setSubRows([]);
     if (!watchedAgent || !summary) return;
     let live = true;
+    let held: AgentRows | null = null;
     const load = () =>
-      void window.looper.runs.messages(summary.taskId, summary.id, watchedAgent).then((r) => {
-        if (live && r.status === 'ok') setSubRows(r.rows.filter((row) => row.kind !== 'raw'));
+      void readAgentRows(summary.taskId, summary.id, watchedAgent, held).then((r) => {
+        if (!live || !r) return;
+        held = r;
+        setSubRows(r.rows);
       });
     load();
     const timer = setInterval(load, 1500);
@@ -255,7 +300,6 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
   const attachments = rows.flatMap((r) => r.attachments ?? []);
   const followed = activity?.subagents.find((a) => a.agentId === follow);
   const watchedRows = watchedAgent ? subRows : rows;
-  const shown = view?.sessions ?? DEFAULT_SHOWN;
   /** Change the window's saved View settings. */
   const setShown = (patch: Partial<View['sessions']>) => {
     if (view) void window.looper.updateSettings({ view: { ...view, sessions: { ...shown, ...patch } } });
@@ -274,7 +318,7 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
    * as every open session's, apart from the waiting ones put first, so the closed sessions' ids go.
    */
   const moveCard = (id: string, target: string, after: boolean) => {
-    const ids = dashboardOrder(state.sessions, shown.cardOrder, false).map((s) => s.id);
+    const ids = dashboardOrder(ordered, shown.cardOrder, false).map((s) => s.id);
     setShown({ cardOrder: placeCard(ids, id, target, after) });
   };
   const subagents = activity?.subagents ?? [];
@@ -307,7 +351,7 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     toggleActivity: () => (single ? setShown({ windowActivityPane: !shown.windowActivityPane }) : setShown({ activityPane: !shown.activityPane })),
     terminal,
     showTerminal,
-    step: (dir, waiting) => setSelected(stepTo(state.sessions, selected, dir, waiting)),
+    step: (dir, waiting) => setSelected(stepTo(ordered, selected, dir, waiting)),
     focusPane,
     ...over,
   });
@@ -316,6 +360,7 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     single,
     state,
     selected,
+    compactedInto,
     setSelected,
     summary,
     chat,
@@ -336,6 +381,10 @@ export function useSessionsWindow(initial?: string, single = false, tab?: { acti
     shown,
     setShown,
     toggleGroup,
+    groups,
+    ordered,
+    /** Group Chats By None: the list's rows dragged into this order. */
+    reorder: (ids: string[]) => window.looper.sessions.reorder(ids),
     toggleBig,
     moveCard,
     gitRepo,

@@ -12,6 +12,15 @@ html.ph-top body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* iOS: the top document scrolls by 1 px, which a tap on the status bar scrolls back (web/status-bar-tap.ts); the
+   shell itself is fixed (.ph-root), so nothing moves. Overflow auto on html keeps body's hidden from taking over. */
+html.ph-top.ph-status-tap {
+  position: static;
+  inset: auto;
+  height: calc(100% + 1px);
+  overflow: auto;
+}
+
 /* The pair page (all three variants): the app's icon and the QR scanner over the page. */
 .pair-logo {
   display: block;
@@ -97,6 +106,21 @@ html.ph-top body {
 }
 .ph-win.hidden {
   visibility: hidden;
+}
+/* Under a screen that covers it (a chat over the main window): drawn only while a back swipe uncovers it. */
+.ph-win.covered {
+  visibility: hidden;
+}
+.ph-root[data-peek] .ph-win.covered {
+  visibility: visible;
+}
+/* A back the browser already played (Safari's swipe, phone-shell.tsx): what it closed goes, and what's under it is
+   in place, at once. */
+html[data-instant-back] .ph-win.leaving {
+  visibility: hidden;
+}
+html[data-instant-back] .ph-card {
+  transition: none !important;
 }
 .ph-win > * {
   pointer-events: auto;
@@ -260,6 +284,13 @@ html.ph-top body {
   padding: 0;
 }
 /* Code as the activity panel shows it: numbered lines in the file's syntax colors, scrolling sideways. */
+.ph-viewer.fill {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
 .ph-viewer.code {
   padding: 0;
   overflow: auto;

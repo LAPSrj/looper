@@ -1,9 +1,11 @@
 // Relative imports and no DOM types: the unit tests (node tsconfig) load this file.
-import { commandSpec, commandsOf, entriesMenu, isEnabled, placed, runCommand } from '../../../shared/commands/build';
+import { addonCommandId } from '../../../shared/commands/addon-commands';
+import { commandSpec, commandsOf, entriesMenu, isEnabled, mainToolbarViews, placed, runCommand, viewOptions } from '../../../shared/commands/build';
 import { iconOf, labelOf, noMnemonic, plainLabel, type Command, type CommandView, type Entry, type LabelOf } from '../../../shared/commands/command';
 import type { CommandContext } from '../../../shared/commands/context';
 import type { MenuItemSpec } from '../../../shared/remote-access';
 import { hint } from '../../../shared/shortcuts';
+import { addonToolbarId, tabToolbar } from '../../../shared/toolbars';
 import type { PageNavAction, PageNavMenuEntry } from '../web/nav-bar-model';
 import type { ToolbarGroup, ToolbarItem } from './toolbar-model';
 
@@ -20,6 +22,30 @@ export function popupEntries(c: CommandContext, prefix: string, entries: Entry[]
 /** Show a menu built from commands (a right-click), and do what's picked with the same state. */
 export function popupCommands(c: CommandContext, items: MenuItemSpec[], at?: { x: number; y: number }): void {
   if (items.length) void c.looper.commands.popup(items, at).then((id) => id && runCommand(id, c));
+}
+
+/** A list's View options in a popup (a right-click on its empty space): the view's View-menu commands in these groups. */
+export function popupViewOptions(c: CommandContext, view: CommandView, groups: readonly string[]): void {
+  popupCommands(c, viewOptions(view, groups, c));
+}
+
+/**
+ * A toolbar's buttons that don't fit its width, as a menu at a point (its chevron): each one's command, as the
+ * menus show it; a null in `ids` is a separator between the toolbar's groups.
+ */
+export function popupToolbarCommands(c: CommandContext, ids: (string | null)[], at: { x: number; y: number }): void {
+  const cmds = commandsOf(c);
+  const items: MenuItemSpec[] = [];
+  for (const id of ids) {
+    if (id === null) {
+      if (items.length && items[items.length - 1].type !== 'separator') items.push({ id: `-${items.length}`, type: 'separator', enabled: true });
+      continue;
+    }
+    const cmd = cmds.find((x) => x.id === id);
+    if (cmd) items.push(...commandSpec(cmd, c));
+  }
+  if (items[items.length - 1]?.type === 'separator') items.pop();
+  popupCommands(c, items, at);
 }
 
 function toolbarItem(cmd: Command, c: CommandContext): ToolbarItem {
@@ -43,11 +69,12 @@ function toolbarItem(cmd: Command, c: CommandContext): ToolbarItem {
 
 const hasPrimary = (cmd: Command, c: CommandContext): boolean => !!cmd.run && (cmd.runnable?.(c) ?? true);
 
-/** The toolbar of a window showing these views, a separator between groups. */
-export function commandToolbar(views: readonly CommandView[], c: CommandContext): ToolbarGroup[] {
+/** The toolbar of a window showing these views, a separator between groups. `only`: the commands it takes. */
+export function commandToolbar(views: readonly CommandView[], c: CommandContext, only?: (cmd: Command) => boolean): ToolbarGroup[] {
   const groups: ToolbarGroup[] = [];
   const atEnd = new Set<string>();
   for (const cmd of commandsOf(c)) {
+    if (only && !only(cmd)) continue;
     if (!placed(cmd, views, c, (w) => !!w.toolbar, 'toolbar')) continue;
     if (cmd.toolbarLast) atEnd.add(cmd.id);
     const id = cmd.toolbarGroup ?? cmd.group;
@@ -57,6 +84,34 @@ export function commandToolbar(views: readonly CommandView[], c: CommandContext)
   }
   if (atEnd.size) for (const g of groups) g.items.sort((a, b) => Number(atEnd.has(a.id)) - Number(atEnd.has(b.id)));
   return groups;
+}
+
+/** One of a main window's toolbars: its id (shared/toolbars.ts) and its buttons. */
+export interface ToolbarBand {
+  id: string;
+  groups: ToolbarGroup[];
+}
+
+/**
+ * A main window's toolbar split into its toolbars, in their first order, each
+ * left out when it has no button: New (Looper's New items and the addons'),
+ * the tab's own (Projects, Tasks or Chats), then each addon's other buttons.
+ */
+export function mainToolbarBands(tab: string | undefined, fixed: boolean, item: boolean, c: CommandContext): ToolbarBand[] {
+  const views = mainToolbarViews(tab, fixed, item);
+  const rest = views.filter((v) => v !== 'new');
+  const bands: ToolbarBand[] = [];
+  if (views.includes('new')) bands.push({ id: 'new', groups: commandToolbar(['new'], c) });
+  const shown = new Set(bands.flatMap((b) => b.groups.flatMap((g) => g.items.map((it) => it.id))));
+  const isAddon = (cmd: Command) => cmd.id.startsWith('addon:');
+  const own = tabToolbar(tab);
+  if (own) bands.push({ id: own, groups: commandToolbar(rest, c, (cmd) => !isAddon(cmd) && !shown.has(cmd.id)) });
+  for (const a of c.addons) {
+    if (!a.enabled) continue;
+    const prefix = addonCommandId(a.id, '');
+    bands.push({ id: addonToolbarId(a.id), groups: commandToolbar(rest, c, (cmd) => cmd.id.startsWith(prefix) && !shown.has(cmd.id)) });
+  }
+  return bands.filter((b) => b.groups.length);
 }
 
 const actionEntry = (e: Entry, at: number): PageNavMenuEntry => {

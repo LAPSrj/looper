@@ -294,6 +294,13 @@ export class RemoteWindow extends EventEmitter implements AppWindow {
     this.client.send({ t: 'window-load', w: this.w, hash });
   }
 
+  /** The page shows another route by itself (history.replaceState): a later load of it, on a reconnect too, loads that one. */
+  setRoute(hash: string): void {
+    if (this.destroyed || hash === this.hash) return;
+    this.hash = hash;
+    this.client.send({ t: 'window-hash', w: this.w, hash });
+  }
+
   /** The client says the page loaded. */
   pageReady(): void {
     if (this.destroyed) return;

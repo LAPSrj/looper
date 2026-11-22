@@ -10,6 +10,7 @@ import { withConnectSrc } from '../src/main/remote-access/server';
 import {
   acceptAttr,
   allowedExtensions,
+  binaryKind,
   breadcrumbs,
   emptyHistory,
   fileSources,
@@ -34,6 +35,7 @@ import {
   viewerKind,
   visibleEntries,
   withExtension,
+  type ViewerKind,
 } from '../src/renderer/src/web/dialog-flows';
 import { languageOf } from '../src/renderer/src/components/code-languages';
 import { eventMatches, findAccelerator, menuHover, menuKey, openNav, parseAccelerator, pickChecked, shortcutText, type KeyLike, type MenuNav } from '../src/renderer/src/web/menu-model';
@@ -356,6 +358,19 @@ describe('file dialog choice flow', () => {
     expect(kind('Dockerfile')).toBe('text');
     expect(kind('archive.zip')).toBeNull();
     expect(kind('photo.heic')).toBeNull();
+    // HTML is a page before it's code, a CSV a table before it's text, and Office files their own kinds.
+    expect(kind('page.HTML')).toBe('html');
+    expect(kind('index.htm')).toBe('html');
+    expect(kind('data.csv')).toBe('csv');
+    expect(kind('data.tsv')).toBe('csv');
+    expect(kind('letter.docx')).toBe('docx');
+    expect(kind('budget.xlsx')).toBe('xlsx');
+    expect(kind('macros.xlsm')).toBe('xlsx');
+    expect(kind('deck.pptx')).toBe('pptx');
+    expect(kind('old.doc')).toBeNull();
+    expect(kind('old.ppt')).toBeNull();
+    expect(['pdf', 'docx', 'xlsx', 'pptx'].every((k) => binaryKind(k as ViewerKind))).toBe(true);
+    expect(['image', 'html', 'csv', 'markdown', 'code', 'text'].some((k) => binaryKind(k as ViewerKind))).toBe(false);
     expect(fileType('shot.png')).toBe('image/png');
     expect(fileType('report.pdf')).toBe('application/pdf');
     expect(fileType('archive.zip')).toBe('application/zip');

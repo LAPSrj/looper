@@ -140,7 +140,9 @@ through, and only while that source is on.
 
 - **Pair Device…** opens the Pair Device window.
 
-- **Rename…** (or double-click) changes a device's name.
+- **Edit…** (or double-click) opens Edit Device, with the device's **Name**
+  and its **Notifications** check boxes (see [Notifications](#notifications)),
+  saved with **Save**.
 - **Remove** asks first, then cuts the device off at once. It needs a new
   pairing code to connect again.
 
@@ -186,11 +188,13 @@ minutes finds its windows as it left them.
 - **Name** — this device's name, as the host computer's Paired Devices window
   lists it.
 - **Host Computer** — the host computer it's paired with.
-- **Notifications** — see [Notifications](#notifications).
+- **Notifications** — **Allow notifications**, and what this device is
+  notified of (see [Notifications](#notifications)).
 - **Unpair This Device** — asks first, then unpairs it at once.
 
-**Save** keeps the new name and the Notifications choice; **Cancel** leaves
-both as they were.
+**Save** keeps the new name and the Notifications choices; **Cancel** leaves
+them as they were. A phone has the same choices, as switches, in **This
+Device**.
 
 ### Files
 
@@ -220,9 +224,13 @@ Open Working Directory, Show in Folder and the other commands that open a
 folder in the host computer's file browser are only in the desktop app, so they
 don't show on a device.
 
-An image (PNG, JPEG, GIF, WebP, BMP or SVG) or a text file (`.txt`, or `.md`,
-shown as formatted Markdown) opens in a viewer first, such as a file attached
-to a chat message when you click it. The viewer has **Download to This Device**
+A file of a kind Looper can show opens in a viewer first, such as a file
+attached to a chat message when you click it: an image (PNG, JPEG, GIF, WebP,
+BMP or SVG), a PDF, a Markdown file (formatted), an HTML page (its scripts run,
+apart from Looper, and Settings → Advanced → Internet access for web pages in
+Preview decides what it may load), a CSV or TSV file as a table, a Word, Excel
+or PowerPoint file, code in its syntax colors, or a text file. It's the same
+as the [Preview window](monitoring.md#the-preview-window) on the host computer. The viewer has **Download to This Device**
 and **Cancel**, and at the left of the buttons **Download to Host Computer**,
 which puts a copy in your Downloads folder on the host computer (a name already
 there gets a number, so nothing is replaced). Any other file asks **Download**
@@ -280,7 +288,7 @@ Looper's own notifications also reach paired devices:
 
 - While a device has a Looper tab open, each notification appears there as a
   toast. Tap it to open the task's run.
-- With **Notifications** on in **This Device** (on a phone, **More → This
+- With **Allow notifications** on in **This Device** (on a phone, **More → This
   Device**), a device that isn't looking at Looper gets them as system
   notifications too, even when Looper isn't open there. The browser asks for
   permission when you turn it on.
@@ -289,7 +297,14 @@ Looper's own notifications also reach paired devices:
 
 They are the notifications Looper shows at the host computer, so the same settings
 decide which ones come: **Show notifications** in Settings and each task's
-[Notifications tab](tasks.md#notifications). A system notification goes only
+[Notifications tab](tasks.md#notifications). Each device also chooses what it's
+notified of, in **This Device** or in the host computer's **Edit Device** window:
+**Chat turn ends**, **Questions and permission requests**, **Task runs** (each
+task's own settings still decide which runs) and **Login and usage warnings**. A
+newly paired device has all four on. A chat sends one notification when its turn
+ends, not one for each message the agent writes, and **Chat → Mute
+Notifications** (or right-click a chat) keeps a chat's turns and questions off
+every device. A system notification goes only
 when no Looper window has the focus on the host computer, and a device with a
 Looper tab on screen gets just the toast. A session waiting for you (a
 question, or a finished turn) sends a system notification as well, and tapping

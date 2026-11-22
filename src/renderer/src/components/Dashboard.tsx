@@ -1,5 +1,5 @@
 import type { ActiveRun, TaskRuntime } from '@shared/types';
-import { attentionKey, byLevel, type AttentionRow, type RecentRun, type RunningRow } from '@shared/dashboard';
+import { attentionKey, byLevel, runStepText, type AttentionRow, type RecentRun, type RunningRow } from '@shared/dashboard';
 import type { RemoteConversation } from '@shared/remote';
 import type { SessionSummary } from '@shared/sessions';
 import { REMOTE_STATUS_LABELS, fmtClock, formatDuration, resultLabel } from '../format';
@@ -7,7 +7,7 @@ import type { DetailTab } from './TaskDetail';
 import { DataTable, type DataCol } from './DataTable';
 import { DetailView } from './DetailView';
 import type { LoginRow } from '@shared/logins';
-import { showLoginMenu, showTaskMenu } from './row-menus';
+import { showLoginMenu, showRunListMenu, showTaskMenu } from './row-menus';
 import { StatusGlyph, type StatusLevel } from './icons';
 import { Elapsed } from './Live';
 import { Section } from './Section';
@@ -24,12 +24,6 @@ export interface DashboardPick {
   /** A Needs attention row: its attentionKey, since a task can have several. */
   key?: string;
 }
-
-const STEP_LABELS: Record<ActiveRun['state'], string> = {
-  checking: 'Checking',
-  classifying: 'Classifying',
-  running: 'Running agent',
-};
 
 const TRIGGER_LABELS: Record<ActiveRun['trigger'], string> = {
   timer: 'Schedule',
@@ -108,7 +102,7 @@ export function showNeedMenu(n: NeedRow, runtimes: Record<string, TaskRuntime>, 
   else showLoginMenu(() => logIn(n.r), () => clear([], [n.r]));
 }
 
-export { StatusIcon, STEP_LABELS, TRIGGER_LABELS };
+export { StatusIcon, TRIGGER_LABELS };
 
 /** What the main window shows when no task is selected. */
 export function Dashboard({ attention, logins, running, remote, chats, recent, runtimes, pick, onPick, onOpen, onClearAttention }: Props) {
@@ -131,7 +125,7 @@ export function Dashboard({ attention, logins, running, remote, chats, recent, r
 
   const runningCols: DataCol<RunningRow>[] = [
     { label: 'Task', width: 240, cell: (r) => r.task.name, title: (r) => r.task.name },
-    { label: 'Step', cell: (r) => (r.run.question !== null ? 'Waiting for your answer' : r.run.held ? 'Waiting for you' : STEP_LABELS[r.run.state]) },
+    { label: 'Step', cell: (r) => runStepText(r.run) },
     { label: 'Trigger', width: 110, cell: (r) => TRIGGER_LABELS[r.run.trigger] },
     { label: 'Started', width: STARTED_WIDTH, num: true, cell: (r) => fmtClock(r.run.startedAt, now) },
     { label: 'Elapsed', width: 100, num: true, cellClass: 'live-only', cell: (r) => <Elapsed since={r.run.startedAt} /> },
@@ -192,6 +186,7 @@ export function Dashboard({ attention, logins, running, remote, chats, recent, r
             rowKey={(r) => pickKey(runningPick(r))}
             idPrefix="dash-running"
             storageKey="dashboard-running"
+            rowClass={(r) => (r.run.question !== null || r.run.held ? 'unread' : '')}
             selected={pickedIn('running')}
             onSelect={(r) => onPick(runningPick(r))}
             onOpen={opens.running}
@@ -253,6 +248,7 @@ export function Dashboard({ attention, logins, running, remote, chats, recent, r
             onSelect={(r) => onPick(recentPick(r))}
             onOpen={opens.recent}
             onMenu={(r) => window.looper.showRunContextMenu({ taskId: r.taskId, runId: r.runId, details: r.details })}
+            onEmptyMenu={showRunListMenu}
             empty={null}
           />
         </Section>

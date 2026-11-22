@@ -45,6 +45,7 @@ export const HOST_COMMANDS = [
   'run-chat',
   'run-compact',
   'run-guidance',
+  'run-start',
   'run-folder',
   'run-copy-folder',
   'run-work-folder',
@@ -85,14 +86,21 @@ export interface ChatsContext {
   usageRing?: UsageRing;
 }
 
-/** A History window's state. */
+/** A History window's state: the conversations ('chats'), or Task History's task runs ('runs'). */
 export interface HistoryContext {
+  kind: 'chats' | 'runs';
   selected: string | null;
   commands: HistoryCommands;
   shown: View['history'];
   setShown(patch: Partial<View['history']>): void;
   folder: HistoryFolderFilter;
   setFolder(folder: HistoryFolderFilter): void;
+  /** Task History: the tasks to filter by, the one listed ('' every task) and the result listed ('' every result). */
+  tasks: Pick<Task, 'id' | 'name'>[];
+  task: string;
+  setTask(taskId: string): void;
+  result: string;
+  setResult(result: string): void;
   activity: boolean;
   setActivity(on: boolean): void;
   refresh(): void;
@@ -106,7 +114,7 @@ export interface RunContext {
   agentId?: string;
   title: string;
   workFolder: boolean;
-  canContinue: { chat: boolean; terminal: boolean; guidance: boolean; compact: boolean };
+  canContinue: { chat: boolean; terminal: boolean; guidance: boolean; compact: boolean; start: boolean };
   raw: boolean;
   rawOutput: boolean;
   autoScroll: boolean;

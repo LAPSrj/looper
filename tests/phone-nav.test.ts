@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addonTabOf,
   followSelection,
   initialPhoneNav,
   keptNav,
+  openAddonTab,
   phoneTabForm,
   PHONE_TABS,
   EXPANDED_WIDTH,
@@ -12,8 +14,10 @@ import {
   rootScreen,
   sameScreen,
   screenOf,
+  stackMove,
   selectTab,
   selectionOf,
+  stackOf,
   showTabRoot,
   topScreen,
   type MainSelection,
@@ -218,14 +222,91 @@ describe('how the views show', () => {
     expect(phoneTabForm('android', 915, false)).toBe('rail');
   });
 
-  it('gives an addon tab that was never opened an empty stack', () => {
-    const nav = selectTab(initialPhoneNav(), 'addon/a/servers');
+  it('gives a tab that was never opened an empty stack', () => {
+    const nav = selectTab(initialPhoneNav(), 'more');
     expect(topScreen(nav)).toBeNull();
-    expect(pushScreen(nav, { kind: 'task', id: 't' }).stacks['addon/a/servers']).toEqual([{ kind: 'task', id: 't' }]);
+    expect(addonTabOf(nav)).toBeNull();
+  });
+});
+
+describe('an addon’s tab opened from More', () => {
+  const tab = 'addon/a/servers' as const;
+  const opened = () => openAddonTab(selectTab(initialPhoneNav(), 'more'), tab);
+
+  it('is a screen pushed on More’s stack, so the tab stays More and the stack grows by one', () => {
+    const nav = opened();
+    expect(nav.tab).toBe('more');
+    expect(nav.stacks.more).toEqual([{ kind: 'addonTab', tab }]);
+    expect(addonTabOf(nav)).toBe(tab);
+    expect(topScreen(nav)).toEqual({ kind: 'addonTab', tab });
+  });
+
+  it('opens from another tab by going to More first, and once', () => {
+    const nav = openAddonTab(openAddonTab(selectTab(initialPhoneNav(), 'tasks'), tab), tab);
+    expect(nav.tab).toBe('more');
+    expect(nav.stacks.more).toHaveLength(1);
+  });
+
+  it('goes back to More’s list with Back, and with the More tab tapped', () => {
+    expect(topScreen(popScreen(opened()))).toBeNull();
+    expect(addonTabOf(popScreen(opened()))).toBeNull();
+    expect(stackOf(selectTab(opened(), 'more'))).toEqual([]);
+  });
+
+  it('keeps its own tab while an item it opened is over it', () => {
+    let nav = pushScreen(opened(), { kind: 'addon', addonId: 'a', pane: 'servers', item: 'web-1' });
+    expect(nav.stacks.more).toHaveLength(2);
+    expect(addonTabOf(nav)).toBe(tab);
+    nav = popScreen(nav);
+    expect(topScreen(nav)).toEqual({ kind: 'addonTab', tab });
+  });
+
+  it('selects nothing, so a cleared selection leaves it shown and a picked item goes over it', () => {
+    expect(selectionOf(topScreen(opened()))).toEqual(none);
+    const nav = opened();
+    expect(followSelection(nav, none)).toBe(nav);
+    expect(followSelection(nav, none, true)).toBe(nav);
+    const picked = followSelection(nav, { ...none, addon: { addonId: 'a', pane: 'servers', item: 'web-1' } });
+    expect(picked.stacks.more).toHaveLength(2);
+    expect(settle(picked, none).nav.stacks.more).toEqual([{ kind: 'addonTab', tab }]);
+  });
+
+  it('tells one addon tab from another', () => {
+    expect(sameScreen({ kind: 'addonTab', tab }, { kind: 'addonTab', tab: 'addon/b/keys' })).toBe(false);
+    expect(sameScreen({ kind: 'addonTab', tab }, { kind: 'addonTab', tab })).toBe(true);
+    expect(sameScreen({ kind: 'addonTab', tab }, { kind: 'folder', id: tab })).toBe(false);
+  });
+
+  it('comes back with the page, and goes with its addon with the screens over it', () => {
+    const nav = pushScreen(opened(), { kind: 'addon', addonId: 'a', pane: 'servers', item: 'web-1' });
+    expect(keptNav(JSON.parse(JSON.stringify(nav)))).toEqual(nav);
+    expect(pruneNav(nav, (s) => s.kind !== 'addonTab').stacks.more).toEqual([]);
+    expect(pruneNav(nav, () => true)).toEqual(nav);
+  });
+
+  it('is not a tab of its own: a nav kept with one as its tab is not read', () => {
+    expect(keptNav({ tab, stacks: { more: [] } })).toBeNull();
   });
 });
 
 describe('the tab and screens kept for the page loading again', () => {
+  it('says whether a stack change pushes, pops or replaces the screen', () => {
+    const f = { kind: 'folder', id: 'f' } as const;
+    const g = { kind: 'folder', id: 'g' } as const;
+    const t = { kind: 'task', id: 't' } as const;
+    expect(stackMove([], [f], false)).toBe('push');
+    expect(stackMove([f], [f, t], false)).toBe('push');
+    expect(stackMove([f, t], [f], false)).toBe('pop');
+    expect(stackMove([f], [], false)).toBe('pop');
+    expect(stackMove([f], [g], false)).toBeNull();
+    // A tablet: the list column's row replaces the detail column's stack; inside the detail column it pushes and pops.
+    expect(stackMove([], [f], true)).toBeNull();
+    expect(stackMove([f, t], [g], true)).toBeNull();
+    expect(stackMove([f], [], true)).toBeNull();
+    expect(stackMove([f], [f, t], true)).toBe('push');
+    expect(stackMove([f, t], [f], true)).toBe('pop');
+  });
+
   it('reads back what it wrote, and nothing of another shape', () => {
     const nav = pushScreen(selectTab(initialPhoneNav(), 'tasks'), { kind: 'folder', id: 'f' });
     expect(keptNav(JSON.parse(JSON.stringify(nav)))).toEqual(nav);

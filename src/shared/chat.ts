@@ -50,10 +50,31 @@ export interface ChatSettings {
    * task's session type. A Codex chat is always headless.
    */
   mode?: 'interactive' | 'headless';
+  /**
+   * At the end of a turn, compact into a new chat once the context is past
+   * Settings → Chats' share of the window. Unset: as Settings → Chats says.
+   */
+  autoCompact?: boolean;
 }
 
 /** The menus above a chat's message box, each one of the Chat menu's lists. */
-export type ChatSettingMenu = 'harness' | 'model' | 'effort' | 'permission' | 'mode';
+export type ChatSettingMenu = 'harness' | 'model' | 'effort' | 'permission' | 'mode' | 'compact';
+
+/** Settings → Chats' auto compact: on for every chat without a setting of its own, and the share of the context window it compacts past. */
+export interface AutoCompactSetting {
+  enabled: boolean;
+  percent: number;
+}
+
+/** The share of the context window (percent) past which the chat compacts at the end of a turn; undefined when it doesn't. */
+export function autoCompactPercent(settings: Pick<ChatSettings, 'autoCompact'>, app: AutoCompactSetting): number | undefined {
+  return (settings.autoCompact ?? app.enabled) ? app.percent : undefined;
+}
+
+/** Whether a context is past `percent` of its window; never when the window isn't known. */
+export function contextPast(context: ChatContext | undefined, percent: number): boolean {
+  return !!context?.window && context.tokens * 100 >= context.window * percent;
+}
 
 /** Whether the chat runs its agent in a terminal (ChatSettings.mode). */
 export const chatInteractive = (chat: Pick<ChatState, 'harnessKind' | 'settings'>): boolean =>
@@ -86,8 +107,8 @@ export interface ChatState {
   harnessName: string;
   harnessKind: 'claude-code' | 'codex';
   /** The Claude Code and Codex harnesses of the task's environment: the Harness menu's list. */
-  harnesses: { id: string; name: string }[];
-  /** The conversation has started (or goes on with another one), so it stays on its harness. */
+  harnesses: { id: string; name: string; kind: 'claude-code' | 'codex' }[];
+  /** The conversation has started (or goes on with another one), so it moves only to a harness of its kind. */
   harnessLocked: boolean;
   /** The divider above the earlier conversation ("Earlier in run …"); unset shows it without one. */
   historyLabel?: string;
@@ -98,6 +119,8 @@ export interface ChatState {
    */
   draft?: ChatDraft;
   settings: ChatSettings;
+  /** Settings → Chats' auto compact, which the chat follows unless `settings.autoCompact` says otherwise. */
+  autoCompactDefault: AutoCompactSetting;
   /** The harness's model presets: the Chat menu's Model list and the status bar's names. */
   models: HarnessModel[];
   /** The model the CLI says it runs (Claude Code's init), e.g. when the chat uses the default. */
@@ -135,6 +158,8 @@ export interface ChatState {
   limit?: UsageLimitHit;
   /** Continue When Limit Resets: once the limit resets, Looper sends the agent CONTINUE_TEXT. */
   autoContinue: boolean;
+  /** Mute Notifications: no device gets a push for this chat. */
+  muted?: true;
   /** Continue Anyway: this limit's continue goes even though the cache has expired (Settings → Chats). */
   continueAnyway?: boolean;
   /** The conversation is in Claude Code's Code Mode, which Claude Code goes on with only in a terminal: the chat stays interactive. */
@@ -236,6 +261,8 @@ export interface ChatInfo {
   titleBy?: TitleBy;
   /** Continue When Limit Resets. */
   autoContinue?: boolean;
+  /** Mute Notifications. */
+  muted?: boolean;
   /** Continue Anyway. */
   continueAnyway?: boolean;
   /** The last turn failed on the usage limit: Looper's next start goes on waiting for the reset. */

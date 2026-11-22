@@ -1,9 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { RemoteState } from '@shared/remote';
-import type { Environment, Project, RunRecord, Task, TaskRuntime } from '@shared/types';
+import type { Environment, Project, Task, TaskRuntime } from '@shared/types';
+import { groupHistory, type HistoryItem } from '@shared/history';
 import { describeEnvironment, effortLabel, harnessKindLabel, harnessModels, permissionLabel, withKind } from '@shared/environments';
-import { projectTaskId } from '@shared/projects';
-import { isSessionRun } from '@shared/runs';
 import { envToLine, joinTokens } from '@shared/cmdline';
 import { fmtClock, resultLabel, stateLabel } from '../format';
 import { resultTone } from '../phone-lists';
@@ -14,8 +13,10 @@ import { AddonProjectTabView, useAddonProjectTabs, type AddonProjectTabId } from
 import { DetailStatus, DetailView } from './DetailView';
 import { useDialogKeys, useGitRepo } from './hooks';
 import { useSessionsState } from '../live-state';
-import { RunLog } from './RunLog';
-import { useRunRecords } from '../useRunRecords';
+import { HistoryList } from './HistoryList';
+import { HistoryDetail, useHistoryConversation, useHistoryList } from './HistoryPanes';
+import { ListDetail } from './ListDetail';
+import { TreeListSection } from './phone/PhoneList';
 
 type ProjectTab = 'status' | 'tasks' | 'sessions' | 'git' | AddonProjectTabId;
 
@@ -54,13 +55,12 @@ export function ProjectDetail({
   const sessions = useSessionsState();
   const git = useGitStatus(gitRepo ? project.id : undefined, !!sessions?.sessions.some((s) => s.projectId === project.id && s.status === 'working'));
   const [picked, setPicked] = useState<string | null>(null);
-  const standIn = projectTaskId(project.id);
   const mine = tasks.filter((t) => t.projectId === project.id);
-  // The Chats tab lists the project's own sessions and the ones that went on from its tasks' runs.
-  const idKey = [standIn, ...mine.map((t) => t.id)].join('\n');
-  const ids = useMemo(() => idKey.split('\n'), [idKey]);
-  const { records: byTask } = useRunRecords(ids);
-  const records = useMemo(() => ids.flatMap((id) => (byTask[id] ?? []).filter((r: RunRecord) => id === standIn || isSessionRun(r))), [ids, byTask, standIn]);
+  // The Chats tab lists again when a chat or terminal session of the project opens, closes or is renamed.
+  const openKey = (sessions?.sessions ?? [])
+    .filter((s) => s.projectId === project.id && s.kind !== 'run')
+    .map((s) => `${s.id} ${s.title}`)
+    .join('\n');
 
   const tabs: (readonly [ProjectTab, string])[] = [
     ...PROJECT_TABS,
@@ -146,9 +146,59 @@ export function ProjectDetail({
           />
         </div>
       )}
-      {tab === 'sessions' && <RunLog records={records} sessions />}
+      {tab === 'sessions' && <ProjectChats projectId={project.id} openKey={openKey} />}
       {tab === 'git' && <GitView projectId={project.id} watch={git} />}
       {addonTab && tab === addonTab.id && <AddonProjectTabView shown={addonTab} projectId={project.id} />}
     </DetailView>
+  );
+}
+
+/**
+ * A project's Chats tab: the History window's list of the project's
+ * conversations, newest first (its chats and terminal sessions, and the ones in
+ * its folder from outside Looper), and the selected one read only. `openKey` changes when one of its
+ * chats or terminal sessions opens, closes or is renamed, which lists it again.
+ */
+function ProjectChats({ projectId, openKey }: { projectId: string; openKey: string }) {
+  const [refreshes, setRefreshes] = useState(0);
+  const [selected, setSelected] = useState<string | null>(null);
+  // The History list takes a moment to see a record (its index catches up after it), so it lists a little later.
+  useEffect(() => {
+    const timer = setTimeout(() => setRefreshes((n) => n + 1), 500);
+    return () => clearTimeout(timer);
+  }, [openKey]);
+  const { items, more, loadingMore, showMore } = useHistoryList({ ready: true, folder: `project:${projectId}`, refreshes, scan: false });
+  const { conv, follow, setFollow, subRows, commands } = useHistoryConversation(selected);
+  const groups = useMemo(() => groupHistory(items ?? [], 'date', [], Date.now()), [items]);
+  // A conversation stays open while a newer list no longer holds it.
+  const opened = useRef<HistoryItem | null>(null);
+  const listed = items?.find((i) => i.id === selected);
+  if (listed) opened.current = listed;
+  const item = listed ?? (opened.current?.id === selected ? opened.current : undefined);
+  return (
+    <ListDetail
+      panes={{ axis: 'x', initial: 320, min: 200, maxShare: 0.5, storageKey: 'project-chats.width' }}
+      open={!!item}
+      onClose={() => setSelected(null)}
+      detailTitle={item?.title}
+      backLabel="Chats"
+      empty="Select a conversation"
+      list={
+        <TreeListSection>
+          <HistoryList
+            groups={groups}
+            projects={[]}
+            selected={selected}
+            onSelect={setSelected}
+            emptyText={items === null ? 'Loading…' : 'No conversations.'}
+            showPlace={false}
+            more={more}
+            loadingMore={loadingMore}
+            onMore={showMore}
+          />
+        </TreeListSection>
+      }
+      detail={item && <HistoryDetail item={item} conv={conv} follow={follow} onFollow={setFollow} subRows={subRows} commands={commands} />}
+    />
   );
 }

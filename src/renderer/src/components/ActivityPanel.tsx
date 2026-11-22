@@ -7,14 +7,16 @@ import { parseInspected } from '@shared/inspect';
 import { CHANGE_TOOLS, SENT_IMAGE_RE, type MessageRow, type SentFile } from '@shared/messages';
 import { baseName, dirName } from '@shared/paths';
 import type { BackgroundTask, SubagentInfo } from '@shared/sessions';
-import { WORKFLOW_STATUS_TEXT, workflowAgents, type WorkflowRun } from '@shared/workflows';
+import { WORKFLOW_STATUS_TEXT, tabStatus, workflowAgents, type WorkflowRun } from '@shared/workflows';
 import { stripAnsi } from '../format';
+import { isPhone } from '../web/page-nav';
 import { useAddonList } from '../live-state';
 import { AgentRow, tokensText, WorkflowAgentList } from './AgentRows';
+import { BackgroundConsole } from './BackgroundConsole';
 import { AttachmentList, CHEVRON, localScriptCalls, ScriptCallBox, SentFileList, type RowCtx } from './ChatRows';
 import { languageOf } from './code-languages';
 import { reportError } from '../report-error';
-import { FileViewContent } from '../web/file-view';
+import { bytesView, FileViewContent } from '../web/file-view';
 import type { FileView } from '../web/file-flows';
 import { imageType, VIEWER_MAX_BYTES, viewerKind } from '../web/dialog-flows';
 import { SplitPane } from './SplitPane';
@@ -25,7 +27,9 @@ import { GitView, useGitStatus } from './GitView';
 import { AddonScreenView } from './AddonScreen';
 import { AddonProjectTabView, useAddonProjectTabs, type AddonProjectTabId } from './AddonProjectTabs';
 import { RowList } from './DataTable';
+import type { ListMenuItem } from './RowList';
 import { EmptyState } from './EmptyState';
+import { ListDetail, selectsFirstRow } from './ListDetail';
 import { Markdown, MessageBody } from './Markdown';
 import { Section } from './Section';
 import { newestFirst } from './subagents';
@@ -51,8 +55,8 @@ function callTitle(row: MessageRow, addons: AddonInfo[]): { title: string | unde
   // Its screen shows the caption: the title names the files.
   if (row.tool === 'SendUserFile') {
     const files = sentFilesOf(row);
-    const what = files.length === 1 ? 'File' : `${files.length} Files`;
-    return { title: `${row.result === undefined ? 'Sending' : 'Sent'} ${what}`, subject: files.map((f) => f.name).join(', ') };
+    // The tool's name and what it worked on, as Read and Edit have them, not a sentence about it.
+    return { title: row.tool, subject: files.map((f) => f.name).join(', ') };
   }
   return { title: row.tool, subject: row.file ?? str(inputOf(row).command)?.split('\n')[0] ?? row.preview };
 }
@@ -91,34 +95,37 @@ function sentFilesOf(row: MessageRow): SentFile[] {
   return files.map((f) => ({ path: f.trim(), name: baseName(f.trim()), inline: SENT_IMAGE_RE.test(f) && input.display !== 'attach' }));
 }
 
-const bytesOf = (base64: string): Uint8Array => Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
 
-/** A sent file as Now shows it, read whole: an image, a PDF's pages, Markdown formatted, code or text; null for any other kind. */
+/** A sent file as Now shows it, read whole, as the Preview window shows it; null for a kind it doesn't show. */
 function useSentFileView(f: SentFile, taskId: string): FileView | null {
   const kind = viewerKind(f.name, (n) => !!languageOf(n));
-  const [read, setRead] = useState<{ data: string } | { error: string } | null>(null);
+  const [read, setRead] = useState<Pick<FileView, 'url' | 'text' | 'data'> | { error: string } | null>(null);
   useEffect(() => {
     if (!kind) return;
     let live = true;
     setRead(null);
-    window.looper.sessions.readSentFile(taskId, f.path, VIEWER_MAX_BYTES[kind]).then(
-      (r) => live && setRead(r),
-      (e: unknown) => live && setRead({ error: e instanceof Error ? e.message : String(e) }),
-    );
+    window.looper.sessions
+      .readSentFile(taskId, f.path, VIEWER_MAX_BYTES[kind])
+      .then((r): Promise<Pick<FileView, 'url' | 'text' | 'data'> | { error: string }> => ('error' in r ? Promise.resolve(r) : bytesView(r.data, kind, imageType(f.name))))
+      .then(
+        (r) => live && setRead(r),
+        (e: unknown) => live && setRead({ error: e instanceof Error ? e.message : String(e) }),
+      );
     return () => {
       live = false;
     };
-  }, [taskId, f.path, kind]);
+  }, [taskId, f.path, kind, f.name]);
   return useMemo(() => {
     if (!kind) return null;
-    const data = read && 'data' in read ? read.data : null;
+    const shown = read && !('error' in read) ? read : null;
     const nothing = () => undefined;
     return {
       kind,
-      url: data && kind === 'image' ? `data:${imageType(f.name)};base64,${data}` : null,
-      text: data && kind !== 'image' && kind !== 'pdf' ? new TextDecoder().decode(bytesOf(data)) : null,
-      pdf: data && kind === 'pdf' ? (bytesOf(data).buffer as ArrayBuffer) : null,
+      url: shown?.url ?? null,
+      text: shown?.text ?? null,
+      data: shown?.data ?? null,
       error: read && 'error' in read ? read.error : '',
+      htmlPage: (html: string, load: boolean) => window.looper.sessions.previewPage(html, load),
       toDevice: nothing,
       toHost: nothing,
       askDownload: nothing,
@@ -126,7 +133,7 @@ function useSentFileView(f: SentFile, taskId: string): FileView | null {
   }, [kind, read, f.name]);
 }
 
-/** One sent file on Now: shown as Now shows a file, a Markdown one as a document; a double-click opens it in its default program. */
+/** One sent file on Now: shown as Now shows a file, a Markdown one as a document; a double-click opens it in the Preview window (or its default program, for a kind Preview doesn't show). */
 function SentFileView({ f, ctx, named }: { f: SentFile; ctx: RowCtx; named: boolean }) {
   const view = useSentFileView(f, ctx.taskId);
   const open = () => void window.looper.sessions.openFile(ctx.taskId, ctx.runId, f.path, false).catch(reportError);
@@ -137,7 +144,7 @@ function SentFileView({ f, ctx, named }: { f: SentFile; ctx: RowCtx; named: bool
   return (
     <div className="now-sent-file" onDoubleClick={open}>
       {named && <div className="muted now-sent-name">{f.name}</div>}
-      <div className={view?.kind === 'image' || view?.kind === 'pdf' ? 'now-sent-pages' : 'now-doc-page'}>{shown}</div>
+      <div className={view && ['image', 'pdf', 'docx', 'pptx'].includes(view.kind) ? 'now-sent-pages' : 'now-doc-page'}>{shown}</div>
     </div>
   );
 }
@@ -145,6 +152,7 @@ function SentFileView({ f, ctx, named }: { f: SentFile; ctx: RowCtx; named: bool
 /** A SendUserFile call as the files it sent, each on a page as Now shows a document, under the caption. */
 function SentFilesScreen({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
   const files = sentFilesOf(row);
+  // A phone lists every file of the call as the conversation does (thumbnails and cards): whole files, one page each, left a call's later files unseen.
   const caption = row.sent?.caption ?? str(inputOf(row).caption);
   return (
     <div className="now-doc now-sent">
@@ -153,9 +161,7 @@ function SentFilesScreen({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
           <MessageBody text={caption} />
         </div>
       )}
-      {files.map((f) => (
-        <SentFileView key={f.path} f={f} ctx={ctx} named={files.length > 1} />
-      ))}
+      {isPhone ? <SentFileList files={files} ctx={ctx} /> : files.map((f) => <SentFileView key={f.path} f={f} ctx={ctx} named={files.length > 1} />)}
     </div>
   );
 }
@@ -185,28 +191,54 @@ function mailOf(row: MessageRow, from: string, nameOf: (id: string) => string): 
   return null;
 }
 
+/** A parameter's name as a row label: `run_in_background` and `runInBackground` as "Run in background". */
+const headerLabel = (k: string): string => {
+  const words = k.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim().toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
 const headerValue = (v: unknown): string => (typeof v === 'string' ? v : (JSON.stringify(v) ?? String(v)));
 
-/** A message between agents as an email: its header rows, then the message formatted. */
+/**
+ * A message between agents as Gmail shows a message: the subject on top, the sender, "to" the recipient with a
+ * toggle for the details (the call's other parameters), then the message formatted.
+ */
 function MailView({ mail }: { mail: Mail }) {
+  const [details, setDetails] = useState(false);
   const rows: [string, string][] = [
     ['From', mail.from],
     ['To', mail.to],
-    ...(mail.subject ? ([['Subject', mail.subject]] as [string, string][]) : []),
-    ...mail.rest.map(([k, v]) => [k, headerValue(v)] as [string, string]),
+    ...mail.rest.map(([k, v]) => [headerLabel(k), headerValue(v)] as [string, string]),
   ];
   return (
     <div className="now-mail">
-      <table className="now-mail-head">
-        <tbody>
-          {rows.map(([k, v]) => (
-            <tr key={k}>
-              <th scope="row">{k}</th>
-              <td>{v}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {mail.subject && <h2 className="now-mail-subject">{mail.subject}</h2>}
+      <div className="now-mail-from">{mail.from}</div>
+      <div className="now-mail-to muted">
+        <span>to {mail.to}</span>
+        {mail.rest.length > 0 && (
+          <button
+            className={`now-mail-toggle${details ? ' open' : ''}`}
+            aria-label={details ? 'Hide details' : 'Show details'}
+            aria-expanded={details}
+            onClick={() => setDetails((d) => !d)}
+          >
+            {CHEVRON}
+          </button>
+        )}
+      </div>
+      {details && (
+        <table className="now-mail-head">
+          <tbody>
+            {rows.map(([k, v]) => (
+              <tr key={k}>
+                <th scope="row">{k}</th>
+                <td>{v}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       <div className="now-mail-body">
         <MessageBody text={mail.text} />
       </div>
@@ -682,21 +714,18 @@ function NowScreen({
   } else if (row.tool === 'REPL') {
     // The script run in a console, and the calls it made under it.
     const terminal = <ScriptConsole key={row.toolUseId ?? row.id} row={row} script={script} addons={addons} />;
-    body =
-      script && row.calls && row.toolUseId ? (
-        <SplitPane
-          axis="y"
-          initial={60}
-          unit="%"
-          min={15}
-          max={85}
-          storageKey="now-script-split"
-          first={terminal}
-          second={<ScriptNow repl={row} script={script} addons={addons} screen={{ taskId, runId, agentId, addons, source, nameOf }} />}
-        />
-      ) : (
-        terminal
-      );
+    const calls = script && row.calls && row.toolUseId ? <ScriptNow repl={row} script={script} addons={addons} screen={{ taskId, runId, agentId, addons, source, nameOf }} /> : null;
+    body = !calls ? (
+      terminal
+    ) : isPhone ? (
+      // A phone can't drag a splitter: the call comes after the console at its own height, and Now scrolls to it.
+      <div className="now-script-stack">
+        {terminal}
+        {calls}
+      </div>
+    ) : (
+      <SplitPane axis="y" initial={60} unit="%" min={15} max={85} storageKey="now-script-split" first={terminal} second={calls} />
+    );
   } else if (row.tool && TERMINALS.has(row.tool)) {
     body = <TerminalScreen row={row} />;
   } else if (row.tool === 'Read' && running) {
@@ -762,6 +791,9 @@ function NowScreen({
   );
 }
 
+/** How many finished background tasks the Background tab lists, newest first. */
+const FINISHED_SHOWN = 20;
+
 /** What the Background list says a task is, beside its label; a command and a subagent say nothing. */
 const BACKGROUND_KINDS: Partial<Record<BackgroundTask['kind'], string>> = { workflow: 'Workflow', monitor: 'Monitor' };
 
@@ -776,25 +808,6 @@ function BackgroundStatus({ b }: { b: BackgroundTask }) {
   const started = b.startedAt ? Date.parse(b.startedAt) : NaN;
   const status = WORKFLOW_STATUS_TEXT[b.status];
   return b.status !== 'running' || Number.isNaN(started) ? <>{status}</> : <WaitedFor since={started} label={status} />;
-}
-
-/** The end of a background command's output, read again every few seconds while it runs. */
-function BackgroundOutput({ b, sessionId }: { b: BackgroundTask; sessionId: string }) {
-  const [output, setOutput] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    const load = () =>
-      void window.looper.sessions.backgroundOutput(sessionId, b.id).then((t) => {
-        if (live) setOutput(t);
-      });
-    load();
-    const timer = b.status === 'running' ? setInterval(load, 2000) : null;
-    return () => {
-      live = false;
-      if (timer) clearInterval(timer);
-    };
-  }, [b.status, sessionId, b.id]);
-  return <pre className="output bg-output">{output === null ? 'The output can’t be read.' : stripAnsi(output) || 'No output yet.'}</pre>;
 }
 
 const effortText = (a: SubagentInfo) => (a.effort ? effortLabel('claude-code', a.effort) : undefined);
@@ -894,9 +907,12 @@ export function nowIndex(count: number, pos: number | null): number {
  * The Sessions window's right panel: Now shows the agent's latest tool call
  * like its screen (the toolbar goes back through earlier ones, the last one
  * follows new calls, and the list shows them all), Subagents lists each one's
- * agent, model, effort and context, newest first, Files lists what it sent the
- * user and worked on, and Background shows the commands and workflows that run
- * in the background (a workflow's item opens its tab beside the conversation).
+ * agent, model, effort and context, newest first, with the selected one's
+ * conversation under the list, Files lists what it sent the user and worked on,
+ * and Background lists the commands and workflows that run in the background,
+ * with the selected one's output as a console under the list (a workflow's item
+ * opens its tab beside the conversation). On a phone a row of either list pushes
+ * what the desktop shows under it.
  */
 export function ActivityPanel({
   sessionId,
@@ -919,6 +935,8 @@ export function ActivityPanel({
   initialTab = 'now',
   only,
   scriptCalls,
+  canStopBackground,
+  agentConversation,
 }: {
   sessionId: string;
   taskId: string;
@@ -952,8 +970,19 @@ export function ActivityPanel({
   only?: Tab[];
   /** A transcript outside Looper's runs: its Code Mode scripts' calls (HistoryConversation.scriptCalls). */
   scriptCalls?: Record<string, MessageRow[]>;
+  /** Background's running items have Stop: a chat's or task run's (a terminal session's work stops in its terminal). */
+  canStopBackground?: boolean;
+  /** The Subagents tab's selected agent's conversation (a subagent's, or the open workflow's agent's), under the list. */
+  agentConversation?: (agent: { agentId: string; running: boolean; subagent?: SubagentInfo }) => ReactNode;
 }) {
-  const [picked, setTab] = useState<Tab>(initialTab);
+  const [picked, pickTab] = useState<Tab>(initialTab);
+  // A phone's Background or Subagents row pushed what the desktop shows under the list; `pushed`: it covers the list.
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [pushed, setPushed] = useState(false);
+  const setTab = (t: Tab) => {
+    pickTab(t);
+    setDetailOpen(false);
+  };
   const addonTabs = useAddonProjectTabs(projectId).filter((t) => !only || only.includes(t.id));
   const addonTab = addonTabs.find((t) => t.id === picked);
   const tab = (picked === 'git' && !gitProject) || (picked.startsWith('addon:') && !addonTab) ? 'now' : picked;
@@ -1000,6 +1029,7 @@ export function ActivityPanel({
   const read = [...files].filter(([, f]) => !f.changed);
   // The files the agent sent the user (SendUserFile), each once.
   const received = [...new Map(rows.flatMap((r) => r.sent?.files ?? []).map((f) => [f.path, f] as [string, SentFile])).values()];
+  const receivedFiles = received.map((f): [string, { index: number; call?: number; sent?: true }] => [f.path, { index: tools.findLastIndex((t) => t.sent?.files.some((s) => s.path === f.path)), sent: true }]);
   const showFile = (index: number, call?: number) => {
     setTab('now');
     setListView(false);
@@ -1009,19 +1039,58 @@ export function ActivityPanel({
   // Subagents are in their own tab, background ones too.
   const own = background.filter((b) => b.kind !== 'agent');
   const running = own.filter((b) => b.status === 'running');
-  const finished = own.filter((b) => b.status !== 'running').slice(0, 5);
-  // Each list's selected row, for its keys, and the background commands whose output is open.
+  // The newest finished ones, whose output can still be read below the list.
+  const finished = own.filter((b) => b.status !== 'running').slice(0, FINISHED_SHOWN);
+  // The Subagents tab's count is the running ones, as Background's is.
+  const runningSubagents = subagents.filter((a) => a.status === 'running').length;
+  // Each list's selected row: the desktop shows the first until one is picked; a phone shows one once it's tapped.
   const [sel, setSel] = useState<{ background: string | null; file: string | null; agent: string | null }>({ background: null, file: null, agent: null });
-  const [openOutput, setOpenOutput] = useState<ReadonlySet<string>>(new Set());
-
+  const listed = [...running, ...finished];
+  const shownBackground = listed.find((b) => b.id === sel.background) ?? (selectsFirstRow ? listed[0] : undefined);
+  // A workflow's item opens its tab beside the conversation; any other shows its output (a phone pushes it).
   const openBackground = (b: BackgroundTask) => {
-    if (b.workflowRunId) onOpenWorkflow(b.workflowRunId);
-    else if (b.outputFile)
-      setOpenOutput((s) => {
-        const next = new Set(s);
-        if (!next.delete(b.id)) next.add(b.id);
-        return next;
-      });
+    if (b.workflowRunId) return onOpenWorkflow(b.workflowRunId);
+    setSel((p) => ({ ...p, background: b.id }));
+    setDetailOpen(true);
+  };
+  const flowAgents = workflowRun ? workflowAgents(workflowRun) : [];
+  const agentIds = [...subagents.map((a) => a.agentId), ...flowAgents.map((a) => a.agentId)];
+  const shownAgent =
+    sel.agent && agentIds.includes(sel.agent) ? sel.agent : selectsFirstRow ? (following && agentIds.includes(following) ? following : (newestFirst(subagents)[0]?.agentId ?? flowAgents[0]?.agentId ?? null)) : null;
+  const shownSubagent = subagents.find((a) => a.agentId === shownAgent);
+  const shownFlowAgent = flowAgents.find((a) => a.agentId === shownAgent);
+  // The desktop's Enter or double-click shows the subagent's tab beside the conversation; a phone's tap pushes its conversation.
+  const openSubagent = (a: SubagentInfo) => {
+    if (selectsFirstRow) return onFollow(a.agentId);
+    setSel((p) => ({ ...p, agent: a.agentId }));
+    setDetailOpen(true);
+  };
+  // A running item's Stop, then its output file, then its command; a separator between the groups.
+  const backgroundMenu = (b: BackgroundTask): ListMenuItem[] => {
+    const file = b.outputFile;
+    const command = b.command;
+    const groups: ListMenuItem[][] = [
+      canStopBackground && b.status === 'running'
+        ? [{ label: 'Stop', destructive: true, run: () => void window.looper.sessions.stopBackground(sessionId, b.id).catch(reportError) }]
+        : [],
+      file
+        ? [
+            { label: 'Open File', run: () => void window.looper.sessions.openFile(taskId, sessionId, file, false).catch(reportError) },
+            { label: 'Copy Path', run: () => void navigator.clipboard.writeText(file) },
+          ]
+        : [],
+      command ? [{ label: 'Copy Command', run: () => void navigator.clipboard.writeText(command) }] : [],
+    ];
+    return groups.filter((g) => g.length).flatMap((g, i) => (i ? [{ ...g[0], separator: true as const }, ...g.slice(1)] : g));
+  };
+  // A running subagent the agent started in the background is a task with an id, stopped as Background's items are;
+  // one the agent waits for is part of its turn, which the message box's Stop ends.
+  const subagentMenu = (a: SubagentInfo): ListMenuItem[] => {
+    const stoppable = canStopBackground && a.status === 'running' && background.some((b) => b.kind === 'agent' && b.id === a.agentId && b.status === 'running');
+    const open: ListMenuItem = { label: 'Open Subagent Conversation', run: () => void window.looper.openMessages(taskId, sessionId, a.agentId, a.description).catch(reportError) };
+    return stoppable
+      ? [{ label: 'Stop', destructive: true, run: () => void window.looper.sessions.stopBackground(sessionId, a.agentId).catch(reportError) }, { ...open, separator: true }]
+      : [open];
   };
   const backgroundList = (title: string, list: BackgroundTask[]) =>
     list.length > 0 && (
@@ -1034,11 +1103,10 @@ export function ActivityPanel({
           label={title}
           listClass="pane-rows"
           rowClass={title === 'Running' ? 'bg-item running' : 'bg-item'}
-          selected={sel.background}
+          selected={shownBackground?.id ?? null}
           onSelect={(b) => setSel((p) => ({ ...p, background: b.id }))}
           onOpen={openBackground}
-          activateOnClick
-          onMenu={(b) => window.looper.showMessageContextMenu({ taskId, runId: sessionId, file: b.outputFile, text: b.command })}
+          menu={(b) => backgroundMenu(b)}
           empty={null}
           row={(b) => (
             <>
@@ -1050,7 +1118,6 @@ export function ActivityPanel({
                 <span className="muted bg-kind">{BACKGROUND_KINDS[b.kind] ?? ''}</span>
               </div>
               {b.summary && b.status !== 'running' && <div className="muted bg-summary">{b.summary}</div>}
-              {openOutput.has(b.id) && <BackgroundOutput b={b} sessionId={sessionId} />}
             </>
           )}
           phoneRow={(b) => ({
@@ -1063,13 +1130,16 @@ export function ActivityPanel({
               </>
             ),
             tone: b.status === 'failed' ? 'error' : b.status === 'running' ? undefined : 'muted',
-            chevron: !!b.workflowRunId,
-            detail: openOutput.has(b.id) && <BackgroundOutput b={b} sessionId={sessionId} />,
           })}
         />
       </Section>
     );
-  const fileList = (title: string, list: [string, { index: number; call?: number }][]) =>
+  // A double-click or Enter opens a file in the Preview window, or its default app for a kind Preview doesn't show; Show on Now is in the right-click menu.
+  const openFile = (p: string, list: [string, unknown][]) => {
+    const image = SENT_IMAGE_RE.test(p);
+    void window.looper.sessions.openFile(taskId, sessionId, p, image, image ? list.map(([q]) => q).filter((q) => SENT_IMAGE_RE.test(q)) : undefined).catch(reportError);
+  };
+  const fileList = (title: string, list: [string, { index: number; call?: number; sent?: true }][]) =>
     list.length > 0 && (
       <Section className="activity-section" title={title}>
         <RowList
@@ -1082,9 +1152,13 @@ export function ActivityPanel({
           rowClass="file-item"
           selected={sel.file}
           onSelect={([p]) => setSel((s) => ({ ...s, file: p }))}
-          onOpen={([, f]) => showFile(f.index, f.call)}
-          activateOnClick
-          onMenu={([p]) => window.looper.showMessageContextMenu({ taskId, runId: sessionId, file: p })}
+          onOpen={([p]) => openFile(p, list)}
+          menu={([p, f]) => [
+            { label: 'Open File', run: () => openFile(p, list) },
+            { label: 'Show on Now', enabled: f.index >= 0, run: () => showFile(f.index, f.call) },
+            ...(f.sent ? [{ label: 'Save As…', run: () => void window.looper.sessions.saveFile(taskId, p).catch(reportError) }] : []),
+            { label: 'Copy Path', separator: true as const, run: () => void navigator.clipboard.writeText(p) },
+          ]}
           empty={null}
           row={([p]) => (
             <>
@@ -1102,22 +1176,24 @@ export function ActivityPanel({
 
   return (
     <aside className="activity-panel">
-      <TabBar
-        tabs={(
-          [
-            ['now', 'Now'],
-            ['background', running.length ? `Background (${running.length})` : 'Background'],
-            ['subagents', subagents.length ? `Subagents (${subagents.length})` : 'Subagents'],
-            ['files', 'Files'],
-            ...(gitProject ? ([['git', gitTabLabel(git.status?.repo ? git.status.changes : undefined)]] as [Tab, string][]) : []),
-            ...addonTabs.map((t) => [t.id, t.title] as [Tab, string]),
-          ] as [Tab, string][]
-        ).filter(([t]) => !only || only.includes(t))}
-        active={tab}
-        onSelect={setTab}
-        className="activity-tabs"
-        label="Activity"
-      />
+      {!(pushed && detailOpen) && (
+        <TabBar
+          tabs={(
+            [
+              ['now', 'Now'],
+              ['background', running.length ? `Background (${running.length})` : 'Background'],
+              ['subagents', runningSubagents ? `Subagents (${runningSubagents})` : 'Subagents'],
+              ['files', 'Files'],
+              ...(gitProject ? ([['git', gitTabLabel(git.status?.repo ? git.status.changes : undefined)]] as [Tab, string][]) : []),
+              ...addonTabs.map((t) => [t.id, t.title] as [Tab, string]),
+            ] as [Tab, string][]
+          ).filter(([t]) => !only || only.includes(t))}
+          active={tab}
+          onSelect={setTab}
+          className="activity-tabs"
+          label="Activity"
+        />
+      )}
       <div className="activity-body">
         {tab === 'now' &&
           (row ? (
@@ -1190,76 +1266,111 @@ export function ActivityPanel({
           ) : (
             <EmptyState>The agent hasn't used a tool yet.</EmptyState>
           ))}
-        {tab === 'background' && (
-          <div className="background-tab">
-            {running.length === 0 && finished.length === 0 && <div className="muted background-none">Nothing is running in the background.</div>}
-            {backgroundList('Running', running)}
-            {backgroundList('Finished', finished)}
-          </div>
-        )}
-        {tab === 'subagents' && (
-          <div className="subagent-list">
-            {subagents.length > 0 && (
-              <Section className="activity-section">
-                <RowList
-                  bare
-                  rows={newestFirst(subagents)}
-                  rowKey={(a) => a.agentId}
-                  idPrefix="subagent"
-                  label="Subagents"
-                  listClass="pane-rows"
-                  rowClass="subagent-item"
-                  selected={following}
-                  onSelect={(a) => onFollow(a.agentId)}
-                  onMenu={(a) => window.looper.showMessageContextMenu({ taskId, runId: sessionId, agentId: a.agentId, label: a.description })}
-                  empty={null}
-                  row={(a) => (
-                    <AgentRow
-                      label={a.description || a.type}
-                      status={a.status}
-                      facts={[
-                        { label: 'Agent', value: a.type },
-                        { label: 'Model', value: a.modelId ?? a.model ?? 'Not known yet', className: 'mono' },
-                        { label: 'Effort', value: effortText(a) ?? 'Not known yet' },
-                        { label: 'Context', value: contextText(a) ?? 'Not known yet' },
-                      ]}
-                    />
+        {tab === 'background' &&
+          (listed.length === 0 ? (
+            <div className="background-tab">
+              <div className="muted background-none">Nothing is running in the background.</div>
+            </div>
+          ) : (
+            <ListDetail
+              panes={{ axis: 'y', initial: 40, unit: '%', min: 15, max: 85, storageKey: 'activity-background-split' }}
+              tabs={{ list: 'Tasks', detail: 'Output' }}
+              open={detailOpen && !!shownBackground}
+              onClose={() => setDetailOpen(false)}
+              detailTitle={shownBackground?.label}
+              backLabel="Background"
+              onPushed={setPushed}
+              list={
+                <div className="background-tab activity-list">
+                  {backgroundList('Running', running)}
+                  {backgroundList('Finished', finished)}
+                </div>
+              }
+              detail={shownBackground && <BackgroundConsole key={shownBackground.id} b={shownBackground} sessionId={sessionId} status={<BackgroundStatus b={shownBackground} />} />}
+            />
+          ))}
+        {tab === 'subagents' &&
+          (agentIds.length === 0 ? (
+            <div className="subagent-list">
+              <EmptyState>{working ? 'No subagents yet.' : 'No subagents.'}</EmptyState>
+            </div>
+          ) : (
+            <ListDetail
+              panes={{ axis: 'y', initial: 40, unit: '%', min: 15, max: 85, storageKey: 'activity-subagents-split' }}
+              tabs={{ list: 'Subagents', detail: 'Conversation' }}
+              open={detailOpen && !!shownAgent}
+              onClose={() => setDetailOpen(false)}
+              detailTitle={shownSubagent ? shownSubagent.description || shownSubagent.type : shownFlowAgent?.label}
+              backLabel="Subagents"
+              onPushed={setPushed}
+              list={
+                <div className="subagent-list activity-list">
+                  {subagents.length > 0 && (
+                    <Section className="activity-section">
+                      <RowList
+                        bare
+                        rows={newestFirst(subagents)}
+                        rowKey={(a) => a.agentId}
+                        idPrefix="subagent"
+                        label="Subagents"
+                        listClass="pane-rows"
+                        rowClass="subagent-item"
+                        selected={shownAgent}
+                        onSelect={(a) => setSel((p) => ({ ...p, agent: a.agentId }))}
+                        onOpen={openSubagent}
+                        menu={subagentMenu}
+                        empty={null}
+                        row={(a) => (
+                          <AgentRow
+                            label={a.description || a.type}
+                            status={a.status}
+                            facts={[
+                              { label: 'Agent', value: a.type },
+                              { label: 'Model', value: a.modelId ?? a.model ?? 'Not known yet', className: 'mono' },
+                              { label: 'Effort', value: effortText(a) ?? 'Not known yet' },
+                              { label: 'Context', value: contextText(a) ?? 'Not known yet' },
+                            ]}
+                          />
+                        )}
+                        phoneRow={(a) => ({
+                          title: a.description || a.type,
+                          sub: [a.type, a.modelId ?? a.model, effortText(a), contextText(a)].filter(Boolean).join(' · '),
+                          value: WORKFLOW_STATUS_TEXT[a.status],
+                          valueTone: a.status === 'failed' ? 'error' : undefined,
+                        })}
+                      />
+                    </Section>
                   )}
-                  phoneRow={(a) => ({
-                    title: a.description || a.type,
-                    sub: [a.type, a.modelId ?? a.model, effortText(a), contextText(a)].filter(Boolean).join(' · '),
-                    value: WORKFLOW_STATUS_TEXT[a.status],
-                    valueTone: a.status === 'failed' ? 'error' : undefined,
-                    chevron: false,
-                  })}
-                />
-              </Section>
-            )}
-            {workflowRun && workflowAgents(workflowRun).length > 0 && (
-              <Section className="activity-section" title="Workflow">
-                <WorkflowAgentList
-                  agents={workflowAgents(workflowRun)}
-                  label="Workflow"
-                  idPrefix="workflow-agent"
-                  listClass="pane-rows"
-                  selected={sel.agent}
-                  onSelect={(agent) => setSel((p) => ({ ...p, agent }))}
-                  onOpen={(agentId) => onOpenWorkflowAgent?.(workflowRun.runId, agentId)}
-                  taskId={taskId}
-                  sessionId={sessionId}
-                />
-              </Section>
-            )}
-            {subagents.length === 0 && !workflowRun?.phases.some((p) => p.agents.length > 0) && <EmptyState>{working ? 'No subagents yet.' : 'No subagents.'}</EmptyState>}
-          </div>
-        )}
+                  {workflowRun && flowAgents.length > 0 && (
+                    <Section className="activity-section" title="Workflow">
+                      <WorkflowAgentList
+                        agents={flowAgents}
+                        label="Workflow"
+                        idPrefix="workflow-agent"
+                        listClass="pane-rows"
+                        selected={shownAgent}
+                        onSelect={(agent) => setSel((p) => ({ ...p, agent }))}
+                        onOpen={(agentId) => onOpenWorkflowAgent?.(workflowRun.runId, agentId)}
+                        taskId={taskId}
+                        sessionId={sessionId}
+                      />
+                    </Section>
+                  )}
+                </div>
+              }
+              detail={
+                shownAgent &&
+                agentConversation?.({
+                  agentId: shownAgent,
+                  running: shownSubagent ? shownSubagent.status === 'running' : !!shownFlowAgent && tabStatus(shownFlowAgent.status) === 'running',
+                  subagent: shownSubagent,
+                })
+              }
+            />
+          ))}
         {tab === 'files' && (
           <div className="files-tab">
-            {received.length > 0 && (
-              <Section className="activity-section" title="Received">
-                <SentFileList files={received} ctx={{ taskId, runId: sessionId }} />
-              </Section>
-            )}
+            {fileList('Received', receivedFiles)}
             {fileList('Changed', changed)}
             {fileList('Read', read)}
             {attachments.length > 0 && (

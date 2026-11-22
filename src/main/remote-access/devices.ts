@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { RemoteAccessProviderId } from '../../shared/remote-access';
+import { ALL_NOTIFICATIONS, parseDeviceNotifications, type DeviceNotifications, type RemoteAccessProviderId } from '../../shared/remote-access';
 import { readJson, writeJsonAtomic } from '../../engine/store/fsutil';
 
 /** Milliseconds since the epoch; tests pass their own. */
@@ -22,6 +22,28 @@ export interface StoredDevice {
   tokenHash: string;
   pairedAt: string;
   lastSeenAt?: string;
+  /** What it's notified of (its own settings, or Paired Devices' Edit). */
+  notify: DeviceNotifications;
+}
+
+/** devices.json's format: version 2 gave each device its notifications. */
+export const DEVICES_VERSION = 2;
+
+/**
+ * Version 1 (no `version` in the file) had no notification settings: each
+ * device gets every one, as it was notified of everything before.
+ */
+export function migrateDevicesFile(file: string): void {
+  let raw: { version?: unknown; devices?: unknown } | null;
+  try {
+    raw = readJson<{ version?: unknown; devices?: unknown } | null>(file, null);
+  } catch {
+    // Unreadable: the store treats it as empty, and the devices pair again.
+    return;
+  }
+  if (!raw || raw.version !== undefined || !Array.isArray(raw.devices)) return;
+  const devices = raw.devices.map((d: unknown) => (d && typeof d === 'object' ? { ...d, notify: { ...ALL_NOTIFICATIONS } } : d));
+  writeJsonAtomic(file, { version: DEVICES_VERSION, devices });
 }
 
 const sha256 = (s: string): Buffer => crypto.createHash('sha256').update(s, 'utf8').digest();
@@ -47,7 +69,8 @@ function isStoredDevice(d: unknown): d is StoredDevice {
     typeof x.tokenHash === 'string' &&
     /^[0-9a-f]{64}$/.test(x.tokenHash) &&
     typeof x.pairedAt === 'string' &&
-    (x.lastSeenAt === undefined || typeof x.lastSeenAt === 'string')
+    (x.lastSeenAt === undefined || typeof x.lastSeenAt === 'string') &&
+    parseDeviceNotifications(x.notify) !== null
   );
 }
 
@@ -60,18 +83,19 @@ export class DeviceStore {
     private readonly file: string,
     private readonly now: Clock,
   ) {
-    let raw: { devices?: unknown } | null;
+    migrateDevicesFile(file);
+    let raw: { version?: unknown; devices?: unknown } | null;
     try {
-      raw = readJson<{ devices?: unknown }>(file, { devices: [] });
+      raw = readJson<{ version?: unknown; devices?: unknown }>(file, { version: DEVICES_VERSION, devices: [] });
     } catch {
       // Unreadable: the devices pair again.
       raw = null;
     }
-    this.devices = Array.isArray(raw?.devices) ? raw.devices.filter(isStoredDevice) : [];
+    this.devices = raw?.version === DEVICES_VERSION && Array.isArray(raw.devices) ? raw.devices.filter(isStoredDevice) : [];
   }
 
   list(): StoredDevice[] {
-    return this.devices.map((d) => ({ ...d }));
+    return this.devices.map((d) => ({ ...d, notify: { ...d.notify } }));
   }
 
   get(id: string): StoredDevice | undefined {
@@ -88,10 +112,11 @@ export class DeviceStore {
       provider,
       tokenHash: sha256(secret).toString('hex'),
       pairedAt: new Date(this.now()).toISOString(),
+      notify: { ...ALL_NOTIFICATIONS },
     };
     this.devices.push(device);
     this.save();
-    return { device: { ...device }, cookie: `${id}.${secret}` };
+    return { device: { ...device, notify: { ...device.notify } }, cookie: `${id}.${secret}` };
   }
 
   /** The device a cookie value belongs to, or undefined; also undefined when it was paired under another provider. */
@@ -126,6 +151,14 @@ export class DeviceStore {
     return true;
   }
 
+  setNotifications(id: string, notify: DeviceNotifications): boolean {
+    const d = this.get(id);
+    if (!d) return false;
+    d.notify = { ...notify };
+    this.save();
+    return true;
+  }
+
   remove(id: string): boolean {
     const before = this.devices.length;
     this.devices = this.devices.filter((d) => d.id !== id);
@@ -136,7 +169,7 @@ export class DeviceStore {
   }
 
   save(): void {
-    writeJsonAtomic(this.file, { devices: this.devices });
+    writeJsonAtomic(this.file, { version: DEVICES_VERSION, devices: this.devices });
   }
 }
 
