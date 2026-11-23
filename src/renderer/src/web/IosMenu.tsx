@@ -19,7 +19,8 @@ import { useViewport } from './viewport-context';
 /**
  * One level of a menu as iOS draws it: groups split by a thick gap, a column
  * before the labels holding a chosen item's check or else the item's symbol
- * (a chevron at the end of a submenu), destructive items in red. A group shows
+ * (a submenu's too, the one its header keeps open, with a chevron at its end),
+ * destructive items in red. A group shows
  * symbols only when every item in it has one (HIG: Menus, "icons for all menu
  * items in a group, or none of them"). The column is only in a group with
  * symbols or a check; a group of plain items starts at the menu's edge, as
@@ -27,7 +28,7 @@ import { useViewport } from './viewport-context';
  * symbol over a short label (HIG: Menus, iOS). `header`: a submenu's own row,
  * which folds it back up.
  */
-function MenuLevel({
+export function MenuLevel({
   items,
   row = [],
   header,
@@ -40,7 +41,7 @@ function MenuLevel({
   onHeader?: () => void;
   onItem: (it: MenuItemSpec, el: HTMLElement) => void;
 }) {
-  const iconOf = (it: MenuItemSpec) => (it.type !== 'submenu' ? it.icon : undefined);
+  const iconOf = (it: MenuItemSpec) => it.icon;
   const inRow = new Set(row.map((it) => it.id));
   const groups = menuGroups(items.filter((it) => !inRow.has(it.id)));
   const iconGroups = groups.map((group) => group.every((it) => iconOf(it)));

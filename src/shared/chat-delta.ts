@@ -46,7 +46,7 @@ export function rowSignature(r: MessageRow): string {
     // A "!" command's output is filled into the prompt's last attachment in place.
     r.attachments?.length ? `${r.attachments.length}:${JSON.stringify(r.attachments.at(-1)).length}` : '',
     r.input === undefined ? 0 : 1,
-    r.calls ? `${r.calls.count}:${r.calls.failed}:${r.calls.running ?? 0}` : '',
+    r.calls ? `${r.calls.count}:${r.calls.failed}:${r.calls.running ?? 0}:${r.calls.at?.length ?? 0}:${r.calls.at?.[0]?.join(',') ?? ''}:${r.calls.at?.at(-1)?.join(',') ?? ''}` : '',
     tail(r.logs),
     r.from ?? '',
   ].join('|');

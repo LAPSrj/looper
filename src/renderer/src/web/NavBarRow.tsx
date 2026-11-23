@@ -216,11 +216,6 @@ export function IosBarRow({ model, onMore, onActionMenu, titleFaded, className, 
   );
 }
 
-const FORWARD = (
-  <svg width="11" height="19" viewBox="0 0 11 19" aria-hidden="true">
-    <path d="M2 1.5L9.5 9.5 2 17.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
 export const CHEVRON_DOWN = (
   <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true">
     <path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
@@ -231,32 +226,36 @@ export interface IosBrowserBarRowProps {
   /** The folder's path in the title's place: PathBar, the folder's name opening a menu of the folders above it. */
   title: ReactNode;
   canBack: boolean;
-  canForward: boolean;
   onBack: () => void;
-  onForward: () => void;
   actions: { id: string; label: string; icon: string; run: () => void }[];
   confirm?: { label: string; disabled: boolean; run: () => void };
   onClose: () => void;
 }
 
 /**
- * A file browser's bar, as the system's document picker draws it: Back and
- * Forward in one capsule, the folder's name with a chevron that opens the
- * folders above it, then the browser's buttons and the xmark each in a circle
- * of its own, and Confirm, tinted, last.
+ * A file browser's bar in a sheet, its buttons where HIG Sheets puts a sheet's:
+ * Close (the xmark, Cancel) at the leading edge, and Back, alone, at the far
+ * leading edge once there's a folder to go back to (HIG Toolbars). With Done
+ * too, Back takes Close's place, since "Avoid showing all three buttons —
+ * Cancel, Done, and Back — together" (a swipe down still closes the sheet).
+ * Then the folder's name with a chevron that opens the folders above it, the
+ * browser's buttons each in a circle of its own, and Done, tinted, last. An
+ * iPhone's bar has no Forward.
  */
-export function IosBrowserBarRow({ title, canBack, canForward, onBack, onForward, actions, confirm, onClose }: IosBrowserBarRowProps) {
+export function IosBrowserBarRow({ title, canBack, onBack, actions, confirm, onClose }: IosBrowserBarRowProps) {
   return (
     <div className="ios-bar-row ios-files-bar">
       <div className="ios-bar-lead">
-        <div className="ios-bar-group">
-          <button className="ios-icon-btn" aria-label="Back" disabled={!canBack} onClick={onBack}>
+        {canBack && (
+          <button className="ios-icon-btn" aria-label="Back" onClick={onBack}>
             {BACK}
           </button>
-          <button className="ios-icon-btn" aria-label="Forward" disabled={!canForward} onClick={onForward}>
-            {FORWARD}
+        )}
+        {!(canBack && confirm) && (
+          <button className="ios-icon-btn" aria-label="Close" onClick={onClose}>
+            {XMARK}
           </button>
-        </div>
+        )}
       </div>
       {title}
       <div className="ios-bar-trail">
@@ -265,9 +264,6 @@ export function IosBrowserBarRow({ title, canBack, canForward, onBack, onForward
             <NavIcon name={a.icon} />
           </button>
         ))}
-        <button className="ios-icon-btn" aria-label="Close" onClick={onClose}>
-          {XMARK}
-        </button>
         {confirm && (
           <button className="ios-icon-btn prominent" aria-label={confirm.label} disabled={confirm.disabled} onClick={confirm.run}>
             {CHECKMARK}

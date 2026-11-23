@@ -19,6 +19,6 @@ describe('a message’s thumbnail', () => {
   });
 
   it('is fetched before the older items holding it are drawn', () => {
-    expect(src('components/Conversation.tsx')).toContain('return prefetchThumbs(items, ctx.taskId);');
+    expect(src('components/Conversation.tsx')).toContain('(from, to) => prefetchThumbs(itemsIn(parts, from, to), ctx.taskId),');
   });
 });

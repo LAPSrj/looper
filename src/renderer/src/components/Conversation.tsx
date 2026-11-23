@@ -2,6 +2,8 @@ import { Fragment, memo, useImperativeHandle, useLayoutEffect, useRef, useState,
 import type { ChatState } from '@shared/chat';
 import { harnessKindLabel } from '@shared/environments';
 import type { MessageRow } from '@shared/messages';
+import { drawsText } from '@shared/chat-window';
+import { wholeRows } from '../events';
 import { Measured } from '../perf';
 import { ChatRow, ToolGroup, type RowCtx } from './ChatRows';
 import type { ChatItem } from './chat-groups';
@@ -50,6 +52,17 @@ const Items = memo(function Items({ items, ctx, prefix, card }: { items: ChatIte
 /** The first `count` items' elements: each item draws one, and the headings are the only others among them. */
 const itemEls = (el: HTMLElement, count: number): Element[] =>
   [...el.children].filter((c) => !c.classList.contains('chat-divider')).slice(0, Math.max(0, count));
+
+/** The items [from, to) of the parts, as one list. */
+function itemsIn(parts: ConversationPart[], from: number, to: number): ChatItem[] {
+  const items: ChatItem[] = [];
+  let at = 0;
+  for (const p of parts) {
+    items.push(...p.items.slice(Math.max(0, from - at), Math.max(0, to - at)));
+    at += p.items.length;
+  }
+  return items;
+}
 
 /** Where the scroller's view starts on the screen. */
 const viewTop = (el: HTMLElement): number => el.getBoundingClientRect().top + el.clientTop;
@@ -117,14 +130,11 @@ export function Conversation({
     place && !place.atEnd ? place.item : undefined,
     lead,
     // Older items' thumbnails are fetched first, so they're drawn at their size above the reader.
+    (from, to) => prefetchThumbs(itemsIn(parts, from, to), ctx.taskId),
+    // And a phone's brief rows whose text shows are read whole first (chat-window.ts), so they aren't drawn as one line and grow.
     (from, to) => {
-      const items: ChatItem[] = [];
-      let at = 0;
-      for (const p of parts) {
-        items.push(...p.items.slice(Math.max(0, from - at), Math.max(0, to - at)));
-        at += p.items.length;
-      }
-      return prefetchThumbs(items, ctx.taskId);
+      const ids = itemsIn(parts, from, to).flatMap((item) => (item.kind === 'row' && item.row.brief && drawsText(item.row) ? [item.row.id] : []));
+      return ids.length ? wholeRows(ctx.runId, ids) : null;
     },
   );
   const end = total - newer;

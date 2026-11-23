@@ -1,6 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FindBar, useFindFocus, useFindHighlights, type FindState } from './FindBar';
-import { atEnd } from './newest-first';
 import { ChatStatus, Conversation, type ConversationHandle, type ConversationPart } from './Conversation';
 import { chatRows, continueAt, continueSkipped, forkPoint, type ChatState } from '@shared/chat';
 import { LOGIN_FAILED_RE } from '@shared/logins';
@@ -12,7 +11,8 @@ import { showRowContextMenu, systemSelecting, UserMessage, useSelectText, type R
 import { groupRows } from './chat-groups';
 import { permissionLabel } from './chat-settings';
 import { Composer, type ComposerHandle } from './Composer';
-import { onUi } from '../events';
+import { ConversationWithBox } from './ConversationWithBox';
+import { onUi, wholeRow, wholeRows } from '../events';
 import { useChatsSettings } from './hooks';
 import { PermissionCard } from './PermissionCard';
 import { reportError } from '../report-error';
@@ -78,49 +78,14 @@ function LoginNotice({ state }: { state: ChatState }) {
   );
 }
 
-/** Right-click on a message or tool call: the chat's menu for that row. */
+/** Right-click on a message or tool call: the chat's menu for that row, read whole first when a phone has it brief (its Copy items copy all of it). */
 function showRowMenu(state: ChatState, row: MessageRow, selectText: string | undefined): void {
   const all = chatRows(state);
-  const index = all.indexOf(row);
+  const index = all.findIndex((r) => r.id === row.id);
   const fork = index >= 0 && forkPoint(all, index, state.harnessKind, state.status === 'working') ? index : undefined;
-  showRowContextMenu({ chatId: state.id, taskId: state.taskId, quote: state.status !== 'ended', fork, selectText }, row);
-}
-
-/**
- * On iOS the message box floats over the conversation's end (phone.css), so the conversation scrolls under it:
- * this keeps its height in `--chat-dock-h` for the conversation to scroll clear of it.
- */
-function useDockHeight(sectionRef: RefObject<HTMLElement | null>, on: boolean): void {
-  useLayoutEffect(() => {
-    const section = sectionRef.current;
-    if (!on || !section) return;
-    const measure = () => {
-      let h = 0;
-      let scroll: HTMLElement | null = null;
-      for (const el of section.children) {
-        if (el.classList.contains('chat-scroll')) scroll = el as HTMLElement;
-        else h += (el as HTMLElement).offsetHeight;
-      }
-      // A reader at the end stays there as the box takes more or less room.
-      const stays = !!scroll && atEnd(scroll);
-      section.style.setProperty('--chat-dock-h', `${h}px`);
-      if (scroll && stays) scroll.scrollTop = scroll.scrollHeight;
-    };
-    const ro = new ResizeObserver(measure);
-    const watch = () => {
-      ro.disconnect();
-      // The border box: the box's padding changes alone as the keyboard and the home indicator's inset come and go.
-      for (const el of section.children) if (!el.classList.contains('chat-scroll')) ro.observe(el, { box: 'border-box' });
-      measure();
-    };
-    const mo = new MutationObserver(watch);
-    mo.observe(section, { childList: true });
-    watch();
-    return () => {
-      ro.disconnect();
-      mo.disconnect();
-    };
-  }, [sectionRef, on]);
+  const show = (r: MessageRow) => showRowContextMenu({ chatId: state.id, taskId: state.taskId, quote: state.status !== 'ended', fork, selectText }, r);
+  if (!row.brief) return show(row);
+  void wholeRows(state.id, [row.id]).then(() => show(wholeRow(state.id, row)));
 }
 
 /**
@@ -157,10 +122,6 @@ export function ChatView({ state, embedded = false, box = true }: { state: ChatS
   const scrollRef = useRef<HTMLDivElement>(null);
   const conversation = useRef<ConversationHandle>(null);
   const composer = useRef<ComposerHandle>(null);
-  const sectionRef = useRef<HTMLElement>(null);
-  // On iOS the message box floats over the conversation.
-  const floatingBox = !embedded && document.documentElement.dataset.platform === 'ios';
-  useDockHeight(sectionRef, floatingBox);
 
   const matches = useFindHighlights(scrollRef, find, setFind, () => conversation.current?.leaveEnd());
 
@@ -277,7 +238,19 @@ export function ChatView({ state, embedded = false, box = true }: { state: ChatS
           inputRef={findField.inputRef}
         />
       )}
-      <section className="builder-chat" ref={sectionRef}>
+      <ConversationWithBox
+        float={!embedded}
+        box={
+          box && (
+            <Composer
+              ref={composer}
+              state={state}
+              embedded={embedded}
+              onSent={() => conversation.current?.toEnd()}
+            />
+          )
+        }
+      >
         <Conversation
           ref={conversation}
           id={id}
@@ -319,15 +292,7 @@ export function ChatView({ state, embedded = false, box = true }: { state: ChatS
           ))}
           <ChatStatus state={state} />
         </Conversation>
-        {box && (
-          <Composer
-            ref={composer}
-            state={state}
-            embedded={embedded}
-            onSent={() => conversation.current?.toEnd()}
-          />
-        )}
-      </section>
+      </ConversationWithBox>
     </div>
   );
 }

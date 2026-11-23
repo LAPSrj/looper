@@ -31,7 +31,7 @@ import { detectDefaultWslDistro, detectHost, detectWslMountPrefix, type HostKind
 import type { CommandServerInfo } from './lock';
 import { setDetectedMountPrefix } from './target';
 import { Logger, errMsg } from './log';
-import { MessagesService, readRunSessionId, transcriptHostPath } from './messages';
+import { MessagesService, readCompactedRows, readRunSessionId, transcriptHostPath } from './messages';
 import type { OutputRead } from '../shared/output-tail';
 import { openCommandTerminal, openTaskTerminal, writeCommandLauncher, writeLoginLauncher, writeTerminalLauncher } from './open-terminal';
 import { TerminalRuns } from './terminal-runs';
@@ -521,6 +521,8 @@ export interface Engine {
   readMessageImage(id: string, runId: string, rowId: string, agentId?: string): Promise<MessageImage | null>;
   /** `count` of the tool calls a Code Mode script made, before the `before`th (the newest without it), by its REPL call's tool_use id. */
   readScriptCalls(id: string, runId: string, toolUseId: string, before: number | null, count: number, agentId?: string): Promise<ScriptCalls | null>;
+  /** A compacted conversation's call (in the chat or run `runId`), whole, from the transcript of the run that holds it; null when it's gone. */
+  readCall(id: string, runId: string, toolUseId: string): Promise<MessageRow | null>;
   /** Delete a task's run history. Refused while the task is mid-cycle. */
   clearRuns(id: string): void;
   runDir(id: string, runId: string): string;
@@ -983,6 +985,13 @@ export function createEngine(opts: EngineOptions): Engine {
       hub?.changed();
     },
   });
+  /**
+   * The run whose transcript holds a compacted conversation's call (MessageRow.run): from the open chat's rows, which
+   * hold it before its compacted.json is written, or the run's compacted.json.
+   */
+  function compactedRun(taskId: string, runId: string, toolUseId: string): string | undefined {
+    return chats.compactedRun(runId, toolUseId) ?? readCompactedRows(runs.runDir(taskId, runId)).find((r) => r.toolUseId === toolUseId)?.run;
+  }
   const chats = new ChatManager({
     dataDir,
     host,
@@ -1965,7 +1974,7 @@ export function createEngine(opts: EngineOptions): Engine {
       step('scheduler');
       // In the background: a compacted chat's history waits for it.
       void messages.migrateCompacted(runs.listRunDirs()).then(
-        (n) => n && log.info(`migrated ${n} compacted.json files to version 3`),
+        (n) => n && log.info(`migrated ${n} compacted.json files to version 4`),
         (err: unknown) => log.error(`cannot migrate compacted.json files: ${errMsg(err)}`),
       );
       // Before the sweep: an open conversation's run is never pruned.
@@ -2712,10 +2721,17 @@ export function createEngine(opts: EngineOptions): Engine {
     async readScriptCalls(id, runId, toolUseId, before, count, agentId) {
       const own = await messages.readScriptCalls(id, runId, toolUseId, before, count, agentId);
       if (own || agentId !== undefined) return own;
+      // A compacted conversation's script: its calls are in the transcript of the run its REPL call came from.
+      const run = compactedRun(id, runId, toolUseId);
+      if (run && run !== runId) return messages.readScriptCalls(id, run, toolUseId, before, count);
       // A chat's earlier conversation is in the run or transcript it went on from, until its own session has written it.
       const from = chats.historySource(runId);
       if (!from) return null;
       return 'runId' in from ? messages.readScriptCalls(id, from.runId, toolUseId, before, count) : messages.transcriptScriptCalls(from.transcript, from.format, toolUseId, before, count);
+    },
+    async readCall(id, runId, toolUseId) {
+      const run = compactedRun(id, runId, toolUseId);
+      return run ? messages.readCall(id, run, toolUseId) : null;
     },
     clearRuns(id: string): void {
       const rt = scheduler.get(id);

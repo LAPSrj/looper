@@ -183,6 +183,24 @@ async function phoneTour(page, device, os, chatTitle) {
     await groups('Addon pane groups: search', 1);
   });
 
+  // The Git addon's Clone Repository sheet: its rows (a path, a pop-up button) and its folder picker.
+  await step('Git: Clone Repository', async (name) => {
+    await root(page, 'Projects');
+    const main = page.frames().find((f) => /frame\.html\?w=/.test(f.url()));
+    await main.evaluate(() => window.looper.addons.open('git', 'clone'));
+    await sleep(2500);
+    await look(name);
+    const folder = await visible(page, '.path-row, .path-browse', 3000);
+    if (!folder) throw new Error('no Folder row');
+    await folder.click();
+    await sleep(2500);
+    await look(`${name}: folder picker`);
+    const close = await visible(page, '.ios-files-bar [aria-label="Close"], .md-own-card header [aria-label="Close"]', 2000);
+    if (close) await close.click();
+    else await page.keyboard.press('Escape').catch(() => undefined);
+    await closeWindows(page);
+  });
+
   await step('Chats overview', async () => {
     await root(page, 'Chats');
     await tap(page, 'Overview');
@@ -240,15 +258,33 @@ async function phoneTour(page, device, os, chatTitle) {
       // A notification banner (a demo task's error) covers the sheet's top for a few seconds; the tabs are under it.
       await bannersGone(page);
       const l = await visible(page, part(name), 3000);
-      // iOS: tabs a segmented control can't hold are a pop-up button (TabBar), whose select lists them.
-      const popUp = l ? null : await visible(page, '.tabs-popup select', 1500);
-      const option = popUp && (await popUp.evaluate((s, n) => [...s.options].find((o) => o.text === n || o.text.startsWith(n + ' ('))?.value ?? null, name));
-      if (!l && !option) {
+      // iOS: tabs a segmented control can't hold are a pop-up button (TabBar), whose menu lists them.
+      // TabBar's overflow 'sections' (the Activity sheet): rows that open the tab, Back returning to them.
+      const rowTab = l ? null : await visible(page, '.tab-sections .pg-row', 1500);
+      const popUp = l || rowTab ? null : await visible(page, '.tabs-popup .select-hit', 1500);
+      if (!l && !popUp && !rowTab) {
         notReached(device, `Chat: Activity ${name}`, 'no such tab');
         continue;
       }
       if (l) await l.click();
-      else await popUp.selectOption(option);
+      else if (rowTab) {
+        const r = await visible(page, `.tab-sections .pg-row:has-text("${name}")`, 1500);
+        if (!r) {
+          notReached(device, `Chat: Activity ${name}`, 'no such row');
+          continue;
+        }
+        await r.click();
+      } else {
+        await popUp.click();
+        await sleep(900);
+        const item = await visible(page, `.ios-menu-item:has-text("${name}")`, 2000);
+        if (!item) {
+          notReached(device, `Chat: Activity ${name}`, 'no such item in the tabs menu');
+          await page.keyboard.press('Escape').catch(() => undefined);
+          continue;
+        }
+        await item.click();
+      }
       await sleep(1800);
       await look(`Chat: Activity ${name}`);
       const row = name === 'Background' || name === 'Subagents' ? await visible(page, '.pg-sheet .pg-row.tappable, .pg-row.tappable', 2500) : null;

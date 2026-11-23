@@ -13,6 +13,7 @@ import { slideCard, useDragToDismiss } from './sheet-drag';
 import { discardQuestion } from './dialog-flows';
 import type { PageNav } from './page-nav';
 import { childStack, mainWindow, useShellState, windowSrc, type ShellState, type WebWindow } from './store';
+import type { TopEdgeReading } from './top-bar';
 import './phone.css';
 
 // ---------- the pages' navigation bars ----------
@@ -420,28 +421,49 @@ function PhoneIframe({ controller, win, os, hooks, safeBottom, lifted }: { contr
     node?.addEventListener('load', set);
     return () => node?.removeEventListener('load', set);
   }, [safeBottom, win.nonce]);
-  // While the page shows a sheet of its own (PageNav modal), the iframe rises over the bar to the status bar, so the
-  // sheet can start there (ios.md: Sheets), and the page pads its top by as much, so what it shows stays in place
-  // and the bar shows through that band under the sheet's backdrop. The bar's own dimming keeps to the status bar.
+  // iOS: the bar floats over the page, which runs under it to the screen's top ("extend the scroll view fully under the
+  // navigationBar", WWDC25 284): the page gets the bar's height (--looper-bar-h, data-under-bar) to start its content
+  // below it (phone.css). While the page shows a sheet of its own (PageNav modal), the iframe rises over the bar to the
+  // status bar, so the sheet can start there (ios.md: Sheets), and the page pads its top by the rest of the bar, so what
+  // it shows stays in place and the bar shows through that band under the sheet's backdrop. The bar's own dimming keeps
+  // to the status bar.
   useLayoutEffect(() => {
     const frame = el.current;
     const body = frame?.parentElement;
     const slot = body?.parentElement?.querySelector<HTMLElement>(':scope > .ph-bar-slot, :scope > .ph-drag > .ph-bar-slot');
     if (!frame || !body || !slot) return;
-    const header = slot.querySelector('header');
-    const lift = lifted ? Math.max(0, slot.offsetHeight - (header ? parseFloat(getComputedStyle(header).paddingTop) || 0 : 0)) : 0;
+    const floats = os === 'ios';
     const apply = () => {
+      const header = slot.querySelector('header');
+      const status = header ? parseFloat(getComputedStyle(header).paddingTop) || 0 : 0;
+      const bar = slot.offsetHeight;
+      const lift = lifted ? Math.max(0, bar - status) : 0;
       const root = frame.contentDocument?.documentElement;
-      root?.style.setProperty('--looper-lift', `${lift}px`);
-      root?.toggleAttribute('data-lifted', lift > 0);
+      if (root) {
+        root.style.setProperty('--looper-lift', `${lift}px`);
+        root.toggleAttribute('data-lifted', lift > 0);
+        if (floats) {
+          root.style.setProperty('--looper-bar-h', `${bar}px`);
+          root.setAttribute('data-under-bar', '');
+        }
+      }
+      // Lifted, the page starts under the status bar: from the card's top on iOS (the bar floats), or the bar's height
+      // up from where it starts below the bar elsewhere.
+      const top = floats ? (lift ? `${status}px` : '') : lift ? `${-lift}px` : '';
+      if (body.style.marginTop !== top) body.style.marginTop = top;
+      body.classList.toggle('lifted', lift > 0);
+      slot.style.setProperty('--lift', `${lift}px`);
     };
-    body.style.marginTop = lift ? `${-lift}px` : '';
-    body.classList.toggle('lifted', lift > 0);
-    slot.style.setProperty('--lift', `${lift}px`);
     apply();
+    // The bar changes height with a subtitle, the offline banner or an iPad's tab bar.
+    const watch = floats ? new ResizeObserver(apply) : null;
+    watch?.observe(slot);
     frame.addEventListener('load', apply);
-    return () => frame.removeEventListener('load', apply);
-  }, [lifted, win.nonce]);
+    return () => {
+      watch?.disconnect();
+      frame.removeEventListener('load', apply);
+    };
+  }, [lifted, win.nonce, os]);
   return <iframe key={`${win.w}:${win.nonce}`} ref={ref} className="ph-frame" title={win.title} src={windowSrc(win)} allow="clipboard-read; clipboard-write" />;
 }
 
@@ -472,28 +494,30 @@ export interface PhoneShell {
   hooks: React.RefObject<FrameHooks>;
   /** Back from the top screen: its page's deeper screen first, else the window closes. */
   goBack: () => void;
-  /** Whether a window's large title has scrolled away (iOS shows the bar's title then). */
-  scrolledPast: Set<string>;
   /** What's at the top of each window's page, under its bar. */
   edges: Map<string, TopEdge>;
 }
 
-export interface TopEdge {
-  /** The page's background color along its top edge. */
-  color: string;
-  /** The page's content there has scrolled up, past the bar. */
-  scrolled: boolean;
+export interface TopEdge extends TopEdgeReading {
   /** iPad split view: the same over the detail column (the rest is the list column's). */
   detail?: { color: string; scrolled: boolean };
 }
 
 const isTransparent = (c: string) => c === 'transparent' || /^rgba\(.*,\s*0\)$/.test(c);
-/** What's at `x` (the middle) of a page's top edge: the first background behind it, and whether a scroller there has moved. */
+/**
+ * What's at `x` (the middle) of a page's top edge: the first background behind it, and whether a scroller there has
+ * moved. A page that runs under the bar (iOS) is read at its very top, under the status bar; one that starts below
+ * the bar (its #root padded by --looper-bar-h, phone.css) is read right under the bar.
+ */
 function readTopEdge(doc: Document, win: Window, x = win.innerWidth / 2): TopEdge | null {
   // A page lifted over the bar for a sheet of its own: the bar keeps the look it had under the sheet's backdrop.
   if (doc.documentElement.hasAttribute('data-lifted')) return null;
-  const hit = doc.elementFromPoint(x, 1);
+  const top = doc.elementFromPoint(x, 1);
   // Nothing hit (a hidden or inert page): keep the last reading.
+  if (!top || top === doc.documentElement) return null;
+  const under = top !== doc.body && top.id !== 'root';
+  const bar = parseFloat(doc.documentElement.style.getPropertyValue('--looper-bar-h')) || 0;
+  const hit = under ? top : doc.elementFromPoint(x, bar + 1);
   if (!hit || hit === doc.documentElement) return null;
   let color = '';
   let scrolled = (doc.scrollingElement?.scrollTop ?? 0) > 0;
@@ -502,7 +526,7 @@ function readTopEdge(doc: Document, win: Window, x = win.innerWidth / 2): TopEdg
     if (!scrolled && el.scrollTop > 0 && /auto|scroll/.test(cs.overflowY)) scrolled = true;
     if (!color && !isTransparent(cs.backgroundColor)) color = cs.backgroundColor;
   }
-  return { color: color || win.getComputedStyle(doc.documentElement).backgroundColor, scrolled };
+  return { color: color || win.getComputedStyle(doc.documentElement).backgroundColor, scrolled, under };
 }
 
 /** Follows the top edge of every window's page: its scrolling, its tabs switching, the page loading again. */
@@ -541,7 +565,7 @@ function useTopEdges(controller: ShellController, screens: Screen[], enabled: bo
           }
           setEdges((old) => {
             const was = old.get(w);
-            if (was && was.color === edge.color && was.scrolled === edge.scrolled && JSON.stringify(was.detail) === JSON.stringify(edge.detail)) return old;
+            if (was && was.color === edge.color && was.scrolled === edge.scrolled && was.under === edge.under && JSON.stringify(was.detail) === JSON.stringify(edge.detail)) return old;
             return new Map(old).set(w, edge);
           });
         };
@@ -552,6 +576,8 @@ function useTopEdges(controller: ShellController, screens: Screen[], enabled: bo
         };
         const mo = new MutationObserver(schedule);
         mo.observe(doc.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'hidden', 'style'] });
+        // The bar's height and the lift come as the frame sets them on the page's root.
+        mo.observe(doc.documentElement, { attributes: true, attributeFilter: ['style', 'data-lifted'] });
         const scheme = win.matchMedia('(prefers-color-scheme: dark)');
         doc.addEventListener('scroll', schedule, { capture: true, passive: true });
         win.addEventListener('resize', schedule);
@@ -664,8 +690,7 @@ export function usePhoneShell<P extends MenuPlace = MenuPlace>(controller: Shell
   const vp = useViewport(probeRef);
   const navs = usePageNavs();
   const { screens, top } = useScreens(s, os, vp, navs);
-  const [scrolledPast, setScrolledPast] = useState(() => new Set<string>());
-  // Only iOS's bar takes the page's color; Android's top app bar has its own.
+  // Only iOS's bar takes the page's color and floats over it; Android's top app bar has its own.
   const edges = useTopEdges(controller, screens, os === 'ios');
 
   // The keyboard goes with its screen: a window no longer on top (gone back from, hidden, under a new one) gives up the focus, or iOS keeps the keyboard up over the list.
@@ -774,31 +799,6 @@ export function usePhoneShell<P extends MenuPlace = MenuPlace>(controller: Shell
     },
   };
 
-  // The bar's title shows once the page's large title (data-large-title) has scrolled under it.
-  useEffect(() => {
-    const offs: (() => void)[] = [];
-    for (const sc of screens) {
-      if (!(sc.nav?.largeTitle || sc.nav?.split?.largeTitle) || sc.leaving) continue;
-      const doc = controller.frameOf(sc.win.w)?.contentDocument;
-      if (!doc) continue;
-      const check = () => {
-        const el = doc.querySelector('[data-large-title]');
-        const past = !el || el.getBoundingClientRect().bottom <= 0;
-        setScrolledPast((old) => {
-          if (old.has(sc.win.w) === past) return old;
-          const next = new Set(old);
-          if (past) next.add(sc.win.w);
-          else next.delete(sc.win.w);
-          return next;
-        });
-      };
-      check();
-      doc.addEventListener('scroll', check, { capture: true, passive: true });
-      offs.push(() => doc.removeEventListener('scroll', check, { capture: true }));
-    }
-    return () => offs.forEach((f) => f());
-  });
-
   // A click in the shell needs its own press: lifting the finger of a long press in a page lands on the
   // menu that press opened (Chrome sends it as a click), and must not pick the item under it.
   useEffect(() => {
@@ -840,7 +840,7 @@ export function usePhoneShell<P extends MenuPlace = MenuPlace>(controller: Shell
     if (window.__looperFrame) window.__looperFrame.askDiscard = (w) => controller.session.ask(w, discardQuestion(os)).then((r) => r === 0);
   }, [controller, os]);
 
-  return { more, setMore, openMore, openActionMenu, device, setDevice, s, os, vp, tablet: isTablet(vp), screens, top, rootRef, probeRef, hooks, goBack: historyBack, scrolledPast, edges };
+  return { more, setMore, openMore, openActionMenu, device, setDevice, s, os, vp, tablet: isTablet(vp), screens, top, rootRef, probeRef, hooks, goBack: historyBack, edges };
 }
 
 // ---------- the windows ----------

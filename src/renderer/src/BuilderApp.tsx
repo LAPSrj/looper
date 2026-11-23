@@ -9,6 +9,7 @@ import { definitionOf, diffDefinitions } from '@shared/versions';
 import { useSelectText, type RowCtx } from './components/ChatRows';
 import { groupRows } from './components/chat-groups';
 import { ChatStatus, Conversation, type ConversationHandle, type ConversationPart } from './components/Conversation';
+import { ConversationWithBox } from './components/ConversationWithBox';
 import { FindBar, useFindFocus, useFindHighlights, type FindState } from './components/FindBar';
 import { useChatsSettings } from './components/hooks';
 import { Inspector, useInspector } from './components/Inspector';
@@ -330,7 +331,20 @@ function Chat({ state, findAsked }: { state: BuilderState; findAsked: number }) 
 
   const showCard = state.status === 'ready' && state.unsaved && draftValid(state);
   return (
-    <section className="builder-chat">
+    <ConversationWithBox
+      box={
+        <MessageBox
+          text={text}
+          onText={setText}
+          placeholder={state.mode === 'edit' ? 'Describe what to change' : 'Describe the task you want Looper to run'}
+          shortPlaceholder={state.mode === 'edit' ? undefined : 'Describe the task'}
+          canSend={!!text.trim() && state.status !== 'ended'}
+          onSend={send}
+          disabled={state.status === 'ended'}
+          autoFocus
+        />
+      }
+    >
       {find && <FindBar find={find} matches={matches} onChange={setFind} onClose={() => setFind(null)} inputRef={findField.inputRef} />}
       <Conversation
         ref={conversation}
@@ -344,17 +358,7 @@ function Chat({ state, findAsked }: { state: BuilderState; findAsked: number }) 
       >
         <ChatStatus state={state} />
       </Conversation>
-      <MessageBox
-        text={text}
-        onText={setText}
-        placeholder={state.mode === 'edit' ? 'Describe what to change' : 'Describe the task you want Looper to run'}
-        shortPlaceholder={state.mode === 'edit' ? undefined : 'Describe the task'}
-        canSend={!!text.trim() && state.status !== 'ended'}
-        onSend={send}
-        disabled={state.status === 'ended'}
-        autoFocus
-      />
-    </section>
+    </ConversationWithBox>
   );
 }
 

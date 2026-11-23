@@ -585,13 +585,18 @@ describe.skipIf(process.platform === 'win32')('continuing a conversation from ou
     expect(engine.historyCommands(item.id)).toMatchObject({ chat: true, terminal: true, compact: true, sessionId: 'outside-2', outside: true });
     expect((await engine.historyRead(item.id))!.rows.filter((r) => r.kind !== 'tool').map((r) => r.text)).toEqual(['plan the release', 'here is the plan']);
 
-    // Continue Compacted: a new chat that starts from the messages only, whatever the harness.
+    // Continue Compacted: a new chat that starts from the conversation as compaction keeps it, its calls too, whatever the harness.
     const compacted = await engine.compactHistory(item.id);
     expect(compacted.historyLabel).toBe('Compacted from "Release plan"');
-    expect(compacted.history.map((r) => [r.kind, r.text])).toEqual([
+    expect(compacted.history.filter((r) => r.kind !== 'tool').map((r) => [r.kind, r.text])).toEqual([
       ['prompt', 'plan the release'],
       ['agent', 'here is the plan'],
     ]);
+    // A transcript from outside Looper is no run: its calls keep what compaction kept, with nowhere to read them whole.
+    const calls = compacted.history.filter((r) => r.kind === 'tool');
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) expect(c).toMatchObject({ layer: 0, resultChars: expect.any(Number) });
+    expect(calls.some((c) => c.run !== undefined)).toBe(false);
     expect(compacted.harnessLocked).toBe(false);
     await until(() => engine!.getChat(compacted.id)?.status === 'ready', 'the compacted chat');
     engine.sendChat(compacted.id, 'shorter please', []);

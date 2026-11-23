@@ -31,14 +31,28 @@ export interface Shown<T> {
 const done = new Map<string, Shown<unknown> | null>();
 const pending = new Map<string, Promise<Shown<unknown> | null>>();
 
+/** A thumbnail's size in CSS px. */
+export interface ThumbSize {
+  width: number;
+  height: number;
+}
+
+/** The size a w × h image's thumbnail is drawn at: fitted in MAX_WIDTH × MAX_HEIGHT. */
+export function fitThumb(w: number, h: number): ThumbSize {
+  const scale = Math.min(1, MAX_WIDTH / w, MAX_HEIGHT / h);
+  return { width: Math.round(w * scale), height: Math.round(h * scale) };
+}
+
+/** An image's tile while its thumbnail loads, when its size isn't known: a square as high as a thumbnail can be. */
+export const TILE: ThumbSize = { width: MAX_HEIGHT, height: MAX_HEIGHT };
+
 async function decoded(src: string): Promise<ShownThumb | null> {
   const img = new Image();
   img.src = src;
   await img.decode();
   const { naturalWidth: w, naturalHeight: h } = img;
   if (!w || !h) return null;
-  const scale = Math.min(1, MAX_WIDTH / w, MAX_HEIGHT / h);
-  return { src, width: Math.round(w * scale), height: Math.round(h * scale) };
+  return { src, ...fitThumb(w, h) };
 }
 
 /** Asks `load` again and decodes its thumbnail; one request at a time for each key. */

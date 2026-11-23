@@ -182,6 +182,15 @@ export async function memory(app) {
     await cdp.send('HeapProfiler.collectGarbage').catch(() => undefined);
     await cdp.detach().catch(() => undefined);
   }
+  // BENCH_MAIN_GC=1: the main process's garbage too, to tell what it keeps from what it hasn't collected yet (Task
+  // Manager counts both, so the budgets don't use it).
+  if (process.env.BENCH_MAIN_GC) {
+    await app.evaluate(() => {
+      const req = process.mainModule.require;
+      req('v8').setFlagsFromString('--expose-gc');
+      req('vm').runInNewContext('gc')();
+    });
+  }
   await sleep(500);
   // The JavaScript heaps, the part the app's own data and code take: the main process's and each window's.
   const mainHeap = await app.evaluate(() => process.memoryUsage().heapUsed);

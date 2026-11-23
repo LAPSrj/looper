@@ -191,8 +191,9 @@ export class RemoteClients {
         if (!win) return;
         void this.opts.ipc.invoke({ client, window: win }, msg.channel, msg.args).then((r) => {
           const sent = client.send(r.ok ? { t: 'result', id: msg.id, ok: true, value: r.value } : { t: 'result', id: msg.id, ok: false, error: r.error });
+          // Its value couldn't be made into JSON (the connection's log says why); a long one goes as parts.
           if (!sent && r.ok && client.connected) {
-            client.send({ t: 'result', id: msg.id, ok: false, error: `The answer to ${msg.channel} was too large to send.` });
+            client.send({ t: 'result', id: msg.id, ok: false, error: `The answer to ${msg.channel} couldn't be sent.` });
           }
         });
         return;

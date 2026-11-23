@@ -12,11 +12,15 @@ import { LocalProvider, parseTsnetLine, TailscaleProvider } from '../src/main/re
 import { contentDisposition, sanitizeFileName } from '../src/main/remote-access/server';
 import { IpcTable } from '../src/main/platform/ipc-table';
 import {
+  MAX_WS_MESSAGE_BYTES,
+  MessageJoiner,
   PROXY_LOGIN_HEADER,
   PROXY_SECRET_HEADER,
   REQUEST_HEADER,
   REQUEST_HEADER_VALUE,
+  isMessagePart,
   remoteAccessStatusItems,
+  splitMessage,
   type MeResponse,
   type RemoteAccessProviderId,
   type RemoteAccessState,
@@ -610,6 +614,49 @@ describe('WebSocket', () => {
     await closed;
     await new Promise((r) => setTimeout(r, 50));
     expect(calls).toEqual([1]);
+  });
+});
+
+describe('messages longer than one WebSocket message', () => {
+  it('an answer over the cap comes as parts the page joins, and a message from the page over it reaches its handler', async () => {
+    // A chat of 12 MB never reached a phone: the answer was dropped ("larger than 8388608 bytes") and the page got "too large to send".
+    const ipc = new IpcTable();
+    const big = `{"rows":"${'x'.repeat(MAX_WS_MESSAGE_BYTES)}é😀${'y'.repeat(1000)}"}`;
+    ipc.handle('chat:get', () => JSON.parse(big) as unknown);
+    const heard: number[] = [];
+    ipc.on('chat:send', (_e, _id: string, text: string) => void heard.push(text.length));
+    const s = await setup('local', { ipc });
+    const { cookie } = await pair(s, localHeaders(s.port));
+    const { ws } = await openWs(s.port, { Origin: `http://localhost:${s.port}`, Host: `localhost:${s.port}`, Cookie: cookie });
+    cleanups.push(() => ws.terminate());
+    const joiner = new MessageJoiner(64 * 1024 * 1024);
+    const messages: ServerMessage[] = [];
+    let frames = 0;
+    let largest = 0;
+    ws.on('message', (d) => {
+      const text = String(d);
+      frames++;
+      largest = Math.max(largest, Buffer.byteLength(text));
+      const whole = isMessagePart(text) ? joiner.push(text) : text;
+      if (whole) messages.push(JSON.parse(whole) as ServerMessage);
+    });
+    ws.send(JSON.stringify({ t: 'hello', platform: 'ios' }));
+    await waitFor(() => messages.some((m) => m.t === 'window-open'));
+    const w = (messages.find((m) => m.t === 'window-open') as { w: string }).w;
+    ws.send(JSON.stringify({ t: 'invoke', id: 7, w, channel: 'chat:get', args: ['c1'] }));
+    await waitFor(() => messages.some((m) => m.t === 'result'), 10_000);
+    const result = messages.find((m) => m.t === 'result');
+    expect(result).toMatchObject({ t: 'result', id: 7, ok: true });
+    expect(JSON.stringify((result as { value: unknown }).value)).toBe(big);
+    expect(frames).toBeGreaterThan(3);
+    expect(largest).toBeLessThanOrEqual(MAX_WS_MESSAGE_BYTES);
+    expect(s.log.lines.filter((l) => /dropped/.test(l))).toEqual([]);
+    // The other way: a message longer than the server takes in one goes as parts too.
+    const text = 'z'.repeat(MAX_WS_MESSAGE_BYTES + 5);
+    for (const part of splitMessage(JSON.stringify({ t: 'send', w, channel: 'chat:send', args: ['c1', text, []] }), '1')) ws.send(part);
+    await waitFor(() => heard.length === 1, 10_000);
+    expect(heard).toEqual([text.length]);
+    expect(ws.readyState).toBe(WebSocket.OPEN);
   });
 });
 

@@ -54,10 +54,10 @@ export interface MessageRow {
   logs?: string;
   /**
    * A Code Mode REPL call: how many tool calls its script made, how many failed and which (their indices), how many are
-   * still running (none: left out), and the files they read or changed, each with the last call on it (runs.scriptCalls
-   * reads the calls).
+   * still running (none: left out), the files they read or changed, each with the last call on it, and where the calls
+   * ran among the agent's own (`at`, see ScriptCallsAt). runs.scriptCalls reads the calls.
    */
-  calls?: { count: number; failed: number; failures?: number[]; running?: number; files?: { path: string; changed: boolean; index: number }[] };
+  calls?: { count: number; failed: number; failures?: number[]; running?: number; files?: { path: string; changed: boolean; index: number }[]; at?: ScriptCallsAt };
   /** Edit/Write rows: the diff hunks the harness recorded for the change. */
   patch?: PatchHunk[];
   /** Prompt rows of a task chat: the files sent with the message. */
@@ -66,12 +66,26 @@ export interface MessageRow {
   uuid?: string;
   /** A SendUserFile call whose result confirmed delivery: the views show it as the agent's message with these files, not as a tool call. */
   sent?: SentFiles;
-  /** A delivered SendUserFile call a Code Mode script made, as the conversation shows it: Now shows the call under its script instead. */
+  /**
+   * A delivered SendUserFile call a Code Mode script made, as the conversation shows it: Now lists the script's own call
+   * instead, except in a compacted conversation's earlier sessions, whose scripts' calls it can't list (compactRow keeps
+   * this mark).
+   */
   fromScript?: true;
   /** A tool call as a compacted conversation keeps it: its result's length, whether or not the result itself was kept. */
   resultChars?: number;
   /** A compacted conversation's row: which session of the chain it came from, 0 for the first. */
   layer?: number;
+  /**
+   * A compacted conversation's call: the run (of the same task) whose transcript holds it, where its whole row
+   * (runs.call) and its Code Mode script's calls (runs.scriptCalls) are read while the transcript is there.
+   */
+  run?: string;
+  /**
+   * An older row of a chat as a phone or tablet first gets it (chat-window.ts): briefRow's fields, without the text,
+   * result and input it doesn't draw until it's drawn or opened; chat.rows reads it whole.
+   */
+  brief?: true;
 }
 
 /** A file the agent sent the user (SendUserFile). */
@@ -97,6 +111,13 @@ export interface SentFileInfo {
   size: number;
   thumbnail?: string;
 }
+
+/**
+ * A tool call still running: it has no result, and its own session can still finish it. A compacted conversation keeps
+ * calls without their results (compactRow, slimCall): one with a layer, a result's length or the files it sent has
+ * ended, however it ended (`resultError` says when it failed).
+ */
+export const callRunning = (r: MessageRow): boolean => r.result === undefined && r.layer === undefined && r.resultChars === undefined && !r.sent;
 
 /** The call a subagent ends its session with: its final report is the `message` input. */
 export const HANDBACK_TOOL = 'SubagentHandback';
@@ -156,6 +177,42 @@ export type MessagesStatus =
 
 /** Tools that change a file (Delete and Patch are Codex's). */
 export const CHANGE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Delete', 'Patch']);
+
+/**
+ * Where a script's calls ran among the agent's own tool calls, in runs of calls in a row: `count` calls, the first of
+ * them the conversation's `seq`th script call (a number that orders the calls of scripts running at once), that each
+ * came after `after` of the agent's tool calls that follow the script's REPL call. A call Looper's mod handed over as
+ * it started has its place; one only the transcript has (written once its script ended) comes right after its REPL call.
+ */
+export type ScriptCallsAt = [after: number, seq: number, count: number][];
+
+/** How much of each text field of a call's input a brief row keeps: its first line, up to a title's length. */
+const BRIEF_CHARS = 200;
+/** A brief row keeps an input field that isn't text only when its JSON is this short (SendUserFile's `files`). */
+const BRIEF_JSON = 1000;
+
+/**
+ * A script call as a list of calls shows it (runs.scriptCalls with `brief`): its tool, file, preview and state (`result`
+ * is '' once it has ended), and the first line of each text field of its input, without its whole input, result or logs.
+ */
+export function briefRow(r: MessageRow): MessageRow {
+  const { text: _text, result, input, logs: _logs, patch: _patch, skill: _skill, started: _started, ...rest } = r;
+  const brief: MessageRow = { ...rest, text: '' };
+  if (result !== undefined) brief.result = '';
+  if (input !== null && typeof input === 'object' && !Array.isArray(input)) {
+    const kept: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+      if (typeof v === 'string') {
+        // The first line without splitting the rest (a Write's whole file): a phone's chat briefs hundreds of rows at once.
+        const nl = v.indexOf('\n');
+        kept[k] = v.slice(0, Math.min(BRIEF_CHARS, nl < 0 ? v.length : nl));
+      }
+      else if ((JSON.stringify(v) ?? '').length <= BRIEF_JSON) kept[k] = v;
+    }
+    brief.input = kept;
+  }
+  return brief;
+}
 
 /** A page of the tool calls a Code Mode script made: the calls from `start` on, of `total`. */
 export interface ScriptCalls {

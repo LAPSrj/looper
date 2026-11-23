@@ -44,9 +44,11 @@ const record = (name, value) => {
 };
 
 const median = (xs) => [...xs].sort((a, b) => a - b)[xs.length >> 1];
-const chats = await seeded();
-// The journey runs first, each time on the data as seeded: the screens turn on Remote Access and add a helper and a builder.
+// Each run starts from the data as seeded (BENCH_KEEP=1 keeps what's there): a run adds to it (the Engine Log's lines,
+// the demo tasks' runs, and the screens turn on Remote Access and add a helper and a builder), and the next run's
+// counts went up with it (the Engine Log's elements 472, 622, 772), so a median wasn't what check.mjs measures.
 if (devices.includes('desktop') && (!only || wanted('journey:'))) for (let i = 0; i < RUNS; i++) {
+    const chats = await seeded();
     const steps = [];
     await journey(chats, (name, value) => {
       steps.push(name);
@@ -59,6 +61,7 @@ if (devices.includes('desktop') && (!only || wanted('journey:'))) for (let i = 0
     }
   }
 for (let i = 0; i < RUNS; i++) {
+  const chats = await seeded();
   const { measured, broken: failed } = await measureScreens({ devices, want: wanted, chats });
   for (const [name, values] of Object.entries(measured)) record(name, values);
   for (const b of failed) broken.add(b);

@@ -702,7 +702,7 @@ describe('a Code Mode chat compacted', { timeout: 30_000 }, () => {
     await until(() => lines('received').length === 2, 'the first message of the new chat');
     expect(lines('received')[1]).toMatch(/\[Compaction: the REPL\]\nThis session's REPL starts with the earlier session's names total, hello as globals, restored by Looper\. These didn't come back as they were, so rebuild them if you need them: sock: a WeakMap, whose contents can't be read, made by `const sock = new WeakMap\(\);`\.\n<\/compacted-conversation>\n\nmeanwhile$/);
     await until(() => existsSync(join(runDir, 'compacted.json')), 'compacted.json');
-    expect(JSON.parse(readFileSync(join(runDir, 'compacted.json'), 'utf8'))).toMatchObject({ version: 3, replNames: ['total', 'hello'] });
+    expect(JSON.parse(readFileSync(join(runDir, 'compacted.json'), 'utf8'))).toMatchObject({ version: 4, replNames: ['total', 'hello'] });
     // A later session of the conversation (Restart Agent) has its own REPL state: no prelude.
     await until(() => replied(next, 'echo 4'), 'the reply in the new chat');
     await e.restartSession(next);

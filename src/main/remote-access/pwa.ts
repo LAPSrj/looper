@@ -17,11 +17,18 @@ const startupLinks = STARTUP_SIZES.flatMap((s) =>
   }),
 );
 
-/** iOS 26+ blurs the page's top edge unless a fixed element over 10 px tall and 90% wide sits 4 px below it (WebKit's fixedContainerEdges); this strip is it, on top of everything and painting nothing. */
+/**
+ * iOS 26+ fills the area behind the status bar with the background color of the fixed element 4 px down the middle of
+ * the top document, and blurs it when there's none, a blur that covers the bar's buttons (WebKit:
+ * LocalFrameView::fixedContainerEdges, which takes an element over 10 px tall and 90% of the width, and
+ * WKWebView _shouldHideTopScrollPocket). This strip is it, on top of everything and painting nothing; the iOS frame
+ * puts a new one in with each color the screen shows there (top-bar.ts, paintTopEdge). No transition: WebKit would
+ * keep whatever color it read halfway.
+ */
 const TOP_EDGE = '<div class="ios-top-edge" aria-hidden="true"></div>';
 const TOP_EDGE_STYLE =
   '.ios-top-edge{position:fixed;top:0;left:0;right:0;height:12px;z-index:2147483647;pointer-events:none;' +
-  `background-color:${IOS_GROUPED_LIGHT};-webkit-background-clip:text;background-clip:text;transition:background-color .3s}`;
+  `background-color:${IOS_GROUPED_LIGHT};-webkit-background-clip:text;background-clip:text}`;
 
 /** The tags a window's frame (FRAME_PAGE, index.html as the server serves it to a frame) needs too. */
 const FRAME_HEAD = [
@@ -35,13 +42,18 @@ const FRAME_HEAD = [
 /**
  * What only the page a phone or browser opens reads (the bars' color, the home-screen app's name, icons, launch
  * screens and manifest): a window's frame leaves them out, so each frame's head doesn't hold a link per launch screen.
+ * WebKit reads theme-color from the top document only (Page::themeColor, its localTopDocument), so a frame's would do
+ * nothing. On iOS the frame sets it to the screen's top color as it changes (top-bar.ts, paintTopEdge).
  */
 const HOME_SCREEN_HEAD = [
   `<meta name="theme-color" content="${THEME_LIGHT}" media="(prefers-color-scheme: light)">`,
   `<meta name="theme-color" content="${THEME_DARK}" media="(prefers-color-scheme: dark)">`,
   '<meta name="mobile-web-app-capable" content="yes">',
   '<meta name="apple-mobile-web-app-capable" content="yes">',
-  // No black-translucent: with it the page runs under the status bar, which the top edge's blur then covers.
+  // No apple-mobile-web-app-status-bar-style, so it stays "default": "If set to default or black, the web content is
+  // displayed below the status bar. If set to black-translucent, the web content is displayed on the entire screen,
+  // partially obscured by the status bar" (Apple, Supported Meta Tags). Under black-translucent iOS 26+ blurred the top
+  // ~110 px of the Home Screen app, the bar's title and buttons included.
   '<meta name="apple-mobile-web-app-title" content="Looper">',
   // The tab's icon: without it a desktop browser asks for /favicon.ico, which there isn't, and shows a blank one.
   '<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">',

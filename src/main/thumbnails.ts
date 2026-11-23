@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { nativeImage } from 'electron';
+import type { Attachment } from '../shared/chat';
 import type { ThumbnailIn, ThumbnailOut } from './thumbnail-worker';
 
 /**
@@ -53,6 +54,20 @@ export async function thumbnail(file: string): Promise<string | null> {
   return made;
 }
 
+/**
+ * Attached files with each PNG's and JPEG's size as it shows, which the worker reads from the start of the file: a
+ * message box draws the image's tile at its thumbnail's size before the thumbnail comes. (The worker's modules stay
+ * out of this one, as for the thumbnail's height.)
+ */
+export const withImageSizes = (attachments: Attachment[]): Promise<Attachment[]> =>
+  Promise.all(
+    attachments.map(async (a) => {
+      if (!a.image || a.width || !/\.(png|jpe?g)$/i.test(a.path)) return a;
+      const size = (await ask({ file: a.path, height: THUMBNAIL_HEIGHT, sizeOnly: true }))?.size;
+      return size ? { ...a, ...size } : a;
+    }),
+  );
+
 function make(file: string): Promise<string | null> {
   return /\.(png|jpe?g)$/i.test(file) ? inWorker(file) : withNativeImage(file);
 }
@@ -62,7 +77,7 @@ function make(file: string): Promise<string | null> {
 let worker: Worker | null = null;
 let idle: ReturnType<typeof setTimeout> | null = null;
 let nextId = 0;
-const waiting = new Map<number, (url: string | null) => void>();
+const waiting = new Map<number, (msg: ThumbnailOut | null) => void>();
 
 /** In a packaged app __dirname is inside app.asar, which a Worker can't load from; asarUnpack puts a copy beside it. */
 function workerFile(): string {
@@ -80,7 +95,7 @@ function startWorker(): Worker {
   w.on('message', (msg: ThumbnailOut) => {
     const done = waiting.get(msg.id);
     waiting.delete(msg.id);
-    done?.(msg.url);
+    done?.(msg);
     if (waiting.size === 0) idle = setTimeout(stopWorker, WORKER_IDLE_MS);
   });
   w.on('error', gone);
@@ -94,16 +109,19 @@ function stopWorker(): void {
   if (worker && waiting.size === 0) void worker.terminate();
 }
 
-function inWorker(file: string): Promise<string | null> {
+/** A request to the worker, and its answer; null when the worker went away first. */
+function ask(req: Omit<ThumbnailIn, 'id'>): Promise<ThumbnailOut | null> {
   if (idle) clearTimeout(idle);
   idle = null;
   worker ??= startWorker();
   const id = ++nextId;
   return new Promise((resolve) => {
     waiting.set(id, resolve);
-    worker!.postMessage({ id, file, height: THUMBNAIL_HEIGHT } satisfies ThumbnailIn);
+    worker!.postMessage({ id, ...req } satisfies ThumbnailIn);
   });
 }
+
+const inWorker = (file: string): Promise<string | null> => ask({ file, height: THUMBNAIL_HEIGHT }).then((msg) => msg?.url ?? null);
 
 // ---------- other images: nativeImage, one at a time ----------
 

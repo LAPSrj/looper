@@ -20,6 +20,8 @@ const OLDER_AT = 600;
 const BATCH = 20;
 /** How long a batch waits for what `prepare` fetches (its thumbnails): past it, it's drawn without them. */
 const PREPARE_MS = 1000;
+/** How long a batch waits for what `need` reads (a phone's brief rows, whole): past it, it's drawn as they are, and they fill in as they come. */
+const NEED_MS = 10_000;
 
 const whenIdle = (fn: () => void): (() => void) => {
   if (typeof requestIdleCallback === 'function') {
@@ -183,7 +185,8 @@ function followSize(el: HTMLElement, stays: RefObject<boolean>): () => void {
  * A status bar tap (scroll-top.ts) scrolls through what's drawn without adding older items, then draws the first
  * ones, at the top, and the newer ones as the reader scrolls down.
  * `prepare(from, to)`: what older items [from, to) need before they're drawn (their thumbnails, so they're drawn at
- * their size and don't grow above the reader); null when nothing.
+ * their size and don't grow above the reader); null when nothing. `need(from, to)`: what they can't be drawn without
+ * (a phone's brief rows, read whole), waited for first and longer.
  */
 export function useNewestFirst(
   scrollRef: RefObject<HTMLElement | null>,
@@ -194,6 +197,7 @@ export function useNewestFirst(
   startAt?: number,
   lead = 0,
   prepare?: (from: number, to: number) => Promise<void> | null,
+  need?: (from: number, to: number) => Promise<void> | null,
 ): { hidden: number; newer: number; onScroll: (el: HTMLElement) => void; toEnd: () => void } {
   const [drawn, setDrawn] = useState<Drawn>(() => ({ key, lead, empty: total === 0, ...firstDrawn(total, first, startAt) }));
   const next = nextDrawn(drawn, key, total, lead, first, startAt);
@@ -230,9 +234,15 @@ export function useNewestFirst(
       }
       setDrawn((d) => ({ ...d, start: Math.max(0, d.start - count) }));
     };
-    const wait = prepare?.(Math.max(0, hidden - count), hidden);
+    const from = Math.max(0, hidden - count);
+    const needed = need?.(from, hidden);
+    const thumbs = () => {
+      const wait = prepare?.(from, hidden);
+      return wait ? Promise.race([wait, new Promise((done) => setTimeout(done, PREPARE_MS))]) : null;
+    };
+    const wait = needed ? Promise.race([needed, new Promise((done) => setTimeout(done, NEED_MS))]).then(thumbs) : thumbs();
     if (!wait) return draw();
-    void Promise.race([wait, new Promise((done) => setTimeout(done, PREPARE_MS))]).then(() => {
+    void wait.then(() => {
       // Another conversation, or this one drawn otherwise meanwhile (from its end, a status bar tap): not this batch.
       if (latest.current.key !== key || latest.current.hidden !== hidden || toTop.current || jump.current) {
         if (latest.current.hidden === hidden) asking.current = false;

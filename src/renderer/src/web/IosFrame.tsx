@@ -8,7 +8,6 @@ import { Segmented } from '../components/phone/PhoneList';
 import { ComputerMenu } from './ComputerMenu';
 import { useConnection } from './connection';
 import { IosField } from './IosField';
-import { darkColor } from './nav-stack';
 import type { ShellController } from './controller';
 import { useDeviceForm } from './device-form';
 import { DevicePick } from './DevicePick';
@@ -20,7 +19,8 @@ import { Notifications } from './Notifications';
 import { PathBar } from './PathBar';
 import { CHECK, FileRows, FileViewBody, Switch } from './phone-files';
 import { viewToggles, type ViewOptions } from './file-view';
-import { deviceNoun, moreFor, PhoneWindows, pickMore, screenBars, usePhoneShell, type PhoneShell, type Screen } from './phone-shell';
+import { deviceNoun, moreFor, PhoneWindows, pickMore, screenBars, usePhoneShell, type PhoneShell, type Screen, type TopEdge } from './phone-shell';
+import { barLook, composite, paintTopEdge, withOpacity } from './top-bar';
 import { slideCard, useDragToDismiss } from './sheet-drag';
 import type { PageNavTabs } from './page-nav';
 import type { OpenDialog, PathRequest } from './store';
@@ -54,18 +54,43 @@ export function IosFrame({ controller }: { controller: ShellController }) {
   const topW = useRef(shell.top?.win.w);
   topW.current = shell.top?.win.w;
   useEffect(() => installStatusBarTap(document, () => (topW.current ? controller.frameOf(topW.current)?.contentDocument : null)), [controller]);
-  // iOS colors the status bar from the fixed element at the top (the served page's .ios-top-edge strip), not from
-  // theme-color: the color of the topmost full screen's bar, which a page sheet leaves in view above it.
-  const full = shell.screens.filter((x) => !x.leaving && (x.pres === 'root' || x.pres === 'push')).sort((a, b) => b.depth - a.depth)[0];
-  const fullEdge = full ? shell.edges.get(full.win.w) : undefined;
-  const statusBar = !full ? '#000' : !fullEdge ? 'var(--ios-bg)' : fullEdge.scrolled ? 'var(--ios-bar)' : fullEdge.color;
+  // Safari fills the area behind the status bar with the color of the fixed strip at the top of the served page (pwa.ts)
+  // and blurs it without one (top-bar.ts, paintTopEdge): the strip takes what the screen shows there, the page under its
+  // bar, the scroll edge effect, a sheet's dimming and the dark theme, read once each change has settled.
+  const edgesNow = useRef(shell.edges);
+  edgesNow.current = shell.edges;
+  const screensNow = useRef(shell.screens);
+  screensNow.current = shell.screens;
+  const paintQueued = useRef(0);
+  const paintTop = useRef(() => {});
+  paintTop.current = () => {
+    if (paintQueued.current) return;
+    paintQueued.current = requestAnimationFrame(() => {
+      paintQueued.current = 0;
+      const root = shell.rootRef.current;
+      if (!root) return;
+      const color = screenTopColor(root, edgesNow.current, screensNow.current);
+      paintTopEdge(document, color);
+      root.style.setProperty('--ios-status', color);
+    });
+  };
+  useEffect(() => paintTop.current());
   useEffect(() => {
-    const edge = document.querySelector<HTMLElement>('.ios-top-edge');
-    if (edge) edge.style.backgroundColor = statusBar;
-  }, [statusBar]);
+    const paint = () => paintTop.current();
+    const scheme = matchMedia('(prefers-color-scheme: dark)');
+    document.addEventListener('transitionend', paint, true);
+    document.addEventListener('animationend', paint, true);
+    scheme.addEventListener('change', paint);
+    return () => {
+      document.removeEventListener('transitionend', paint, true);
+      document.removeEventListener('animationend', paint, true);
+      scheme.removeEventListener('change', paint);
+      cancelAnimationFrame(paintQueued.current);
+    };
+  }, []);
 
   return (
-    <div ref={shell.rootRef} className={`ph-root ios${shell.tablet ? ' tablet' : ''}${shell.vp.keyboard ? ' kb' : ''}`} style={{ '--ios-status': statusBar } as React.CSSProperties}>
+    <div ref={shell.rootRef} className={`ph-root ios${shell.tablet ? ' tablet' : ''}${shell.vp.keyboard ? ' kb' : ''}`}>
       <div ref={shell.probeRef} className="ph-probe" aria-hidden="true" />
       <ViewportContext.Provider value={shell.vp}>
         <PhoneWindows
@@ -121,35 +146,47 @@ function IosBar({
 }) {
   const actionMenuHere = (action: PageNavAction, button: HTMLElement) => onActionMenu(sc, action, button);
   const nav = sc.nav;
-  const showTitle = !nav?.largeTitle || shell.scrolledPast.has(sc.win.w);
   const more = moreFor(sc).items.length > 0 ? (button: HTMLElement) => onMore(sc, button) : undefined;
   const close = () => controller.close(sc.win.w);
   // iPad's split view: the tab bar near the top, then a bar over each column. The list's bar has the
   // window's own Back; the detail's has the page's (a deeper screen in that column).
   const bars = screenBars(sc, shell.tablet, { goBack: () => shell.goBack(), listBack: close, close });
-  // The bar has no fill of its own: it's the page's top color, with the hard scroll edge once the page scrolls.
+  // The bar has no fill of its own: transparent over a page that runs under it, with the hard scroll edge effect once
+  // the page scrolls there; over a page that starts below it, the page's top color (top-bar.ts, barLook).
   const edge = shell.edges.get(sc.win.w);
   const connection = useConnection(controller);
   if (bars.kind === 'split') {
     const { split, list, detail } = bars;
+    const listLook = barLook(edge, !!split.largeTitle);
+    const detailLook = barLook(edge?.detail && { ...edge.detail, under: edge.under }, false);
     return (
-      <header className="ios-bar split" style={{ background: !edge ? undefined : edge.scrolled ? 'var(--ios-bar)' : edge.color }}>
+      <header
+        className={`ios-bar split${listLook.under ? ' under' : ''}`}
+        style={
+          {
+            background: edge && !edge.under ? edge.color : undefined,
+            // Where each column's scroll edge effect runs across the bar (ios.css).
+            '--ios-split-lead': `${split.width}px`,
+            '--ios-split-inspector': `${bars.inspector && split.inspector ? split.inspector.width : 0}px`,
+          } as React.CSSProperties
+        }
+      >
         {nav?.tabs && <IosTabBar tabs={nav.tabs} />}
         <div className="ios-bar-split">
           <IosBarRow
             model={list}
             onActionMenu={actionMenuHere}
-            className={`ios-bar-list${edge?.scrolled ? ' edge' : ''}`}
+            className={`ios-bar-list${listLook.edge ? ' edge' : ''}`}
             style={{ width: split.width }}
             titleAs="h2"
-            titleFaded={!!split.largeTitle && !shell.scrolledPast.has(sc.win.w)}
+            titleFaded={listLook.titleFaded}
           />
           <IosBarRow
             model={detail}
             onMore={more}
             onActionMenu={actionMenuHere}
-            className={`ios-bar-detail${edge?.detail?.scrolled ? ' edge' : ''}${edge?.detail && !edge.detail.scrolled && darkColor(edge.detail.color) ? ' on-dark' : ''}`}
-            style={edge?.detail ? { background: edge.detail.scrolled ? 'var(--ios-bar)' : edge.detail.color } : undefined}
+            className={`ios-bar-detail${detailLook.edge ? ' edge' : ''}${detailLook.onDark ? ' on-dark' : ''}`}
+            style={detailLook.background ? { background: detailLook.background } : undefined}
           />
           {bars.inspector && split.inspector && (
             <IosBarRow model={bars.inspector} className="ios-bar-inspector" style={{ width: split.inspector.width }} titleAs="h2" />
@@ -160,16 +197,85 @@ function IosBar({
     );
   }
   const model = bars.bar;
+  const look = barLook(edge, !!nav?.largeTitle);
   return (
     <header
-      className={`ios-bar${edge?.scrolled ? ' edge' : ''}${edge && !edge.scrolled && darkColor(edge.color) ? ' on-dark' : ''}`}
-      style={edge && !edge.scrolled ? { background: edge.color } : undefined}
+      className={`ios-bar${look.edge ? ' edge' : ''}${look.under ? ' under' : ''}${look.onDark ? ' on-dark' : ''}`}
+      style={look.background ? { background: look.background } : undefined}
     >
       {shell.tablet && nav?.tabs && <IosTabBar tabs={nav.tabs} />}
-      <IosBarRow model={model} onMore={more} onActionMenu={actionMenuHere} titleFaded={!showTitle} />
+      <IosBarRow model={model} onMore={more} onActionMenu={actionMenuHere} titleFaded={look.titleFaded} />
       <OfflineBanner connection={connection} />
     </header>
   );
+}
+
+/**
+ * What the screen shows at the point where WebKit samples the top of the page (the middle of its top edge, 4 px down:
+ * LocalFrameView::fixedContainerEdges, PageColorSampler::fixedContainerSampleRectMargin), as one opaque color: the
+ * screens drawn there bottom first (a sheet's scrim, its card, the page under the bar, the bar and its scroll edge
+ * effect, a page sheet's own backdrop), then the frame's own sheets, a dimmed menu and an alert. Screens under the top
+ * one are inert, which hit testing skips, so each layer is found by its place rather than by elementsFromPoint.
+ */
+function screenTopColor(root: HTMLElement, edges: Map<string, TopEdge>, screens: Screen[]): string {
+  const x = root.clientWidth / 2;
+  const y = 4;
+  const at = (el: Element | null | undefined): el is Element => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+  };
+  const fill = (el: Element, pseudo?: string) => {
+    const cs = getComputedStyle(el, pseudo);
+    return withOpacity(cs.backgroundColor, cs.opacity);
+  };
+  const layers: string[] = [];
+  const sheetLayers = (host: Element) => {
+    const scrim = host.querySelector(':scope > .ph-scrim');
+    if (at(scrim)) layers.push(fill(scrim));
+    const card = host.querySelector(':scope > .ph-card');
+    if (!at(card)) return null;
+    layers.push(fill(card));
+    return card;
+  };
+  const wins = [...root.querySelectorAll<HTMLElement>(':scope > .ph-win')]
+    .filter((el) => getComputedStyle(el).visibility !== 'hidden')
+    .sort((a, b) => (Number(a.style.zIndex) || 0) - (Number(b.style.zIndex) || 0));
+  for (const win of wins) {
+    const card = sheetLayers(win);
+    if (!card) continue;
+    const w = win.dataset.w ?? '';
+    const edge = edges.get(w);
+    const body = card.querySelector('.ph-body');
+    if (edge && at(body)) {
+      // An iPad's split page: the middle of the screen is over its detail column.
+      const lead = screens.find((sc) => sc.win.w === w)?.nav?.split?.width ?? 0;
+      layers.push(edge.detail && x - body.getBoundingClientRect().left > lead ? edge.detail.color : edge.color);
+    }
+    const header = card.querySelector('.ph-bar-slot > header');
+    if (at(header)) {
+      layers.push(fill(header));
+      // The scroll edge effect is the bar's ::before, the bar's height; on a split bar each column's, across its column.
+      if (getComputedStyle(header, '::before').content !== 'none') layers.push(fill(header, '::before'));
+      for (const row of header.querySelectorAll('.ios-bar-split > .ios-bar-row')) {
+        const r = row.getBoundingClientRect();
+        if (x < r.left || x >= r.right) continue;
+        if (at(row)) layers.push(fill(row));
+        if (getComputedStyle(row, '::before').content !== 'none') layers.push(fill(row, '::before'));
+      }
+    }
+    const modal = card.querySelector('.ph-bar-slot.page-modal');
+    if (at(modal)) layers.push(fill(modal, '::after'));
+  }
+  for (const sheet of root.querySelectorAll(':scope > .ios-own-sheet')) {
+    const card = sheetLayers(sheet);
+    const header = card?.querySelector(':scope > header');
+    if (at(header)) layers.push(fill(header));
+  }
+  const menu = document.querySelector('.ios-menu-layer.dim');
+  if (at(menu)) layers.push(fill(menu));
+  for (const alert of document.querySelectorAll('.ios-alert-layer')) if (at(alert)) layers.push(fill(alert));
+  return composite(layers, getComputedStyle(root).getPropertyValue('--ios-bg') || '#fff');
 }
 
 /** iPadOS's tab bar: the tabs' names in a glass capsule centered near the top of the screen (HIG: Tab bars). */
@@ -295,9 +401,7 @@ function FilesBar({
     <IosBrowserBarRow
       title={<PathBar browser={browser} />}
       canBack={browser.canBack}
-      canForward={browser.canForward}
       onBack={browser.back}
-      onForward={browser.forward}
       actions={actions}
       confirm={confirm}
       onClose={onClose}

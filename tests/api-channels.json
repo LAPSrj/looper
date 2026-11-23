@@ -1125,7 +1125,7 @@
   }
  },
  "runs.scriptCalls": {
-  "arity": 6,
+  "arity": 7,
   "calls": [
    [
     "invoke",
@@ -1136,12 +1136,30 @@
      "a2",
      "a3",
      "a4",
-     "a5"
+     "a5",
+     "a6"
     ]
    ]
   ],
   "result": {
    "err": "Error invoking remote method 'runs:scriptCalls': Error: boom runs:scriptCalls"
+  }
+ },
+ "runs.call": {
+  "arity": 3,
+  "calls": [
+   [
+    "invoke",
+    "runs:call",
+    [
+     "a0",
+     "a1",
+     "a2"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'runs:call': Error: boom runs:call"
   }
  },
  "runs.pickFiles": {
@@ -1389,6 +1407,22 @@
   ],
   "result": {
    "err": "Error invoking remote method 'chat:get': Error: boom chat:get"
+  }
+ },
+ "chat.rows": {
+  "arity": 2,
+  "calls": [
+   [
+    "invoke",
+    "chat:rows",
+    [
+     "a0",
+     "a1"
+    ]
+   ]
+  ],
+  "result": {
+   "err": "Error invoking remote method 'chat:rows': Error: boom chat:rows"
   }
  },
  "chat.send": {

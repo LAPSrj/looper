@@ -375,9 +375,9 @@ export function TreeListSection({ children }: { children: ReactNode }) {
 
 /** iOS's large title at the top of a root screen; Material's top app bar (the frame's) carries the title instead. */
 export function LargeTitle({ children }: { children: ReactNode }) {
-  // data-large-title: the frame shows the title in its bar once this has scrolled under it.
+  // It scrolls under the frame's bar with the content, and the bar shows the title as the page begins to scroll (PageNav largeTitle).
   return platform === 'ios' ? (
-    <h1 className="pg-large-title" data-large-title="">
+    <h1 className="pg-large-title">
       {children}
     </h1>
   ) : null;

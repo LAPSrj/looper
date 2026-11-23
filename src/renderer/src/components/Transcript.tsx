@@ -9,6 +9,7 @@ import { localScriptCalls, showRowContextMenu, UserMessage, useSelectText, type 
 import { groupRows } from './chat-groups';
 import { Composer, takeIntoBox } from './Composer';
 import { Conversation, type ConversationPart } from './Conversation';
+import { ConversationWithBox } from './ConversationWithBox';
 import { useChatsSettings } from './hooks';
 import { MessageBox, type MessageBoxStop } from './MessageBox';
 import { reportError } from '../report-error';
@@ -46,7 +47,7 @@ export function QueuedGuidanceActions({ taskId, runId }: { taskId: string; runId
  * a workflow agent's), as a chat, read again while it runs: the Chats tab's
  * task runs and the run window show it. `pendingGuidance`: guidance the agent
  * hasn't picked up yet, at the end like a queued message, with `pendingStatus`
- * under it. `footer`: what goes under it (a task run's guidance box). `quote`:
+ * under it. `footer`: its message box (a task run's guidance box, a subagent's), which ConversationWithBox lays out. `quote`:
  * that box takes text, so the rows' menu has Quote and Edit as New Message.
  * `status`: the conversation's last line, as a chat's (ChatStatus).
  */
@@ -98,28 +99,29 @@ export function TranscriptView({
   const parts = useMemo<ConversationPart[]>(() => [{ key: '', items }], [items]);
   return (
     <div className="chat-app">
-      <Conversation
-        id={`${taskId}/${runId}`}
-        parts={parts}
-        ctx={ctx}
-        endKey={`${rows.length}/${pendingGuidance ?? ''}/${permission?.id ?? ''}`}
-        drawAll={drawAll}
-        card={embedded}
-        measure="Transcript rows"
-      >
-        {rows.length === 0 && !pendingGuidance && <div className="muted">{waitingText}</div>}
-        {permission && (
-          <PermissionCard
-            key={permission.id}
-            harnessKind="claude-code"
-            p={permission}
-            answer={(allow) => void window.looper.answerRunPermission(taskId, runId, permission.id, allow)}
-          />
-        )}
-        {pendingGuidance && <PendingMessage text={pendingGuidance} status={pendingStatus} taskId={taskId} runId={runId} />}
-        {status}
-      </Conversation>
-      {footer}
+      <ConversationWithBox float={!embedded} box={footer}>
+        <Conversation
+          id={`${taskId}/${runId}`}
+          parts={parts}
+          ctx={ctx}
+          endKey={`${rows.length}/${pendingGuidance ?? ''}/${permission?.id ?? ''}`}
+          drawAll={drawAll}
+          card={embedded}
+          measure="Transcript rows"
+        >
+          {rows.length === 0 && !pendingGuidance && <div className="muted">{waitingText}</div>}
+          {permission && (
+            <PermissionCard
+              key={permission.id}
+              harnessKind="claude-code"
+              p={permission}
+              answer={(allow) => void window.looper.answerRunPermission(taskId, runId, permission.id, allow)}
+            />
+          )}
+          {pendingGuidance && <PendingMessage text={pendingGuidance} status={pendingStatus} taskId={taskId} runId={runId} />}
+          {status}
+        </Conversation>
+      </ConversationWithBox>
     </div>
   );
 }
@@ -164,7 +166,7 @@ export function SubagentConversation({ taskId, runId, rows, chat, agent }: { tas
   );
 }
 
-/** The box under a running subagent's conversation. Laid out like RunGuidance's box. */
+/** The box under a running subagent's conversation, laid out as every conversation's box is (ConversationWithBox). */
 function SubagentMessageBox({ chat, agent }: { chat: ChatState; agent: SubagentInfo }) {
   const [text, setText] = useState('');
   const send = () => {

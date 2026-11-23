@@ -1,11 +1,12 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { onUi } from '../events';
+import { createContext, lazy, memo, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { onUi, wholeRows } from '../events';
+import { drawsText } from '@shared/chat-window';
 import { sizeText, type CommandOutput, type SavedOutput } from '@shared/bash-mode';
 import type { Attachment } from '@shared/chat';
 import { handbackText, scriptCallsPage, type MessageRow, type ScriptCalls, type SentFile, type SentFileInfo, type SentFiles } from '@shared/messages';
 import { fmtSize } from '../format';
 import { toolGroupLabel } from './chat-groups';
-import { attachmentThumbKey, loadAttachmentThumb, loadSentFile, sentThumbKey, sentThumbSrc, useShown, type Shown, type ShownThumb } from './thumb-sizes';
+import { attachmentThumbKey, fitThumb, loadAttachmentThumb, loadSentFile, sentThumbKey, sentThumbSrc, TILE, useShown, type Shown, type ShownThumb, type ThumbSize } from './thumb-sizes';
 import { MessageBody, PromptBody } from './Markdown';
 import { atEnd, useStayAtEnd } from './newest-first';
 import { ToolInputView, ToolResultView } from './ToolContent';
@@ -14,8 +15,8 @@ import { reportError } from '../report-error';
 export type RowCtx = {
   taskId: string;
   runId: string;
-  /** Where a Code Mode script's calls come from when the conversation isn't a run's (runs.scriptCalls otherwise). */
-  scriptCalls?: (toolUseId: string, before: number | null, count: number) => Promise<ScriptCalls | null>;
+  /** Where a Code Mode script's calls come from when the conversation isn't a run's (runs.scriptCalls otherwise); `brief` may leave out what only a call's own screen shows (briefRow). */
+  scriptCalls?: (toolUseId: string, before: number | null, count: number, brief?: boolean) => Promise<ScriptCalls | null>;
   /** Right-click on a message or tool call (the chat window's menu). */
   onContextMenu?: (e: React.MouseEvent, row: MessageRow) => void;
 };
@@ -49,11 +50,39 @@ export function showRowContextMenu(base: { chatId: string; taskId: string; quote
 const openAttachment = (a: Attachment) =>
   void window.looper.attachment.open(a.path).catch(reportError);
 
-/** An image as a thumbnail button, at its size from its first frame (thumb-sizes.ts); `thumb` is null until it has loaded (the name shows meanwhile). */
-function ThumbButton({ name, thumb, onOpen, onContextMenu }: { name: string; thumb: ShownThumb | null; onOpen: () => void; onContextMenu?: (e: React.MouseEvent) => void }) {
+/** A transparent pixel: an image's tile while its thumbnail loads, drawn by the thumbnail's own rules. */
+const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+/**
+ * An image as a thumbnail button, at its size from its first frame (thumb-sizes.ts). While it `loading`, its tile
+ * shows empty at `size` (from the image's own size, which Looper reads as it's attached, else TILE), so nothing
+ * moves when the thumbnail fills it; the name shows only for an image with no thumbnail to show.
+ */
+function ThumbButton({
+  name,
+  thumb,
+  loading,
+  size,
+  onOpen,
+  onContextMenu,
+}: {
+  name: string;
+  thumb: ShownThumb | null;
+  loading: boolean;
+  size?: ThumbSize | null;
+  onOpen: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
+}) {
+  const tile = loading ? (size ?? TILE) : null;
   return (
     <button className="chat-thumb" title={`Open ${name}`} onClick={onOpen} onContextMenu={onContextMenu}>
-      {thumb ? <img src={thumb.src} alt={name} width={thumb.width} height={thumb.height} /> : <span>{name}</span>}
+      {thumb ? (
+        <img src={thumb.src} alt={name} width={thumb.width} height={thumb.height} />
+      ) : tile ? (
+        <img className="chat-thumb-blank" src={BLANK} alt={name} width={tile.width} height={tile.height} />
+      ) : (
+        <span>{name}</span>
+      )}
     </button>
   );
 }
@@ -61,7 +90,8 @@ function ThumbButton({ name, thumb, onOpen, onContextMenu }: { name: string; thu
 /** An image attachment as a thumbnail; clicking it opens the file in the default viewer. */
 function Thumbnail({ a }: { a: Attachment }) {
   const shown = useShown(attachmentThumbKey(a.path), loadAttachmentThumb(a.path), (s: string) => s);
-  return <ThumbButton name={a.name} thumb={shown?.thumb ?? null} onOpen={() => openAttachment(a)} />;
+  const size = a.width && a.height ? fitThumb(a.width, a.height) : null;
+  return <ThumbButton name={a.name} thumb={shown?.thumb ?? null} loading={shown === undefined} size={size} onOpen={() => openAttachment(a)} />;
 }
 
 /** xterm loads with the first command that runs. */
@@ -254,7 +284,7 @@ function SentFileItem({ f, ctx, images }: { f: SentFile; ctx: RowCtx; images?: s
   const open = (image: boolean) =>
     void window.looper.sessions.openFile(ctx.taskId, ctx.runId, f.path, image, image ? images : undefined).catch(reportError);
   if (f.inline && (info === undefined || info.thumbnail)) {
-    return <ThumbButton name={f.name} thumb={shown?.thumb ?? null} onOpen={() => open(true)} onContextMenu={menu} />;
+    return <ThumbButton name={f.name} thumb={shown?.thumb ?? null} loading={info === undefined} onOpen={() => open(true)} onContextMenu={menu} />;
   }
   const size = info?.size ?? f.size;
   return (
@@ -536,15 +566,7 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
             </summary>
           }
         >
-          <div className="chat-tool-body">
-            <ToolInputView row={row} />
-            {row.result !== undefined && (
-              <div className="chat-tool-result">
-                <ToolResultView row={row} ctx={ctx} />
-              </div>
-            )}
-            {row.calls && row.toolUseId ? <ScriptCalls calls={row.calls} toolUseId={row.toolUseId} ctx={ctx} /> : null}
-          </div>
+          <ToolCallBody row={row} ctx={ctx} />
         </Disclosure>
       );
     }
@@ -553,7 +575,69 @@ function ChatRowView({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
   }
 }
 
-export const ChatRow = memo(ChatRowView, (prev, next) => sameRow(prev.row, next.row) && sameCtx(prev.ctx, next.ctx));
+/**
+ * A compacted conversation's call (MessageRow.run) as its own session had it, read whole from the transcript of the run
+ * that holds it when it shows, with its place in the compacted conversation; what compaction kept until then, or when
+ * that transcript is gone. Any other row as it is.
+ */
+export function useWholeCall(row: MessageRow | undefined, ctx: Pick<RowCtx, 'taskId' | 'runId'>): MessageRow | undefined {
+  const compacted = !!row && row.layer !== undefined && !!row.toolUseId && !!row.run && !row.sent;
+  const [whole, setWhole] = useState<{ row: MessageRow; read: MessageRow | null } | null>(null);
+  useEffect(() => {
+    if (!compacted || !row) return;
+    let live = true;
+    void window.looper.runs.call(ctx.taskId, ctx.runId, row.toolUseId!).then(
+      (read) => live && setWhole({ row, read }),
+      () => live && setWhole({ row, read: null }),
+    );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compacted, row?.toolUseId, ctx.taskId, ctx.runId]);
+  if (!compacted || whole?.row !== row || !whole.read) return row;
+  return { ...whole.read, id: row.id, layer: row.layer, run: row.run };
+}
+
+/** A tool call's details in the conversation: its input, its result and a Code Mode script's calls; a compacted one's read whole. */
+function ToolCallBody({ row: kept, ctx }: { row: MessageRow; ctx: RowCtx }) {
+  const row = useWholeCall(kept, ctx) ?? kept;
+  return (
+    <div className="chat-tool-body">
+      <ToolInputView row={row} />
+      {row.result !== undefined && (
+        <div className="chat-tool-result">
+          <ToolResultView row={row} ctx={ctx} />
+        </div>
+      )}
+      {row.calls && row.toolUseId ? <ScriptCalls calls={row.calls} toolUseId={row.toolUseId} ctx={ctx} /> : null}
+    </div>
+  );
+}
+
+/** A brief row (chat-window.ts) being drawn: what reads it whole. Its Disclosure, opened, shows Loading until it is. */
+const BriefRow = createContext<(() => void) | null>(null);
+
+/**
+ * A chat's row, which a phone or tablet may have brief: one whose text shows is read whole as it's drawn, and shows its
+ * line meanwhile; a tool call or other closed row when it opens.
+ */
+function RowOrBrief({ row, ctx }: { row: MessageRow; ctx: RowCtx }) {
+  const brief = !!row.brief;
+  const load = useMemo(() => (brief ? () => void wholeRows(ctx.runId, [row.id]) : null), [brief, ctx.runId, row.id]);
+  const shown = brief && drawsText(row);
+  useEffect(() => {
+    if (shown) load?.();
+  }, [shown, load]);
+  // The same elements brief or whole, so a tool call opened while it was read stays open.
+  return (
+    <BriefRow.Provider value={load}>
+      <ChatRowView row={shown ? { ...row, text: row.preview } : row} ctx={ctx} />
+    </BriefRow.Provider>
+  );
+}
+
+export const ChatRow = memo(RowOrBrief, (prev, next) => sameRow(prev.row, next.row) && sameCtx(prev.ctx, next.ctx));
 
 /** "Thinking and 5 tool uses, 1 failed": closed, the group is one line; open, it lists each call (each opens to its details) and the thinking's text. */
 function ToolGroupView({ rows, ctx }: { rows: MessageRow[]; ctx: RowCtx }) {
@@ -608,7 +692,7 @@ function ScriptCalls({ calls, toolUseId, ctx }: { calls: NonNullable<MessageRow[
  * that were running when it read them, as the script's counts change. `children`
  * draws the calls read so far, the first being the script's `start`th.
  */
-export function ScriptCallBox({
+function ScriptCallBox({
   toolUseId,
   count,
   running,
@@ -723,6 +807,11 @@ export const localScriptCalls =
  */
 function Disclosure({ className, summary, onContextMenu, children }: { className: string; summary: ReactNode; onContextMenu?: React.MouseEventHandler; children: ReactNode }) {
   const [opened, setOpened] = useState(false);
+  // A brief row's (a phone's older tool call): read whole as it opens.
+  const loadBrief = useContext(BriefRow);
+  useEffect(() => {
+    if (opened) loadBrief?.();
+  }, [opened, loadBrief]);
   return (
     <details
       className={className}
@@ -732,7 +821,7 @@ function Disclosure({ className, summary, onContextMenu, children }: { className
       }}
     >
       {summary}
-      {opened ? children : null}
+      {opened ? loadBrief ? <div className="muted tc-image-note">Loading…</div> : children : null}
     </details>
   );
 }

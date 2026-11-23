@@ -20,7 +20,7 @@ import {
 import { commandAttachment, parseCommands, parseFileList, parseOutputOnly, withOutput } from '../shared/bash-mode';
 import type { Attachment } from '../shared/chat';
 import { parseTaskNotification, type BackgroundTask, type SlashCommand } from '../shared/sessions';
-import { compactRows, proseRows, withoutCompacted } from '../shared/compact';
+import { compactRows, fromRun, withoutCompacted } from '../shared/compact';
 import { readCodexLastResponse, readContextTokens, readSubagentStats, type SubagentStats } from './context';
 import { readPendingGuidance } from './guidance';
 import { MOD_FILES } from './claude-mod';
@@ -653,6 +653,9 @@ export class TranscriptAccumulator {
   private callRepl = new Map<string, MessageRow>();
   /** Code Mode: the files each script's calls read or changed, by its REPL call's tool_use id. */
   private scriptFiles = new Map<string, Map<string, { changed: boolean; index: number }>>();
+  /** Code Mode: each script call's number among the scripts' calls, and whether the mod handed it over as it started (MessageRow.calls.at). */
+  private callPlaces = new WeakMap<MessageRow, { seq: number; live: boolean }>();
+  private nextCallSeq = 0;
   /** Image payloads by row id, or where a transcript has them (StoredImage); the rows only carry a marker. */
   readonly images = new Map<string, StoredImage>();
   /** Where the line addLine is folding is in its transcript, when a TranscriptReader reads one: its images stay there. */
@@ -725,6 +728,8 @@ export class TranscriptAccumulator {
     this.callOwners.clear();
     this.callRepl.clear();
     this.scriptFiles.clear();
+    this.callPlaces = new WeakMap();
+    this.nextCallSeq = 0;
     this.nextId = 0;
     this.byToolId.clear();
     this.structuredAnswers.clear();
@@ -1106,7 +1111,7 @@ export class TranscriptAccumulator {
         if (had !== row && !live) this.moveScriptCall(block.id as string, had, row);
         continue;
       }
-      this.addScriptCall(row, this.toolRow(block, ts));
+      this.addScriptCall(row, this.toolRow(block, ts), live);
     }
     return true;
   }
@@ -1119,6 +1124,11 @@ export class TranscriptAccumulator {
     return found?.row;
   }
 
+  /** The row of a tool call by its tool_use id, the agent's own or a Code Mode script's. */
+  callRow(toolUseId: string): MessageRow | undefined {
+    return this.byToolId.get(toolUseId);
+  }
+
   /** Code Mode: the newest REPL row whose script hasn't ended. */
   private runningRepl(): MessageRow | undefined {
     for (let i = this.rows.length - 1; i >= 0; i--) {
@@ -1128,7 +1138,22 @@ export class TranscriptAccumulator {
     return undefined;
   }
 
-  private addScriptCall(repl: MessageRow, call: MessageRow): void {
+  /**
+   * How many of the agent's own tool calls (the rows Now lists) after `repl` started by `ts`: the calls a script's call
+   * came after. A row or a call without a time counts as before.
+   */
+  private toolsAfter(repl: MessageRow, ts: string | undefined): number {
+    let n = 0;
+    for (let i = this.rows.length - 1; i >= 0; i--) {
+      const r = this.rows[i];
+      if (r === repl) return n;
+      if (r.kind === 'tool' && !r.fromScript && (ts === undefined || r.ts === undefined || r.ts <= ts)) n++;
+    }
+    return 0;
+  }
+
+  /** `live`: the mod handed the call over as it started, so it has its own time; the transcript's copy is stamped after its script ended. */
+  private addScriptCall(repl: MessageRow, call: MessageRow, live = false): void {
     const calls = this.scriptCalls.get(repl.toolUseId!) ?? [];
     this.scriptCalls.set(repl.toolUseId!, calls);
     const files = this.scriptFiles.get(repl.toolUseId!) ?? new Map<string, { changed: boolean; index: number }>();
@@ -1141,8 +1166,16 @@ export class TranscriptAccumulator {
     }
     if (call.file) files.set(call.file, { changed: !!files.get(call.file)?.changed || CHANGE_TOOLS.has(call.tool ?? ''), index: calls.length - 1 });
     if (call.background && !repl.started?.includes(call)) repl.started = [...(repl.started ?? []), call];
+    // Where it ran among the agent's own calls: a run of calls in a row goes on while the place and the numbering do.
+    let place = this.callPlaces.get(call);
+    if (!place) this.callPlaces.set(call, (place = { seq: this.nextCallSeq++, live }));
+    const after = place.live ? this.toolsAfter(repl, call.ts) : 0;
+    const at = [...(repl.calls?.at ?? [])];
+    const last = at[at.length - 1];
+    if (last && last[0] === after && last[1] + last[2] === place.seq) at[at.length - 1] = [after, last[1], last[2] + 1];
+    else at.push([after, place.seq, 1]);
     repl.calls = callCounts(
-      { count: calls.length, failed: 0, ...(files.size ? { files: [...files].map(([path, f]) => ({ path, ...f })) } : {}) },
+      { count: calls.length, failed: 0, ...(files.size ? { files: [...files].map(([path, f]) => ({ path, ...f })) } : {}), at },
       call.resultError ? [...(repl.calls?.failures ?? []), calls.length - 1] : (repl.calls?.failures ?? []),
       (repl.calls?.running ?? 0) + (open ? 1 : 0),
     );
@@ -1875,15 +1908,16 @@ export const COMPACTED_FILE = 'compacted.json';
  * compacted.json: the compacted rows (compactRows, then layered), with every
  * call of the newest session, and in Code Mode the names the new session's
  * REPL got back from the earlier one's (replPrelude), which its own compaction
- * snapshots first.
+ * snapshots first. Version 4's calls say where they are (toolUseId, run) and
+ * keep a REPL call's `calls`, so the chat shows them as it did before compacting.
  */
 export interface CompactedFile {
-  version: 3;
+  version: 4;
   rows: MessageRow[];
   replNames?: string[];
 }
 
-export const compactedFile = (rows: MessageRow[], replNames?: string[]): CompactedFile => ({ version: 3, rows, ...(replNames?.length ? { replNames } : {}) });
+export const compactedFile = (rows: MessageRow[], replNames?: string[]): CompactedFile => ({ version: 4, rows, ...(replNames?.length ? { replNames } : {}) });
 
 /** compacted.json files read, by path, while their size and modified time stay the same: a reopened chat's history reads its file on every poll. */
 const compactedCache = new Map<string, { size: number; mtimeMs: number; ino: number; file: CompactedFile }>();
@@ -1901,10 +1935,10 @@ function readCompacted(runDir: string): CompactedFile | null {
   const hit = compactedCache.get(file);
   // The inode too: a file rewritten (writeJsonAtomic renames a new one over it) can keep its size and time to the ms.
   if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs && hit.ino === st.ino) return hit.file;
-  let read: CompactedFile = { version: 3, rows: [] };
+  let read: CompactedFile = { version: 4, rows: [] };
   try {
     const data = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<CompactedFile>;
-    if (data.version === 3 && Array.isArray(data.rows)) {
+    if (data.version === 4 && Array.isArray(data.rows)) {
       const names = Array.isArray(data.replNames) ? data.replNames.filter((n): n is string => typeof n === 'string') : [];
       read = compactedFile(data.rows, names);
     }
@@ -1928,11 +1962,13 @@ export function readCompactedReplNames(runDir: string): string[] {
 }
 
 /**
- * The earlier compacted.json files become version 3. The first was an array
+ * The earlier compacted.json files become version 4. The first was an array
  * of the messages alone, whose rows become the oldest session's; version 2
- * has version 3's shape without its REPL names. The file's start tells them
- * apart (its first character, or the version that leads its object), so a run
- * without one costs a failed open. True when it rewrote the file.
+ * has version 3's shape without its REPL names; version 3's calls don't say
+ * where they are, and keep that (their transcript can't be found from them).
+ * The file's start tells them apart (its first character, or the version that
+ * leads its object), so a run without one costs a failed open. True when it
+ * rewrote the file.
  */
 export async function migrateCompactedFile(runDir: string): Promise<boolean> {
   const file = path.join(runDir, COMPACTED_FILE);
@@ -1955,9 +1991,10 @@ export async function migrateCompactedFile(runDir: string): Promise<boolean> {
     await writeJsonAtomicAsync(file, compactedFile(rows.map((r) => ({ ...r, layer: 0 }))));
     return true;
   }
-  if (!/^\{\s*"version"\s*:\s*2\s*,/.test(start)) return false;
-  const v2 = JSON.parse(await fs.promises.readFile(file, 'utf8')) as { rows?: unknown };
-  await writeJsonAtomicAsync(file, compactedFile(Array.isArray(v2.rows) ? (v2.rows as MessageRow[]) : []));
+  if (!/^\{\s*"version"\s*:\s*[23]\s*,/.test(start)) return false;
+  const old = JSON.parse(await fs.promises.readFile(file, 'utf8')) as { rows?: unknown; replNames?: unknown };
+  const names = Array.isArray(old.replNames) ? old.replNames.filter((n): n is string => typeof n === 'string') : [];
+  await writeJsonAtomicAsync(file, compactedFile(Array.isArray(old.rows) ? (old.rows as MessageRow[]) : [], names));
   return true;
 }
 
@@ -2112,6 +2149,12 @@ export interface SubagentMeta {
   type: string;
   description: string;
   model?: string;
+  /**
+   * Claude Code wrote `"finished": true` into the meta file: the agent has ended. The only sign for a foreground
+   * agent a subagent or a script started, which has no call among the conversation's rows and no notification,
+   * and whose transcript ends on its SubagentHandback call rather than on an end_turn reply.
+   */
+  finished?: true;
 }
 
 export interface MessagesDeps {
@@ -2141,7 +2184,7 @@ export class MessagesService {
 
   constructor(private readonly deps: MessagesDeps) {}
 
-  /** Rewrites each first-version compacted.json in `runDirs` as version 2; resolves with how many it rewrote. */
+  /** Rewrites each compacted.json of an earlier version in `runDirs` as version 4; resolves with how many it rewrote. */
   migrateCompacted(runDirs: Promise<string[]>): Promise<number> {
     const done = (async () => {
       const dirs = await runDirs;
@@ -2176,9 +2219,9 @@ export class MessagesService {
       return known === version ? { status: 'ok', rows: [], version, unchanged: true } : { status: 'ok', rows: reader.acc.rows, version };
     }
     const pendingGuidance = readPendingGuidance(this.deps.runDir(taskId, runId)) ?? undefined;
-    // A compacted chat's run starts with the messages of the conversation it was compacted from.
+    // A compacted chat's run starts with the conversation it was compacted from, as compaction kept it.
     if (!raw) await this.compactedReady;
-    const rows: MessageRow[] = raw ? [] : proseRows(readCompactedRows(this.deps.runDir(taskId, runId)));
+    const rows: MessageRow[] = raw ? [] : [...readCompactedRows(this.deps.runDir(taskId, runId))];
     let refs = 0;
     let readable = 0;
     let commands: SlashCommand[] = [];
@@ -2236,9 +2279,28 @@ export class MessagesService {
       } catch {
         continue;
       }
-      rows.push(...reader.acc.rows);
+      rows.push(...fromRun(reader.acc.rows, runId));
     }
     return compactRows(rows);
+  }
+
+  /**
+   * The whole row of a call by its tool_use id, as the run's own conversation has it (a script's call too): what a
+   * compacted conversation kept of it is read back while the transcript is there. Null when no session of the run has it.
+   */
+  async readCall(taskId: string, runId: string, toolUseId: string): Promise<MessageRow | null> {
+    for (const source of ['agent' as const, ...endedSessions(this.deps.runDir(taskId, runId)).reverse()]) {
+      const reader = await this.mainReader(taskId, runId, source, false);
+      if (typeof reader === 'string') continue;
+      try {
+        await reader.read();
+      } catch {
+        /* rows already parsed may still hold it */
+      }
+      const row = reader.acc.callRow(toolUseId);
+      if (row) return row;
+    }
+    return null;
   }
 
   /**
@@ -2437,7 +2499,7 @@ export class MessagesService {
     return reader;
   }
 
-  /** Subagent meta files read so far, by host path: they don't change once written. */
+  /** Finished subagents' meta files read so far, by host path: Claude Code rewrites one until it adds `finished`, then no more. */
   private readonly metas = new Map<string, SubagentMeta>();
 
   /**
@@ -2470,8 +2532,9 @@ export class MessagesService {
             type: typeof raw.agentType === 'string' ? raw.agentType : 'agent',
             description: typeof raw.description === 'string' ? raw.description : '',
             ...(typeof raw.model === 'string' ? { model: raw.model } : {}),
+            ...(raw.finished === true ? { finished: true as const } : {}),
           };
-          this.metas.set(file, meta);
+          if (meta.finished) this.metas.set(file, meta);
         } catch {
           continue; // still being written
         }

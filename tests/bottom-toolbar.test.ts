@@ -80,7 +80,6 @@ describe("a content's toolbar", () => {
     'components/BottomToolbar.tsx': { count: 1, why: "the desktop's pane toolbar; a phone draws the bottom toolbar instead" },
     'components/Composer.tsx': { count: 1, why: "the message box's own row of pickers, above the keyboard" },
     'SessionsApp.tsx': { count: 1, why: "a chat card's buttons on the Overview, one strip per card" },
-    'components/ActivityPanel.tsx': { count: 1, why: "ScriptNow: a REPL call's pager inside Now, whose bottom toolbar is Now's" },
   };
 
   it('keeps an inline strip of buttons only where a list allows it', () => {

@@ -13,11 +13,7 @@
  * (components/scroll-top.ts), not stopped partway where the older items it loaded put the reader back.
  */
 import { scrollToTop } from '../components/scroll-top';
-
-/** How far down the top document waits for the status bar to scroll it back. */
-const PARKED = 1;
-/** A drag let go goes on moving for a while; a scroll to the top within this after a touch was the finger's. */
-const AFTER_TOUCH_MS = 1000;
+import { AFTER_TOUCH_MS, PARKED, statusBarTapped } from './status-tap';
 
 /** The scroller a status bar tap moves in `doc`: the one that scrolls up and down and shows the most of itself. */
 export function mainScroller(doc: Document): HTMLElement | null {
@@ -68,10 +64,12 @@ export function installStatusBarTap(doc: Document, target: () => Document | null
     clearTimeout(parkTimer);
     parkTimer = setTimeout(park, ms);
   };
+  let resizedAt = -Infinity;
   const onScroll = () => {
     if (win.scrollY >= PARKED) return;
     watchFrames();
-    if (fingers > 0 || performance.now() - touchedAt < AFTER_TOUCH_MS) return parkSoon(AFTER_TOUCH_MS);
+    const now = performance.now();
+    if (!statusBarTapped({ scrollY: win.scrollY, fingers, sinceTouch: now - touchedAt, sinceResize: now - resizedAt })) return parkSoon(AFTER_TOUCH_MS);
     const d = target();
     const el = d ? mainScroller(d) : null;
     if (el && !scrolling) {
@@ -85,11 +83,18 @@ export function installStatusBarTap(doc: Document, target: () => Document | null
   };
   park();
   win.addEventListener('scroll', onScroll, { passive: true });
-  // Rotating or the keyboard can scroll the document back.
-  win.addEventListener('resize', () => parkSoon(300));
+  // Rotating or the keyboard can scroll the document back: parked again, and not taken for a tap.
+  const resized = () => {
+    resizedAt = performance.now();
+    parkSoon(300);
+  };
+  win.addEventListener('resize', resized);
+  win.visualViewport?.addEventListener('resize', resized);
   return () => {
     clearTimeout(parkTimer);
     win.removeEventListener('scroll', onScroll);
+    win.removeEventListener('resize', resized);
+    win.visualViewport?.removeEventListener('resize', resized);
     doc.removeEventListener('load', onLoad, true);
     doc.documentElement.classList.remove('ph-status-tap');
   };

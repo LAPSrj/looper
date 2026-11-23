@@ -96,6 +96,33 @@ export function jpegOrientation(bytes: Uint8Array): number {
   return 1;
 }
 
+/**
+ * A JPEG's width and height as it shows (turned by its EXIF orientation), from its frame header, without decoding
+ * it; null when it isn't a JPEG or `head` ends before the frame header.
+ */
+export function jpegSize(head: Uint8Array): { width: number; height: number } | null {
+  if (!isJpeg(head)) return null;
+  const view = new DataView(head.buffer, head.byteOffset, head.byteLength);
+  let at = 2;
+  while (at + 9 <= head.length && head[at] === 0xff) {
+    const marker = head[at + 1];
+    // Start of scan or end of image: no frame header before them.
+    if (marker === 0xda || marker === 0xd9) return null;
+    // A frame header (SOF0 to SOF15; C4, C8 and CC are other segments) holds the height, then the width.
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      const height = view.getUint16(at + 5);
+      const width = view.getUint16(at + 7);
+      if (!width || !height) return null;
+      return jpegOrientation(head) >= 5 ? { width: height, height: width } : { width, height };
+    }
+    at += 2 + view.getUint16(at + 2);
+  }
+  return null;
+}
+
+/** A PNG's or JPEG's size as it shows, from the start of its file; null for another kind, or a start too short. */
+export const imageHeadSize = (head: Uint8Array): { width: number; height: number } | null => pngSize(head) ?? jpegSize(head);
+
 /** `src` turned and mirrored as EXIF orientation `o` says, so it shows upright. */
 export function upright(src: Pixels, o: number): Pixels {
   if (o <= 1 || o > 8) return src;

@@ -546,5 +546,92 @@ export interface HostFileView {
   token?: string;
 }
 
-/** Largest WebSocket message either side sends; bigger files go through /api/upload. */
+/** Largest WebSocket message either side sends; a longer message goes as parts (splitMessage), bigger files through /api/upload. */
 export const MAX_WS_MESSAGE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * What starts a part of a message too long for one WebSocket message: `\u001e<id>:<index>:<count>\n` and the
+ * part's text. A whole message is JSON, which starts with `{`, so the two can't be confused.
+ */
+const PART_MARK = '\u001e';
+/** A part's text in UTF-16 units: each is at most 3 bytes of UTF-8 (a surrogate pair, 2 units, is 4), so a part fits MAX_WS_MESSAGE_BYTES with its header. */
+export const PART_CHARS = Math.floor((MAX_WS_MESSAGE_BYTES - 64) / 3);
+
+/**
+ * A message's text as the WebSocket messages that carry it: itself, or parts of PART_CHARS that MessageJoiner puts
+ * together again, each under MAX_WS_MESSAGE_BYTES. `id` names the message among its sender's others. Only slices:
+ * no byte count of the whole text, which would scan megabytes on the main process's thread.
+ */
+export function splitMessage(text: string, id: string): string[] {
+  if (text.length <= PART_CHARS) return [text];
+  const cuts: number[] = [0];
+  for (let at = 0; at < text.length; ) {
+    let end = Math.min(text.length, at + PART_CHARS);
+    // A surrogate pair stays in one part, so each part is valid UTF-16 on its own.
+    const c = text.charCodeAt(end - 1);
+    if (end < text.length && c >= 0xd800 && c <= 0xdbff) end--;
+    cuts.push(end);
+    at = end;
+  }
+  const count = cuts.length - 1;
+  return cuts.slice(1).map((end, i) => `${PART_MARK}${id}:${i}:${count}\n${text.slice(cuts[i], end)}`);
+}
+
+/** Whether a received WebSocket message is a part of a longer one. */
+export const isMessagePart = (text: string): boolean => text.startsWith(PART_MARK);
+
+const PART_HEAD = /^\u001e([^:]+):(\d+):(\d+)$/;
+
+/**
+ * Puts the parts of each long message together again (splitMessage). Keeps at most `maxChars` of parts and
+ * MAX_PENDING messages waiting at once: a message past either is dropped, and its later parts with it.
+ */
+export class MessageJoiner {
+  static readonly MAX_PENDING = 4;
+  private readonly pending = new Map<string, { parts: string[]; count: number; got: number; chars: number }>();
+  private chars = 0;
+
+  constructor(private readonly maxChars: number) {}
+
+  /** The whole message once `frame` was its last part to come; null while parts are missing, or for a frame that isn't a part. */
+  push(frame: string): string | null {
+    const nl = frame.indexOf('\n');
+    const m = nl < 0 ? null : PART_HEAD.exec(frame.slice(0, nl));
+    if (!m) return null;
+    const [id, index, count] = [m[1], Number(m[2]), Number(m[3])];
+    if (!(count > 1 && index < count)) return null;
+    const text = frame.slice(nl + 1);
+    let msg = this.pending.get(id);
+    if (!msg) {
+      // A part after its message was dropped (only its first part starts one): it's dropped too.
+      if (index !== 0) return null;
+      if (this.pending.size >= MessageJoiner.MAX_PENDING) this.drop(this.pending.keys().next().value as string);
+      msg = { parts: new Array<string>(count), count, got: 0, chars: 0 };
+      this.pending.set(id, msg);
+    }
+    if (msg.count !== count || msg.parts[index] !== undefined) return null;
+    if (this.chars + text.length > this.maxChars) {
+      this.drop(id);
+      return null;
+    }
+    msg.parts[index] = text;
+    msg.got++;
+    msg.chars += text.length;
+    this.chars += text.length;
+    if (msg.got < count) return null;
+    this.drop(id);
+    return msg.parts.join('');
+  }
+
+  /** Parts waiting, in UTF-16 units. */
+  get waiting(): number {
+    return this.chars;
+  }
+
+  private drop(id: string): void {
+    const msg = this.pending.get(id);
+    if (!msg) return;
+    this.chars -= msg.chars;
+    this.pending.delete(id);
+  }
+}

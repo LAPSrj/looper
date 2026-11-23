@@ -20,7 +20,7 @@ import type { SessionActivity, SessionsState, SlashCommand } from './sessions';
 import type { OutputRead } from './output-tail';
 import type { GitChange, GitCommit, GitCommitDetail, GitFileDiff, GitStatusResult } from './git';
 import type { HistoryCommand, HistoryCommands, HistoryConversation, HistoryList, HistoryListOptions } from './history';
-import type { MessageImage, ScriptCalls, MessagesResult, SentFileInfo } from './messages';
+import type { MessageImage, MessageRow, ScriptCalls, MessagesResult, SentFileInfo } from './messages';
 import type { PerfEntry } from './perf';
 import type { VersionDetail, VersionSummary } from './versions';
 import type { DiscoveredModel } from './model-update';
@@ -190,8 +190,10 @@ export interface LooperApi {
     messages(id: string, runId: string, agentId?: string, raw?: boolean, known?: string): Promise<MessagesResult>;
     /** The image payload behind a message row's image marker. */
     messageImage(id: string, runId: string, rowId: string, agentId?: string): Promise<MessageImage | null>;
-    /** `count` of the tool calls a Code Mode script made, before the `before`th (the newest without it), by its REPL call's tool_use id; null when the run's conversations don't have them. */
-    scriptCalls(id: string, runId: string, toolUseId: string, before: number | null, count: number, agentId?: string): Promise<ScriptCalls | null>;
+    /** `count` of the tool calls a Code Mode script made, before the `before`th (the newest without it), by its REPL call's tool_use id; null when the run's conversations don't have them. `brief`: as a list shows them (briefRow). */
+    scriptCalls(id: string, runId: string, toolUseId: string, before: number | null, count: number, agentId?: string, brief?: boolean): Promise<ScriptCalls | null>;
+    /** A compacted conversation's call (MessageRow.run) whole, from the transcript of the run that holds it, by its tool_use id; null once that's gone. */
+    call(id: string, runId: string, toolUseId: string): Promise<MessageRow | null>;
     /** A run's message box's Attach Files: the open dialog, then the picked files copied into the task's attachments. */
     pickFiles(id: string): Promise<Attachment[]>;
     /** Copy pasted or dropped files into the task's attachments, ready to go with guidance. */
@@ -234,7 +236,10 @@ export interface LooperApi {
   openItemWindow(kind: 'task' | 'project' | 'chat', id: string): void;
   /** A chat in the Sessions window. */
   chat: {
+    /** A phone or tablet gets the older heavy rows brief (MessageRow.brief, chat-window.ts); `rows` reads them whole. */
     get(id: string): Promise<ChatState | null>;
+    /** The chat's rows with these ids, whole, in that order (the ones it doesn't have left out). */
+    rows(id: string, ids: string[]): Promise<MessageRow[]>;
     /** To the agent, or into the chat's queue while it works. */
     send(id: string, text: string, attachments: Attachment[]): void;
     /** Before a message goes to an idle agent: false when Settings → Chats asks first (its prompt cache expired) and the user cancels. */

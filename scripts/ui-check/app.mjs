@@ -1,7 +1,8 @@
 // The app `npm run ui-check` drives: a private copy of the built app and of the demo data (scripts/screenshots/demo) in
 // UI_CHECK_ROOT (default /tmp/looper-ui-check), launched in this computer's Electron with Remote Access on, so a phone
-// can pair as scripts/perf/phone.mjs pairs one. The agents run as `cat`, and one chat is seeded from a made-up
-// transcript with two subagents and two background commands still running, so the Activity sheet has items to open.
+// can pair as scripts/perf/phone.mjs pairs one. The agents run as a script that stays up (AGENT), and one chat is seeded
+// from a made-up transcript with two subagents and two background commands still running, so the Activity sheet has items
+// to open and a running subagent's conversation has its message box (a chat that has ended takes no messages for them).
 import * as crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -18,6 +19,8 @@ const DATA = path.join(ROOT, 'home');
 const PROJ = path.join(ROOT, 'projects');
 const CONFIG = path.join(ROOT, 'claude');
 const DEMO = path.join(REPO, 'scripts', 'screenshots', 'demo');
+/** Stands in for Claude Code: stays up whatever its arguments, so the chat doesn't end (cat exits on Claude Code's). */
+const AGENT = path.join(ROOT, 'agent.sh');
 // The build to run: out/ unless UI_CHECK_OUT names another (`electron-vite build --outDir`), so a check can run a build
 // of its own while other work rebuilds out/.
 const OUT = process.env.UI_CHECK_OUT ? path.resolve(process.env.UI_CHECK_OUT) : path.join(REPO, 'out');
@@ -98,6 +101,7 @@ function writeTranscript(dir, sid, cwd) {
 function seed() {
   for (const d of [DATA, PROJ, CONFIG, path.join(ROOT, 'profile')]) fs.rmSync(d, { recursive: true, force: true });
   fs.mkdirSync(ROOT, { recursive: true });
+  fs.writeFileSync(AGENT, "#!/bin/sh\ntrap 'exit 0' TERM INT HUP\nwhile :; do sleep 2; done\n", { mode: 0o755 });
   fs.cpSync(path.join(DEMO, 'home'), DATA, { recursive: true });
   fs.cpSync(path.join(DEMO, 'projects'), PROJ, { recursive: true });
   // The grouped pane of a few hundred items the check opens (fixture-addon/): not part of the screenshots' demo data.
@@ -113,7 +117,7 @@ function seed() {
   for (const f of walk(DATA).filter((f) => /\.json$/.test(f))) replaceAll(f, [['/home/leandro/looper-demo', PROJ]]);
   const settingsFile = path.join(DATA, 'settings.json');
   const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
-  for (const h of settings.environments.find((e) => e.id === 'local').harnesses) Object.assign(h, { command: 'cat', args: [], env: { CLAUDE_CONFIG_DIR: CONFIG } });
+  for (const h of settings.environments.find((e) => e.id === 'local').harnesses) Object.assign(h, { command: AGENT, args: [], env: { CLAUDE_CONFIG_DIR: CONFIG } });
   settings.environments = settings.environments.filter((e) => e.id === 'local');
   settings.defaultEnvironmentId = 'local';
   fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
@@ -201,6 +205,12 @@ export async function startApp({ remote = true } = {}) {
 
 export async function stopApp(app) {
   const proc = app.process();
+  // The agents first: with them still up, the app didn't exit.
+  try {
+    execFileSync('pkill', ['-f', AGENT]);
+  } catch {
+    // None running.
+  }
   await app.evaluate(({ app: a }) => a.exit(0)).catch(() => undefined);
   if (proc.exitCode === null) await new Promise((done) => proc.once('exit', done));
 }

@@ -261,7 +261,10 @@ export function backgroundOf(rows: MessageRow[]): BackgroundTask[] {
 
 /**
  * Each subagent's status, from the Agent call's row: done once it has a
- * result, or by its background notification; and when that call was made.
+ * result, or by its background notification; and when that call was made. A
+ * call a Code Mode script made is under its REPL row (`started`): it gives the
+ * time, and a foreground one's result, while a background one's notification
+ * (`ended`) says how it went, as it does for a subagent a subagent started.
  * `stats` adds what its transcript says about its model, effort and context,
  * and the context window of that model: the session's own (`windows`, a chat's
  * modelWindows), else one Looper has seen it run with (modelWindows).
@@ -273,8 +276,13 @@ export function subagentsOf(
   windows?: Record<string, number>,
   ended?: MessagesResult['ended'],
 ): SubagentInfo[] {
+  const scripted = rows.flatMap((r) => r.started ?? []);
   return metas.map((m) => {
-    const row = rows.find((r) => r.toolUseId === m.toolUseId) ?? rows.find((r) => r.agentId === m.agentId || r.background?.id === m.agentId);
+    const call = (rs: MessageRow[]) => rs.find((r) => r.toolUseId === m.toolUseId) ?? rs.find((r) => r.agentId === m.agentId || r.background?.id === m.agentId);
+    const top = call(rows);
+    const byScript = top ? undefined : call(scripted);
+    const row = top ?? (byScript && !byScript.background ? byScript : undefined);
+    const startedAt = (top ?? byScript)?.ts;
     let status: SubagentInfo['status'] = 'running';
     if (row?.background) status = row.background.status === 'running' ? 'running' : row.background.status === 'completed' ? 'done' : 'failed';
     else if (row?.result !== undefined) status = row.resultError ? 'failed' : 'done';
@@ -282,9 +290,10 @@ export function subagentsOf(
       // A subagent a subagent started: its Agent call is in that subagent's transcript, and this one has only its notification.
       const how = ended[m.agentId];
       status = how === 'running' ? 'running' : how === 'completed' ? 'done' : 'failed';
-    } else if (!row?.background && !ended?.[m.agentId] && stats?.get(m.agentId)?.stopped) {
-      // Nothing else says how it went, but its own transcript ends on a finished turn: it stopped (agents asked for
-      // by a Code Mode script or started before a compaction have no result row, or one that never came).
+    } else if (!row?.background && !ended?.[m.agentId] && (m.finished || stats?.get(m.agentId)?.stopped)) {
+      // Nothing else says how it went, but Claude Code's meta file says it finished, or its own transcript ends on a
+      // finished turn: it stopped (agents asked for by a Code Mode script or another subagent, or started before a
+      // compaction, have no result row, or one that never came).
       status = 'done';
     }
     const s = stats?.get(m.agentId);
@@ -296,7 +305,7 @@ export function subagentsOf(
       description: m.description,
       ...(m.model ? { model: m.model } : {}),
       status,
-      ...(row?.ts ? { startedAt: row.ts } : {}),
+      ...(startedAt ? { startedAt } : {}),
       ...(s?.model ? { modelId: s.model } : {}),
       ...(s?.effort ? { effort: s.effort } : {}),
       ...(s ? { contextTokens: s.tokens } : {}),

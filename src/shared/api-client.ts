@@ -120,7 +120,8 @@ export function createLooperApi(t: LooperTransport): LooperApi {
       clear: (id) => t.invoke('runs:clear', id),
       messages: (id, runId, agentId, raw, known) => t.invoke('runs:messages', id, runId, agentId, raw, known),
       messageImage: (id, runId, rowId, agentId) => t.invoke('runs:messageImage', id, runId, rowId, agentId),
-      scriptCalls: (id, runId, toolUseId, before, count, agentId) => t.invoke('runs:scriptCalls', id, runId, toolUseId, before, count, agentId),
+      scriptCalls: (id, runId, toolUseId, before, count, agentId, brief) => t.invoke('runs:scriptCalls', id, runId, toolUseId, before, count, agentId, brief),
+      call: (id, runId, toolUseId) => t.invoke('runs:call', id, runId, toolUseId),
       pickFiles: (id) => t.invoke('runs:pickFiles', id).catch(plainError),
       attachFiles: async (id, files) => t.invoke('runs:attach', id, await t.files(files)),
       runCommand: (id, runId, command, commandId) => t.invoke('runs:runCommand', id, runId, command, commandId).catch(plainError),
@@ -143,6 +144,7 @@ export function createLooperApi(t: LooperTransport): LooperApi {
     openItemWindow: (kind, id) => t.send('window:openItem', kind, id),
     chat: {
       get: (id) => t.invoke('chat:get', id),
+      rows: (id, ids) => t.invoke('chat:rows', id, ids),
       send: (id, text, attachments) => t.send('chat:send', id, text, attachments),
       confirmSend: (id) => t.invoke('chat:confirmSend', id),
       answer: (id, requestId, allow) => t.send('chat:answer', id, requestId, allow),

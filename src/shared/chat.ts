@@ -17,6 +17,9 @@ export interface Attachment {
   path: string;
   /** An image the agent gets to see itself (PNG, JPEG, GIF or WebP). */
   image: boolean;
+  /** An image's width and height in pixels as it shows, when Looper read them from the file: its tile takes its thumbnail's size before the thumbnail comes. */
+  width?: number;
+  height?: number;
   /** A command and its output, which go to the agent with the message. */
   command?: CommandOutput;
 }

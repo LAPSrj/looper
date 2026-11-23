@@ -6,8 +6,10 @@
 
 html[data-platform='ios'] {
   --ios-bg: #ffffff;
-  /* The hard scroll edge (iOS 27's uniform bar): the kit's white at 85% over the page, which nothing scrolls
-     behind here, so it's drawn opaque; and its faint edge line. */
+  /* The hard scroll edge effect (iOS 27's uniform bar, kit: Scroll Edge Effect - Hard): white at 85% with a 6 pt blur
+     over the content that scrolls under a bar, and its faint edge line. --ios-bar is the same drawn opaque, under a bar
+     over a page that starts below it, where nothing passes behind. */
+  --ios-edge-hard: rgba(255, 255, 255, 0.85);
   --ios-bar: #fdfdfd;
   --ios-bar-line: rgba(0, 0, 0, 0.05);
   --ios-fill2: rgba(120, 120, 128, 0.16);
@@ -34,6 +36,7 @@ html[data-platform='ios'] {
 @media (prefers-color-scheme: dark) {
   html[data-platform='ios'] {
     --ios-bg: #000000;
+    --ios-edge-hard: rgba(0, 0, 0, 0.55);
     --ios-bar: #050505;
     --ios-bar-line: rgba(0, 0, 0, 0.1);
     --ios-fill2: rgba(120, 120, 128, 0.32);
@@ -43,6 +46,13 @@ html[data-platform='ios'] {
     --ios-folder: #39a8f0;
     --ios-sheet: #1c1c1e;
     --ios-sheet-cell: #2c2c2e;
+  }
+}
+
+/* Without backdrop blur (some WebKit builds), the edge effect is the opaque bar, so a title over content stays legible. */
+@supports not (backdrop-filter: blur(1px)) {
+  html[data-platform='ios'] {
+    --ios-edge-hard: var(--ios-bar);
   }
 }
 
@@ -66,8 +76,20 @@ html[data-platform='ios'] {
 }
 
 /* ---------- the navigation bar ---------- */
-/* No fill of its own (the frame gives it the page's top color, inline), and the hard scroll edge
-   (.edge) once the page under it has scrolled. Nothing passes behind it, so there's nothing to blur. */
+/* The bar floats over its page, which runs under it to the screen's top: "Large titles are now placed at the top of the
+   content scroll view, and scroll with the content underneath the bar. To keep the large title visible, extend the
+   scroll view fully under the navigationBar" (WWDC25 284). The page starts its content below the bar (--looper-bar-h,
+   PhoneIframe; phone.css). */
+.ios .ph-bar-slot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+/* No fill of its own: "the bar background is now transparent by default" (WWDC25 284). Over a page that runs under it
+   (.under) it stays transparent until the page scrolls there, then the hard scroll edge effect (.edge) shows behind its
+   buttons; over a page that starts below it, the frame gives it the page's top color (inline) and the edge is opaque,
+   with nothing behind it to blur. */
 .ios-bar {
   position: relative;
   z-index: 1;
@@ -83,6 +105,53 @@ html[data-platform='ios'] {
 .ios-bar.edge {
   background: var(--ios-bar);
   box-shadow: 0 1px 0 var(--ios-bar-line);
+}
+/* "All scroll views underneath navigation or toolbars automatically apply a visual treatment" (WWDC25 284); the hard
+   one, as the automatic style gives "top toolbars that contain ... text that appears outside of Liquid Glass controls"
+   (HIG Scroll views): the bar's title shows once the page scrolls. A layer of the bar's own, so its buttons stay above
+   it; on an iPad's split bar each column has its own, the bar's full height: "each pane can have its own scroll edge
+   effect; in this case, keep them consistent in height" (HIG Scroll views). */
+.ios-bar.under.edge {
+  background: transparent;
+  box-shadow: none;
+}
+.ios-bar.under.edge::before,
+.ios-bar.under .ios-bar-split > .ios-bar-row.edge::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--ios-edge-hard);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 1px 0 var(--ios-bar-line);
+  pointer-events: none;
+  animation: ph-fade-in 0.2s ease-out;
+}
+.ios-bar.under .ios-bar-split > .ios-bar-row.edge {
+  background: none;
+  box-shadow: none;
+}
+.ios-bar.under .ios-bar-split > .ios-bar-list.edge {
+  box-shadow: inset -0.5px 0 0 var(--ios-sep);
+}
+.ios-bar.under .ios-bar-split > .ios-bar-list.edge::before {
+  right: auto;
+  width: var(--ios-split-lead, 0px);
+}
+.ios-bar.under .ios-bar-split > .ios-bar-detail.edge::before {
+  left: var(--ios-split-lead, 0px);
+  right: var(--ios-split-inspector, 0px);
+}
+/* The glass over the edge effect doesn't blur again what it already blurs: "glass cannot sample other glass" (WWDC25
+   323), and in WebKit a backdrop-filter over another one held an iPad's frames for seconds at a time (phone.css, the
+   bottom toolbar). The buttons keep their fill and rim. */
+.ios-bar.under:is(.edge, :has(.edge)) :is(.ios-back, .ios-text-btn, .ios-icon-btn, .ios-bar-group, .ios-tabbar) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 /* In a sheet the bar's buttons sit 16 below the sheet's top (the kit's sheet). These sheets have one height, so no
    grabber: "Include a grabber in a resizable sheet" (HIG Sheets; ios.md: Sheets). */

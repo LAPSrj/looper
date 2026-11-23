@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import type { DragEvent, HTMLAttributes, KeyboardEvent, ReactNode, Ref, UIEvent } from 'react';
+import type { CSSProperties, DragEvent, HTMLAttributes, KeyboardEvent, ReactNode, Ref, UIEvent } from 'react';
 import type { MenuItemSpec } from '@shared/remote-access';
 import { dayGroups } from '../phone-lists';
 import { isPhone } from '../web/page-nav';
 import { EmptyState } from './EmptyState';
 import { useListNav } from './hooks';
 import { listContextMenu } from './list-nav';
+import { useRowWindow, WINDOW_FROM } from './row-window';
 import { Group, Row, SwipeRow } from './phone/PhoneList';
 import { ReorderSheet } from './phone/ReorderSheet';
 
@@ -164,6 +165,11 @@ export interface RowListProps<T> extends Rows<T> {
   section?: boolean;
   /** A heading for the list among a window's other parts: a phone section's header, a label above the desktop's listbox. */
   title?: string;
+  /**
+   * Rows of one height that can pass a few hundred: past WINDOW_FROM rows only the ones in view are drawn, on the
+   * desktop (the listbox scrolls) and on a phone (its rows' screen scrolls). Not with `groupOf`, `dayOf`, `bare` or `section`.
+   */
+  windowed?: boolean;
 }
 
 /** A list of selectable multi-line rows: a listbox on the desktop, list rows on a phone or tablet. */
@@ -173,6 +179,12 @@ export function RowList<T>(props: RowListProps<T>) {
   if (props.bare) return <PhoneRowItems {...props} items={props.rows.map((row, index) => ({ row, index }))} />;
   return <PhoneRows {...props} onRowsScroll={props.onListScroll} />;
 }
+
+/**
+ * The height the rows a windowed list doesn't draw take. A spacer never anchors the scroll (Chromium's scroll anchoring
+ * kept one in view when it shrank, which sent a jump to the end of the list back near its start).
+ */
+const spacer = (height: number): CSSProperties => ({ height, overflowAnchor: 'none' });
 
 /** The drag that moves a desktop row before or after another. */
 function useRowDrag<T>(rows: readonly T[], rowKey: (row: T, index: number) => string, onReorder?: (keys: string[]) => void) {
@@ -221,6 +233,10 @@ function DesktopRowList<T>(props: RowListProps<T>) {
   const drag = useRowDrag(rows, rowKey, props.onReorder);
   // React's autoFocus focuses only form controls, so a listbox is focused here.
   const ref = useRef<HTMLDivElement>(null);
+  const top = useRef<HTMLDivElement>(null);
+  const bottom = useRef<HTMLDivElement>(null);
+  const windowed = !!props.windowed && !props.groupOf && rows.length > WINDOW_FROM;
+  const win = useRowWindow(ref, top, bottom, rows.length, windowed, index);
   useEffect(() => {
     if (autoFocus) ref.current?.focus({ preventScroll: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -235,11 +251,16 @@ function DesktopRowList<T>(props: RowListProps<T>) {
       aria-label={label}
       aria-activedescendant={index >= 0 ? `${idPrefix}-${selected}` : undefined}
       onKeyDown={onKeyDown}
-      onScroll={onListScroll}
+      onScroll={(e) => {
+        if (windowed) win.onScroll();
+        onListScroll?.(e);
+      }}
       onContextMenu={onMenu && ((e) => listContextMenu(e, index, (i) => onMenu(rows[i])))}
     >
       {rows.length === 0 && shown(empty) && <EmptyState at="row">{empty}</EmptyState>}
-      {rows.map((r, i) => {
+      {windowed && <div ref={top} aria-hidden style={spacer(win.first * win.rowH)} />}
+      {(windowed ? rows.slice(win.first, win.last) : rows).map((r, j) => {
+        const i = windowed ? win.first + j : j;
         const key = rowKey(r, i);
         const click = activateOnClick && onOpen ? () => onOpen(r) : onSelect && (() => onSelect(r, i));
         return (
@@ -266,6 +287,7 @@ function DesktopRowList<T>(props: RowListProps<T>) {
           </div>
         );
       })}
+      {windowed && <div ref={bottom} aria-hidden style={spacer((rows.length - win.last) * win.rowH)} />}
     </div>
   );
   if (!props.title) return list;
@@ -280,9 +302,25 @@ function DesktopRowList<T>(props: RowListProps<T>) {
 }
 
 /** A scrolling list of PhoneList rows in sections, for a phone or tablet: a tap opens, a long press shows the menu. */
-export function PhoneRows<T>(props: RowsOnPhone<T> & Pick<Rows<T>, 'empty' | 'note' | 'head' | 'groupOf' | 'dayOf' | 'sectionTitle'> & { onRowsScroll?: (e: UIEvent<HTMLDivElement>) => void; rowsRef?: Ref<HTMLDivElement> }) {
+export function PhoneRows<T>(
+  props: RowsOnPhone<T> &
+    Pick<Rows<T>, 'empty' | 'note' | 'head' | 'groupOf' | 'dayOf' | 'sectionTitle'> &
+    Pick<RowListProps<T>, 'windowed'> & { onRowsScroll?: (e: UIEvent<HTMLDivElement>) => void; rowsRef?: Ref<HTMLDivElement> },
+) {
   const { rows, empty, note, head, groupOf, dayOf, sectionTitle, onRowsScroll, rowsRef } = props;
-  const keyed = rows.map((row, index) => ({ row, index }));
+  // A long list of one section draws the rows in view; the undrawn ones are spacers outside the section, so its first
+  // and last drawn rows keep their own corners.
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const top = useRef<HTMLDivElement>(null);
+  const bottom = useRef<HTMLDivElement>(null);
+  const windowed = !!props.windowed && !groupOf && !dayOf && rows.length > WINDOW_FROM;
+  const win = useRowWindow(scroller, top, bottom, rows.length, windowed, -1);
+  const setScroller = (el: HTMLDivElement | null) => {
+    scroller.current = el;
+    if (typeof rowsRef === 'function') rowsRef(el);
+    else if (rowsRef) (rowsRef as { current: HTMLDivElement | null }).current = el;
+  };
+  const keyed = (windowed ? rows.slice(win.first, win.last) : rows).map((row, j) => ({ row, index: windowed ? win.first + j : j }));
   const sections: { key: string; title: string; items: typeof keyed }[] = dayOf
     ? dayGroups(keyed, (k) => dayOf(k.row), Date.now())
     : groupOf
@@ -295,9 +333,17 @@ export function PhoneRows<T>(props: RowsOnPhone<T> & Pick<Rows<T>, 'empty' | 'no
         }, [])
       : [{ key: 'all', title: '', items: keyed }];
   return (
-    <div className="pg-rows" onScroll={onRowsScroll} ref={rowsRef}>
+    <div
+      className="pg-rows"
+      onScroll={(e) => {
+        if (windowed) win.onScroll();
+        onRowsScroll?.(e);
+      }}
+      ref={setScroller}
+    >
       {head}
       {note && <p className="pg-group-footer">{note}</p>}
+      {windowed && <div ref={top} aria-hidden style={spacer(win.first * win.rowH)} />}
       {rows.length === 0 ? (
         <Group title={sectionTitle?.('', 0)}>
           <EmptyState at="section">{empty}</EmptyState>
@@ -309,6 +355,7 @@ export function PhoneRows<T>(props: RowsOnPhone<T> & Pick<Rows<T>, 'empty' | 'no
           </Group>
         ))
       )}
+      {windowed && <div ref={bottom} aria-hidden style={spacer((rows.length - win.last) * win.rowH)} />}
     </div>
   );
 }

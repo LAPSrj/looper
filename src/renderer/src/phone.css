@@ -194,6 +194,55 @@ html.phone-window[data-lifted] body {
 html.phone-window[data-lifted] #root {
   background: var(--bg);
 }
+/* iOS: the frame's bar floats over the page (PhoneIframe). Every page starts its content below it (--looper-bar-h), and
+   a page's scroller at the top of a screen or column runs under it to the screen's top: "Large titles are now placed at
+   the top of the content scroll view, and scroll with the content underneath the bar. To keep the large title visible,
+   extend the scroll view fully under the navigationBar" (WWDC25 284). It starts its content below the bar too, and
+   carries it under the bar as it scrolls, which then shows its title and the scroll edge effect (ios.md: Scroll edge
+   effects). Only the scrollers named here go under the bar; anything else stays below it. Lifted for a sheet of the
+   page's, the page starts below the bar again, as above. */
+html.phone-window[data-under-bar]:not([data-lifted]) #root {
+  padding-top: var(--looper-bar-h, 0px);
+}
+html.phone-window[data-under-bar]:not([data-lifted]) #root > :is(.phone-page, .editor-window) {
+  margin-top: calc(-1 * var(--looper-bar-h, 0px));
+  height: calc(100% + var(--looper-bar-h, 0px));
+  padding-top: var(--looper-bar-h, 0px);
+}
+/* The first list of a screen or of a split view's column (the large title's), and an editor's. On an iPhone a tab's search
+   field floats over the tab bar (.phone-main > .phone-screen > .pg-search), so the list after it is the screen's first. */
+html.phone-window[data-under-bar]:not([data-lifted]) .phone-main > .phone-screen > :is(.pg-scroll:first-child, .pg-search + .pg-scroll),
+html.phone-window[data-under-bar]:not([data-lifted]) .phone-main-row > .phone-screen > .pg-scroll:first-child,
+html.phone-window[data-under-bar]:not([data-lifted]) .pg-split:not(.stacked) > :is(.pg-split-lead, .pg-split-detail) > :is(.pg-scroll:first-child, .phone-screen > .pg-scroll:first-child),
+html.phone-window[data-under-bar]:not([data-lifted]) .editor-window > .editor > .pg-scroll:first-child {
+  margin-top: calc(-1 * var(--looper-bar-h, 0px));
+  scroll-padding-top: var(--looper-bar-h, 0px);
+}
+/* The room under the bar scrolls with the content, so it goes under the bar too. */
+html.phone-window[data-under-bar]:not([data-lifted]) .phone-main > .phone-screen > :is(.pg-scroll:first-child, .pg-search + .pg-scroll)::before,
+html.phone-window[data-under-bar]:not([data-lifted]) .phone-main-row > .phone-screen > .pg-scroll:first-child::before,
+html.phone-window[data-under-bar]:not([data-lifted]) .pg-split:not(.stacked) > :is(.pg-split-lead, .pg-split-detail) > :is(.pg-scroll:first-child, .phone-screen > .pg-scroll:first-child)::before,
+html.phone-window[data-under-bar]:not([data-lifted]) .editor-window > .editor > .pg-scroll:first-child::before {
+  content: '';
+  display: block;
+  flex: none;
+  height: var(--looper-bar-h, 0px);
+}
+/* A conversation: the chat runs under the bar, and its scroller starts its messages below it. */
+html.phone-window[data-under-bar]:not([data-lifted]) .pg-split:not(.stacked) > .pg-split-detail > :is(.sessions-center, .pg-split-pane > .sessions-center) > .chat-app:first-child {
+  margin-top: calc(-1 * var(--looper-bar-h, 0px));
+}
+html.phone-window[data-under-bar]:not([data-lifted]) .pg-split:not(.stacked) > .pg-split-detail > :is(.sessions-center, .pg-split-pane > .sessions-center) > .chat-app:first-child > .builder-chat > .chat-scroll {
+  scroll-padding-top: var(--looper-bar-h, 0px);
+}
+/* Its rows are 10 apart (styles.css .chat-scroll's gap): the room isn't a row. */
+html.phone-window[data-under-bar]:not([data-lifted]) .pg-split:not(.stacked) > .pg-split-detail > :is(.sessions-center, .pg-split-pane > .sessions-center) > .chat-app:first-child > .builder-chat > .chat-scroll::before {
+  content: '';
+  display: block;
+  flex: none;
+  height: var(--looper-bar-h, 0px);
+  margin-bottom: -10px;
+}
 html.phone-window .phone-page {
   height: 100%;
   display: flex;
@@ -491,13 +540,13 @@ html.phone-window[data-platform='ios'] .pg-row-check {
   flex: none;
   color: var(--pg-tint);
 }
-/* A hairline between rows, from the text's start to as far from the right edge. */
+/* A hairline between rows, from the text's start to the card's trailing edge (ios.md: Lists, kit). */
 html.phone-window[data-platform='ios'] :is(.pg-row + .pg-row, .empty-section + .pg-row, .pg-sessions .session-row + .session-row, .pg-swipe + .pg-swipe > .pg-swipe-content > .pg-row)::before {
   content: '';
   position: absolute;
   top: 0;
   left: 16px;
-  right: 16px;
+  right: 0;
   height: 0.5px;
   background: var(--pg-sep);
   pointer-events: none;
@@ -1349,10 +1398,29 @@ html.phone-window .phone-sessions .overview-card > .overview-messages {
   padding: 8px 18px;
   border-top: 0.5px solid var(--pg-sep);
   gap: 6px;
-  font-size: calc(15 * var(--u));
+  font-size: var(--card-msg-size);
 }
 html.phone-window .phone-sessions .overview-card > .overview-messages:empty {
   display: none;
+}
+/* The messages in a card are smaller than the chat's own, so a preview shows more of the conversation. The chat's are
+   16 pt: Callout on iOS (ios.md: Type), body large on Android. On iOS they're 14 / 19 with tracking -0.15, between
+   Subheadline and Footnote by Leandro's choice (iOS has no 14 pt style; ios.md: Type); on Android Material 3's body
+   medium (14 / 20, tracking 0.25) is the next style down. The chat's own screen keeps its size. */
+html.phone-window .phone-sessions .overview-card {
+  --card-msg-size: calc(14 * var(--u));
+  --card-msg-lh: calc(19 * var(--u));
+  --card-msg-tracking: -0.15px;
+}
+html.phone-window[data-platform='android'] .phone-sessions .overview-card {
+  --card-msg-lh: calc(20 * var(--u));
+  --card-msg-tracking: 0.25px;
+}
+html.phone-window .phone-sessions .overview-card :is(.chat-msg, .chat-msg.chat-system, .chat-msg .markdown),
+html.phone-window .phone-sessions .overview-card:not(.overview-small) > .overview-messages {
+  font-size: var(--card-msg-size);
+  line-height: var(--card-msg-lh);
+  letter-spacing: var(--card-msg-tracking);
 }
 html.phone-window .phone-sessions .overview-actions {
   margin: 0 -16px;
@@ -1401,18 +1469,43 @@ html.phone-window .phone-sessions .focus-strip {
 html.phone-window .phone-sessions .focus-strip > .overview-small {
   flex: none;
   width: 200px;
-  height: 124px;
+  height: auto;
   padding: 10px 14px;
   gap: 4px;
   border-radius: 20px;
   scroll-snap-align: start;
 }
+/* A small card's text is iOS's Footnote (13 / 18, tracking -0.08: ios.md, Type) and, on Android, Material 3's body small
+   (12 / 16, tracking 0.4: m3.material.io/styles/typography/type-scale-tokens). */
+html.phone-window .phone-sessions .overview-small {
+  --small-size: calc(13 * var(--u));
+  --small-lh: calc(18 * var(--u));
+  --small-tracking: -0.08px;
+}
+html.phone-window[data-platform='android'] .phone-sessions .overview-small {
+  --small-size: calc(12 * var(--u));
+  --small-lh: calc(16 * var(--u));
+  --small-tracking: 0.4px;
+}
+/* Its messages are a box of three whole lines, with no gap between messages, so every line sits on the line grid: the
+   reply ends at the box's bottom (CardMessages) and the line scrolled off the top is whole, not cut. */
 html.phone-window .phone-sessions .overview-small > .overview-messages {
-  margin: 0;
+  flex: none;
+  height: calc(3 * var(--small-lh));
+  margin: 4px 0 0;
   padding: 0;
   border-top: none;
+  gap: 0;
   overflow: hidden;
-  font-size: calc(13 * var(--u));
+  font-size: var(--small-size);
+  line-height: var(--small-lh);
+  letter-spacing: var(--small-tracking);
+}
+/* Where a reply runs on above the box (CardMessages sets data-cut), its top line fades in over its own height, as iOS
+   fades text that runs out of a fixed space. */
+html.phone-window .phone-sessions .overview-small > .overview-messages[data-cut] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--small-lh));
+  mask-image: linear-gradient(to bottom, transparent, #000 var(--small-lh));
 }
 html.phone-window .phone-sessions .overview-small .overview-title {
   font-size: calc(15 * var(--u));
@@ -1795,31 +1888,26 @@ html.phone-window[data-platform='ios'] .phone-composer-box:not(.bash-mode) :is(t
 html.phone-window[data-platform='ios'] .phone-plus-button {
   color: var(--pg-label);
 }
-/* The conversation runs under the message box to the screen's bottom, as in Messages, and scrolls clear of
-   it (--chat-dock-h, from ChatView). Behind it the soft scroll edge blurs what passes (ios.md: Scroll edge
-   effects). */
-html.phone-window[data-platform='ios'] .builder-chat:has(> .phone-composer):not(.overview-chat *) {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) auto;
-}
-html.phone-window[data-platform='ios'] .builder-chat:has(> .phone-composer):not(.overview-chat *) > .chat-scroll {
-  grid-area: 1 / 1 / -1 / -1;
+/* A conversation runs under its message box to the screen's bottom, as in Messages, and scrolls clear of it
+   (--chat-dock-h, kept by ConversationWithBox). Behind the box the soft scroll edge blurs what passes (ios.md: Scroll
+   edge effects). Every conversation with a box floats it but a dashboard card, whose box stays under its conversation. */
+html.phone-window[data-platform='ios'] .conversation-box.floats > .chat-scroll {
   padding-bottom: calc(var(--chat-dock-h, 0px) + 12px);
 }
-html.phone-window[data-platform='ios'] .builder-chat:has(> .phone-composer):not(.overview-chat *) > .phone-composer {
-  grid-area: 2 / 1;
+html.phone-window[data-platform='ios'] .conversation-box.floats > .conversation-dock {
+  position: absolute;
+  inset: auto 0 0;
   z-index: 2;
 }
 /* Lined up with the messages' text, as Messages lines up its typing bubble. */
 html.phone-window[data-platform='ios'] .chat-scroll > .chat-status {
   padding: 0 4px;
 }
-html.phone-window[data-platform='ios'] .builder-chat:has(> .phone-composer):not(.overview-chat *)::after {
+html.phone-window[data-platform='ios'] .conversation-box.floats > .conversation-dock::before {
   content: '';
-  grid-area: 2 / 1 / -1 / -1;
-  z-index: 1;
-  margin-top: -16px;
+  position: absolute;
+  inset: -16px 0 0;
+  z-index: -1;
   pointer-events: none;
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
@@ -2057,12 +2145,14 @@ html.phone-window .pg-sheet .activity-panel {
 /* A conversation in a sheet or the iPad's inspector column (a subagent's, pushed in Activity) looks as the chat screen
    does (.phone-conversation): on the plain background, under bubbles of the grouped gray, not on the sheet's gray where
    they vanish. A sheet is elevated, and dark mode's plain elevated background is #1C1C1E with #2C2C2E cells (ios.md:
-   Color, Elevated); in light it's the chat's own white and #F2F2F7. */
-html.phone-window :is(.pg-sheet, .pg-split-inspector) .chat-scroll {
+   Color, Elevated); in light it's the chat's own white and #F2F2F7. The background is the whole conversation's, its
+   message box's too (ConversationWithBox), so the box sits on the conversation as on the chat screen, never on a band
+   of the sheet's gray. */
+html.phone-window :is(.pg-sheet, .pg-split-inspector) .conversation-box {
   background: var(--bg);
 }
 @media (prefers-color-scheme: dark) {
-  html.phone-window[data-platform='ios'] .pg-sheet .chat-scroll {
+  html.phone-window[data-platform='ios'] .pg-sheet .conversation-box {
     background: var(--bg-2);
   }
   html.phone-window[data-platform='ios'] .pg-sheet .chat-agent {
@@ -2934,8 +3024,9 @@ html.phone-window[data-platform='ios'] :is(.form, .addon-screen) > .addon-markdo
   font-size: inherit;
   line-height: inherit;
 }
-/* A path on an iPhone: a row that opens the picker, the file's name at its trailing end in secondary label. */
-html.phone-window[data-platform='ios'] .form-group .path-row {
+/* A path on an iPhone: a row that opens the picker, the file's name at its trailing end in secondary label. As a
+   .field it outranks the form's rows, which stack a label over its box at the width of their content. */
+html.phone-window[data-platform='ios'] .form-group .field.path-row {
   flex-direction: row;
   align-items: center;
   gap: 12px;
@@ -3051,7 +3142,7 @@ html.phone-window[data-platform='ios'] .form-group :is(.field, .checkbox-field):
   position: absolute;
   top: -0.5px;
   left: 16px;
-  right: 16px;
+  right: 0;
   height: 0.5px;
   background: var(--pg-sep);
 }
@@ -3163,7 +3254,7 @@ html.phone-window[data-platform='ios'] .input-clear::after {
 html.phone-window[data-platform='ios'] .input-clear {
   position: relative;
 }
-/* SelectInput: the value as text with iOS's chevron.up.chevron.down; the select over it takes the tap and opens the system's menu. */
+/* SelectInput: the value as text with iOS's chevron.up.chevron.down; the button over it takes the tap and opens the menu out of the value. */
 html.phone-window[data-platform='ios'] .select-control {
   position: relative;
   display: flex;
@@ -3180,7 +3271,7 @@ html.phone-window[data-platform='ios'] .select-value {
   text-align: right;
   overflow-wrap: anywhere;
 }
-html.phone-window[data-platform='ios'] .select-control select {
+html.phone-window[data-platform='ios'] .select-control .select-hit {
   -webkit-appearance: none;
   appearance: none;
   position: absolute;
@@ -3197,7 +3288,7 @@ html.phone-window[data-platform='ios'] .select-control select {
   font-size: calc(17 * var(--u));
   opacity: 1;
 }
-html.phone-window[data-platform='ios'] .select-control select:active {
+html.phone-window[data-platform='ios'] .select-control .select-hit:active {
   background: var(--pg-fill);
 }
 html.phone-window[data-platform='ios'] .select-control.disabled {
@@ -3240,7 +3331,7 @@ html.phone-window[data-platform='ios'] .tabs-popup .select-value::after {
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='16' viewBox='0 0 12 16'%3E%3Cpath d='M2.5 6 6 2.5 9.5 6M2.5 10 6 13.5 9.5 10' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='16' viewBox='0 0 12 16'%3E%3Cpath d='M2.5 6 6 2.5 9.5 6M2.5 10 6 13.5 9.5 10' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center;
 }
-/* In a row, the select covers the line, so a tap on the label opens the menu too; the value and the label share the width by how much each needs. */
+/* In a row, the button covers the line, so a tap on the label opens the menu too; the value and the label share the width by how much each needs. */
 html.phone-window[data-platform='ios'] .form-group .field-line > .select-control {
   position: static;
 }
@@ -3401,7 +3492,7 @@ html.phone-window[data-platform='ios'] .form-group .radio-rows .pg-row:first-chi
   position: absolute;
   top: -0.5px;
   left: 16px;
-  right: 16px;
+  right: 0;
   height: 0.5px;
   background: var(--pg-sep);
 }
@@ -3457,19 +3548,6 @@ html.phone-window .pg-split-inspector .activity-panel {
   flex: 1;
   min-height: 0;
   background: transparent;
-}
-/* A Code Mode script on Now (ActivityPanel's REPL screen): the console keeps a part of the screen and scrolls itself,
-   and the script's call comes after it at its own height; Now scrolls to it. */
-html.phone-window .now-script-stack {
-  flex: none;
-}
-html.phone-window .now-script-stack > .now-console {
-  max-height: 40dvh;
-}
-html.phone-window .now-script-stack :is(.now-script-now, .now-screen, .now-body) {
-  flex: none;
-  min-height: auto;
-  overflow: visible;
 }
 /* A message between agents on Now (ActivityPanel's MailView) is Gmail's message view on every device (the Gmail app is the
    same on iOS and Android), on a white page; styles.css has the layout and the page's colors. Only the text styles are

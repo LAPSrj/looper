@@ -1,6 +1,6 @@
 import { app, Menu as ElectronMenu } from 'electron';
 import { mainSpan } from './main-stalls';
-import { thumbnail } from './thumbnails';
+import { thumbnail, withImageSizes } from './thumbnails';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Engine } from '../engine/engine';
@@ -15,7 +15,7 @@ import { NOT_MOBILE } from '../shared/ui-platform';
 import { perfLine } from '../shared/perf';
 import { projectTaskId } from '../shared/projects';
 import { canToggleUnread, inChatGroup, isUnread } from '../shared/sessions';
-import { SENT_IMAGE_RE, fileImageId, fileImageKey, type MessageImage, type SentFileInfo } from '../shared/messages';
+import { SENT_IMAGE_RE, briefRow, fileImageId, fileImageKey, type MessageImage, type SentFileInfo } from '../shared/messages';
 import { languageOf } from '../renderer/src/components/code-languages';
 import { VIEWER_MAX_BYTES, viewerKind } from '../renderer/src/web/dialog-flows';
 import type { PreviewNetwork } from '../shared/preview';
@@ -28,7 +28,8 @@ import type { AppInfo, UiEvent } from '../shared/api';
 import type { BuilderSetup } from '../shared/builder';
 import { commandAttachment, commandFrom } from '../shared/bash-mode';
 import { attachmentName, chatInteractive, type Attachment, type AttachmentInput, type ChatSettings, type ChatState } from '../shared/chat';
-import { ChatEncoder } from '../shared/chat-delta';
+import { ChatEncoder, type ChatWire } from '../shared/chat-delta';
+import { windowChat, windowWire, wholeRowsOf } from '../shared/chat-window';
 import { HISTORY_COMMANDS, HISTORY_PAGE, type HistoryCommand, type HistoryList, type HistoryListOptions, type HistoryRunFilter } from '../shared/history';
 import type { RunFilter } from '../shared/runs';
 import { TailnetHostnameSchema, type EngineEvent, type Task } from '../shared/types';
@@ -56,6 +57,7 @@ import {
   showOpenDialog,
   showSaveDialog,
   windowOf,
+  isRemote,
   ofCaller,
   writeClipboard,
   type AppWindow,
@@ -392,11 +394,14 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const sent = fileImageId(String(rowId));
     return sent !== null ? readSentImage(String(id), sent) : engine.readMessageImage(id, runId, rowId, agentId);
   });
-  ipc.handle('runs:scriptCalls', (_e, id: string, runId: string, toolUseId: string, before: number | null, count: number, agentId?: string) => {
+  ipc.handle('runs:scriptCalls', async (_e, id: string, runId: string, toolUseId: string, before: number | null, count: number, agentId?: string, brief?: unknown) => {
     const end = before === null || before === undefined ? null : Math.max(0, Math.floor(Number(before)) || 0);
     const size = Math.min(SCRIPT_CALLS_MAX, Math.max(1, Math.floor(Number(count)) || 1));
-    return engine.readScriptCalls(String(id), String(runId), String(toolUseId), end, size, agentId == null ? undefined : String(agentId));
+    const page = await engine.readScriptCalls(String(id), String(runId), String(toolUseId), end, size, agentId == null ? undefined : String(agentId));
+    // A list's page leaves out what only a call's own screen shows: its whole input, result and logs.
+    return page && brief === true ? { ...page, rows: page.rows.map(briefRow) } : page;
   });
+  ipc.handle('runs:call', (_e, id: string, runId: string, toolUseId: string) => engine.readCall(String(id), String(runId), String(toolUseId)));
   ipc.handle('messages:open', (_e, taskId: string, runId: string, agentId?: string, label?: string) =>
     host.openMessages(taskId, runId, agentId, label),
   );
@@ -460,7 +465,12 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('chat:get', (_e, id: string) => {
     const state = engine.getChat(id);
     const enc = chatEncoders.get(id);
-    return state ? { ...state, seq: enc?.seq ?? 0, epoch: enc?.epoch ?? 0 } : null;
+    // A phone or tablet gets the newest rows whole and the older heavy ones brief (chat-window.ts), and reads those with chat:rows.
+    return state ? { ...(caller() ? windowChat(state) : state), seq: enc?.seq ?? 0, epoch: enc?.epoch ?? 0 } : null;
+  });
+  ipc.handle('chat:rows', (_e, id: string, ids: unknown) => {
+    const state = engine.getChat(String(id));
+    return state && Array.isArray(ids) ? wholeRowsOf(state, ids.map(String)) : [];
   });
   ipc.handle('chat:confirmSend', (e, id: string) => host.confirmChatSend(String(id), windowOf(e)));
   /**
@@ -474,7 +484,9 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
         const c = commandFrom(a.command);
         return c ? [commandAttachment(c)] : [];
       }
-      return engine.isAttachment(String(a?.path)) ? [{ name: String(a.name), path: String(a.path), image: !!a.image }] : [];
+      const size = (n: unknown) => (typeof n === 'number' && Number.isInteger(n) && n > 0 ? n : undefined);
+      const [width, height] = [size(a?.width), size(a?.height)];
+      return engine.isAttachment(String(a?.path)) ? [{ name: String(a.name), path: String(a.path), image: !!a.image, ...(width && height ? { width, height } : {}) }] : [];
     });
   ipc.on('chat:send', (_e, id: string, text: string, attachments: Attachment[]) => {
     engine.sendChat(id, String(text ?? ''), takeAttachments(attachments));
@@ -602,14 +614,14 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
     const sender = windowOf(e);
     if (sender) showMessageMenu(sender, info);
   });
-  ipc.handle('chat:attach', (_e, id: string, files: unknown) => engine.attachToChat(id, attachmentInputs(files)));
+  ipc.handle('chat:attach', async (_e, id: string, files: unknown) => withImageSizes(await engine.attachToChat(id, attachmentInputs(files))));
   /** The message box's Attach Files: pick files, then copy them in like dropped ones. */
   ipc.handle('chat:pickFiles', async (e, id: string) => {
     const sender = windowOf(e);
     const opts: Electron.OpenDialogOptions = { title: 'Attach Files', properties: ['openFile', 'multiSelections'] };
     const r = await showOpenDialog(sender, opts);
     if (r.canceled || r.filePaths.length === 0) return [];
-    return engine.attachToChat(String(id), r.filePaths.map((p) => ({ name: path.basename(p), path: p })));
+    return withImageSizes(await engine.attachToChat(String(id), r.filePaths.map((p) => ({ name: path.basename(p), path: p }))));
   });
   ipc.handle('chat:sendNow', (_e, id: string) => engine.sendNowChat(String(id)));
   ipc.handle('chat:compact', (_e, id: string) => host.compactChat(String(id)));
@@ -958,12 +970,12 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
   ipc.handle('runs:stopCommand', (_e, id: string, runId: string, commandId: string) => engine.stopRunCommand(String(id), String(runId), String(commandId ?? '')));
   ipc.handle('runs:sendNow', (_e, id: string, runId: string) => engine.sendNowRun(String(id), String(runId)));
   ipc.handle('runs:unqueue', (_e, id: string, runId: string) => engine.unqueueGuidance(String(id), String(runId)));
-  ipc.handle('runs:attach', (_e, id: string, files: unknown) => engine.attachToRun(String(id), attachmentInputs(files)));
+  ipc.handle('runs:attach', async (_e, id: string, files: unknown) => withImageSizes(await engine.attachToRun(String(id), attachmentInputs(files))));
   /** A run's message box's Attach Files: pick files, then copy them in like dropped ones. */
   ipc.handle('runs:pickFiles', async (e, id: string) => {
     const r = await showOpenDialog(windowOf(e), { title: 'Attach Files', properties: ['openFile', 'multiSelections'] });
     if (r.canceled || r.filePaths.length === 0) return [];
-    return engine.attachToRun(String(id), r.filePaths.map((p) => ({ name: path.basename(p), path: p })));
+    return withImageSizes(await engine.attachToRun(String(id), r.filePaths.map((p) => ({ name: path.basename(p), path: p }))));
   });
 
   /** A target-native path (in the task's environment) as the host opens it, translated across the WSL boundary. */
@@ -1715,7 +1727,13 @@ export function registerIpc(engine: Engine, host: IpcHost): void {
       const id = event.state.id;
       let enc = chatEncoders.get(id);
       if (!enc) chatEncoders.set(id, (enc = new ChatEncoder()));
-      return sendTo(host.sessionWindow(id), { type: 'chat', state: enc.encode(event.state) as unknown as ChatState });
+      const wire = enc.encode(event.state);
+      // A phone or tablet gets the rows it carries windowed as chat:get's (chat-window.ts), made once for all of them.
+      let windowed: ChatWire | undefined;
+      for (const w of host.sessionWindow(id)) {
+        if (!w.isDestroyed()) w.webContents.send('engine:event', { type: 'chat', state: (isRemote(w) ? (windowed ??= windowWire(wire)) : wire) as unknown as ChatState });
+      }
+      return;
     }
     if (event.type === 'session:activity') return sendTo(host.sessionWindow(event.activity.id), event);
     if (event.type === 'sessions') {

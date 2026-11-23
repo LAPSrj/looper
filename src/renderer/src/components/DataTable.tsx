@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref, type RefObject, type UIEvent } from 'react';
+import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref, type UIEvent } from 'react';
 import { Measured } from '../perf';
 import { isPhone } from '../web/page-nav';
 import { SearchBox } from './SearchBox';
@@ -6,6 +6,7 @@ import { clickSelect, moveSelect, stepIndex, type MultiSelection } from './multi
 import { PhoneRows, useRowKeys, type PhoneRowModel, type Rows } from './RowList';
 import { fitColumns, shownWidth } from './fit-columns';
 import { readStoredWidths, ResizableColumns, type TableCol } from './ui';
+import { useRowWindow, WINDOW_FROM } from './row-window';
 
 export { RowList, type PhoneRowModel, type RowListProps } from './RowList';
 
@@ -76,61 +77,6 @@ function TableBody<T>(props: DataTableProps<T>) {
   );
 }
 
-/** From this many rows a desktop table draws only the rows in view, plus OVERSCAN on each side. */
-const WINDOW_FROM = 200;
-const OVERSCAN = 30;
-
-/**
- * Which rows of a long table to draw: the ones the scroll position shows. The rows' height is measured
- * from the drawn ones (cells are one line), and a selected row out of view is scrolled to, since the
- * list keys find a row by its element.
- */
-function useRowWindow(wrap: RefObject<HTMLDivElement | null>, spacer: RefObject<HTMLTableRowElement | null>, count: number, on: boolean, index: number) {
-  const [view, setView] = useState({ top: 0, height: 1000 });
-  const rowH = useRef(28);
-  const base = useRef(0);
-  const first = on ? Math.max(0, Math.floor((view.top - base.current) / rowH.current) - OVERSCAN) : 0;
-  const last = on ? Math.min(count, Math.ceil((view.top - base.current + view.height) / rowH.current) + OVERSCAN) : count;
-  // In steps of 10 rows, which OVERSCAN covers, so scrolling redraws the table only when the drawn rows change.
-  const read = () => {
-    const el = wrap.current;
-    if (!el) return;
-    const step = rowH.current * 10;
-    const top = Math.floor(el.scrollTop / step) * step;
-    setView((v) => (v.top === top && v.height === el.clientHeight ? v : { top, height: el.clientHeight }));
-  };
-  useLayoutEffect(() => {
-    const el = wrap.current;
-    const sp = spacer.current;
-    if (!on || !el || !sp) return;
-    const body = sp.parentElement!;
-    const firstRow = sp.nextElementSibling as HTMLElement | null;
-    const drawn = body.querySelectorAll<HTMLElement>(':scope > tr[data-row]');
-    const lastRow = drawn[drawn.length - 1];
-    const top = el.scrollTop - el.getBoundingClientRect().top;
-    base.current = sp.getBoundingClientRect().top + top;
-    if (firstRow && lastRow && last > first) rowH.current = (lastRow.getBoundingClientRect().bottom - firstRow.getBoundingClientRect().top) / (last - first) || rowH.current;
-  });
-  useEffect(() => {
-    const el = wrap.current;
-    if (!on || !el) return;
-    read();
-    const ro = new ResizeObserver(read);
-    ro.observe(el);
-    return () => ro.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [on]);
-  useEffect(() => {
-    const el = wrap.current;
-    if (!on || !el || index < 0 || (index >= first && index < last)) return;
-    const head = el.querySelector('thead')?.getBoundingClientRect().height ?? 0;
-    const y = base.current + index * rowH.current;
-    el.scrollTop = y < el.scrollTop + head ? y - head : y + rowH.current - el.clientHeight;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, on]);
-  return { first, last, rowH: rowH.current, onScroll: read };
-}
-
 function DesktopTable<T>(props: DataTableProps<T>) {
   const { cols: allCols, rows, rowKey, idPrefix, selected, onOpen, onMenu, onEmptyMenu, empty, note, label, groupOf, storageKey, rowClass, wrapClass, tableRef, onTableScroll, multiSelect } = props;
   const multi = useMultiSelect(props);
@@ -142,6 +88,7 @@ function DesktopTable<T>(props: DataTableProps<T>) {
   const isSelected = (key: string) => (multiSelect ? multiSelect.keys.includes(key) : key === selected);
   const wrap = useRef<HTMLDivElement | null>(null);
   const spacer = useRef<HTMLTableRowElement | null>(null);
+  const after = useRef<HTMLTableRowElement | null>(null);
   // A pane too narrow for every column loses the ones at the right, so the table never scrolls sideways.
   const [room, setRoom] = useState<number | null>(null);
   useLayoutEffect(() => {
@@ -161,7 +108,7 @@ function DesktopTable<T>(props: DataTableProps<T>) {
     room,
   ).map((c) => c.col);
   const windowed = !groupOf && rows.length > WINDOW_FROM;
-  const win = useRowWindow(wrap, spacer, rows.length, windowed, index);
+  const win = useRowWindow(wrap, spacer, after, rows.length, windowed, index);
   const setWrap = (el: HTMLDivElement | null) => {
     wrap.current = el;
     if (typeof tableRef === 'function') tableRef(el);
@@ -243,7 +190,7 @@ function DesktopTable<T>(props: DataTableProps<T>) {
               </Fragment>
             );
           })}
-          {windowed && gap(rows.length - win.last)}
+          {windowed && gap(rows.length - win.last, after)}
           {rows.length === 0 && empty && (
             <tr>
               <td colSpan={cols.length} className="muted">

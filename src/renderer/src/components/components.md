@@ -82,6 +82,7 @@ Classes are read from `className` props in `.tsx` files only. Classes added from
 | Fields and buttons | Buttons and text styles | `styles.css` |
 | Fields and buttons | SearchBox / FindBar | `components/SearchBox.tsx` |
 | Message box and conversation | MessageBox | `components/MessageBox.tsx` |
+| Message box and conversation | ConversationWithBox | `components/ConversationWithBox.tsx` |
 | Message box and conversation | Conversation / TranscriptView / ChatView | `components/Conversation.tsx` |
 | Message box and conversation | Markdown | `components/Markdown.tsx` |
 | Empty states and notices | EmptyState | `components/EmptyState.tsx` |
@@ -124,12 +125,12 @@ Each entry gives the file, what it draws, what it follows on each platform and t
 #### IosFrame
 
 - File: `web/IosFrame.tsx`, `web/IosMenu.tsx`
-- Role: The iPhone and iPad shell: bar, tab bar, alerts, its own sheets, file and device sheets, menus.
-- iOS 27: `ios.md` "Navigation bar (top toolbar)", `ios.md` "Tab bar", `ios.md` "Alerts", `ios.md` "Action sheets", `ios.md` "Sheets", `ios.md` "Menus".
+- Role: The iPhone and iPad shell: bar, tab bar, alerts, its own sheets, file and device sheets, menus. Its bar floats over the page, which runs under it, and it gives Safari the color the screen shows behind the status bar (`web/top-bar.ts`).
+- iOS 27: `ios.md` "Navigation bar (top toolbar)", `ios.md` "Scroll edge effects", `ios.md` "Status bar", `ios.md` "Tab bar", `ios.md` "Alerts", `ios.md` "Action sheets", `ios.md` "Sheets", `ios.md` "Menus".
 - Material 3: n/a.
 - Win32: n/a.
-- Guard: `tests/code-splitting.test.ts` (loaded lazily); `tests/ui-roles.test.ts` ("Back and a screen's title": the frames own the bar); class names (`tests/ui-roles.test.ts`, "class names"); `npm run ui-check`. No role guard for its sheets and alerts yet.
-- Classes: `destructive`, `ios`, `ios-alert-*`, `ios-bar`, `ios-bar-detail`, `ios-bar-inspector`, `ios-bar-list`, `ios-bar-split`, `ios-cell-button`, `ios-checkcircle`, `ios-device-pick`, `ios-files-search`, `ios-group`, `ios-group-footer`, `ios-menu-*`, `ios-own-sheet`, `ios-segmented`, `ios-sheet-body`, `ios-submenu`, `ios-tab`, `ios-tabbar-*`, `ph-card`, `ph-scrim`, `ph-scroll`, `split`
+- Guard: `tests/code-splitting.test.ts` (loaded lazily); `tests/ui-roles.test.ts` ("Back and a screen's title": the frames own the bar); `tests/ios-top-bar.test.ts` (the bar over its page, the status bar's color); class names (`tests/ui-roles.test.ts`, "class names"); `npm run ui-check` (`under-bar`: nothing but scrolled content under the bar). No role guard for its sheets and alerts yet.
+- Classes: `destructive`, `edge`, `ios`, `ios-alert-*`, `ios-bar`, `ios-bar-detail`, `ios-bar-inspector`, `ios-bar-list`, `ios-bar-split`, `ios-cell-button`, `ios-checkcircle`, `ios-device-pick`, `ios-files-search`, `ios-group`, `ios-group-footer`, `ios-menu-*`, `ios-own-sheet`, `ios-segmented`, `ios-sheet-body`, `ios-submenu`, `ios-tab`, `ios-tabbar-*`, `ph-card`, `ph-scrim`, `ph-scroll`, `split`, `under`
 
 #### AndroidFrame
 
@@ -231,7 +232,8 @@ Each entry gives the file, what it draws, what it follows on each platform and t
 
 - File: `components/ui.tsx`, `components/Tabs.tsx`, `components/tabs-model.ts`
 - Role: Sections of one item: the desktop's tab strip, iOS's segmented control, Material tabs, or rows that push each panel.
-- iOS 27: `ios.md` "Segmented control": at most five segments on iPhone, 32 high track.
+- Option `overflow` (iOS only): what shows when the segments don't fit: `'popup'` (default, a pop-up button) or `'sections'` (the list of rows `sections` draws, each opening its panel under a NavBar whose Back returns to the list; the Activity sheet asks for it, with `hidden` while a pushed detail has the bar and `startOpen` for a sheet opened on a tab). Android and the desktop ignore it.
+- iOS 27: `ios.md` "Segmented control": at most five segments on iPhone, 32 high track; "Tabs that don't fit".
 - Material 3: [Tabs](https://m3.material.io/components/tabs/guidelines): scrollable tabs when they do not fit.
 - Win32: [Tabs](https://learn.microsoft.com/en-us/windows/win32/uxguide/ctrl-tabs), [Property windows](https://learn.microsoft.com/en-us/windows/win32/uxguide/win-property-win).
 - Guard: `tests/tabs-fields.test.ts`; `tests/v3-live-fixes.test.ts` (segmented targets, one Tab stop); class names (`tests/ui-roles.test.ts`, "class names").
@@ -251,8 +253,8 @@ Each entry gives the file, what it draws, what it follows on each platform and t
 
 #### RowList / Group / Row / SwipeRow / TreeListSection / LargeTitle
 
-- File: `components/RowList.tsx`, `components/phone/PhoneList.tsx`
-- Role: Lists and rows on every device: inset grouped on iOS, Material list items on Android, compact rows on the desktop. `LargeTitle` is the iOS large title inside a list screen.
+- File: `components/RowList.tsx`, `components/phone/PhoneList.tsx`, `components/row-window.ts`
+- Role: Lists and rows on every device: inset grouped on iOS, Material list items on Android, compact rows on the desktop. `LargeTitle` is the iOS large title inside a list screen. A list of rows of one height that can pass a few hundred passes `windowed`, and past 200 rows only the rows in view are drawn, on the desktop and on phones (`row-window.ts`, which DataTable uses too).
 - iOS 27: `ios.md` "Lists": cards 16 from the edges, rows 52 high, text 16 in.
 - Material 3: [Lists](https://m3.material.io/components/lists/guidelines): 16 dp leading padding, edge to edge in compact windows.
 - Win32: [List views](https://learn.microsoft.com/en-us/windows/win32/uxguide/ctrl-list-views).
@@ -409,7 +411,7 @@ Each entry gives the file, what it draws, what it follows on each platform and t
 #### Buttons and text styles (global CSS)
 
 - File: `styles.css`, `phone.css`
-- Role: The `btn`, `primary`, `danger` and `small` buttons, and the text styles `muted`, `mono`, `link`, `error-text` and `sr-only`. No shared Button component exists yet: custom #42 and #43 list where buttons are written by hand.
+- Role: The `btn`, `primary`, `danger` and `small` buttons, and the text styles `muted`, `mono`, `link`, `error-text` and `sr-only`. No shared Button component exists yet: custom #41 and #42 list where buttons are written by hand.
 - iOS 27: `ios.md` "Buttons": targets at least 44 x 44.
 - Material 3: [Buttons](https://m3.material.io/components/buttons/specs).
 - Win32: [Command buttons](https://learn.microsoft.com/en-us/windows/win32/uxguide/ctrl-command-buttons), [Links](https://learn.microsoft.com/en-us/windows/win32/uxguide/ctrl-links).
@@ -435,8 +437,18 @@ Each entry gives the file, what it draws, what it follows on each platform and t
 - iOS 27: `ios.md` "Text fields and search", `ios.md` "Liquid Glass" (the floating box).
 - Material 3: [Text fields](https://m3.material.io/components/text-fields/specs).
 - Win32: [Text boxes](https://learn.microsoft.com/en-us/windows/win32/uxguide/ctrl-text-boxes).
-- Guard: `tests/composer.test.ts` (text logic only); class names (`tests/ui-roles.test.ts`, "class names"). No markup guard yet; `Transcript.tsx` still draws its own guidance box (custom #28).
+- Guard: `tests/composer.test.ts` (text logic only); class names (`tests/ui-roles.test.ts`, "class names"). Where it sits against a conversation is ConversationWithBox's.
 - Classes: `chat-composer`, `composer-*`, `phone-composer-*`
+
+#### ConversationWithBox
+
+- File: `components/ConversationWithBox.tsx`
+- Role: A conversation with its message box under it, laid out once for all of them: a chat, a subagent's conversation, a task run's with its guidance box (and the agent's question over it), the task builder's. The box goes in its `box`; the conversation and anything over it (a find bar) are its children. It keeps the floating box's height in `--chat-dock-h`. A dashboard card passes `float={false}`, so its box stays under the conversation that scrolls inside the card.
+- iOS 27: `ios.md` "Scroll edge effects": the conversation runs to the screen's bottom under its message box, as in Messages, scrolls clear of it, and has the soft edge behind the box with nothing opaque under it; in a sheet too, on the conversation's own background.
+- Material 3: no component covers a message box under a conversation; the box stays under it, on the conversation's own surface with no band of the sheet's between (Looper's own, unverified match).
+- Win32: Looper's own: the box under the conversation, as the desktop's chat draws it.
+- Guard: `tests/conversation-box.test.ts` (every file that draws a Conversation lays it out through it; only it keeps `--chat-dock-h`; the markup on iOS and the desktop; phone.css floats every conversation's box and paints a sheet's conversation behind it); `npm run ui-check` (`box-under`: on iOS the conversation runs under its box, and on every phone the box sits on the conversation's background).
+- Classes: `conversation-box`, `conversation-dock`, `floats`
 
 #### Conversation / TranscriptView / ChatView
 
@@ -564,7 +576,7 @@ The 78 components that draw a role themselves instead of placing a shared one, f
 
 - Source: `components/ActivityPanel.tsx`
 - Role: Title row of the Now screen: the tool's name and the call's subject
-- Classes: `now-diff`, `now-screen`, `now-subject`, `now-title`, `now-tool`
+- Classes: `now-body`, `now-diff`, `now-screen`, `now-subject`, `now-title`, `now-tool`
 - Moves to: NavBar title/subtitle on phones; Section header on the desktop
 - Differs: A second title row inside the sheet: the tool name in 17 pt semibold ("REPL") with the call's subject beside it in 12 pt monospace, under the sheet's own centered "Activity" title. ios.md:143 has one centered title with a 12/16 medium subtitle under it, not beside it.
 - Differs: The subject is in a monospace face; ios.md:81-93 gives only SF Pro styles for text.
@@ -584,7 +596,7 @@ The 78 components that draw a role themselves instead of placing a shared one, f
 - Source: `components/ActivityPanel.tsx`
 - Role: A terminal-looking transcript of a Bash call or a Code Mode script ($ prompt, output, cursor)
 - Classes: `now-console-*`, `now-term-*`, `now-terminal`
-- Stays custom: No shared Console exists. The same `now-terminal` markup is written in three places (BackgroundConsole and twice in ActivityPanel). A console has no iOS or Material component, so it looks the same on every device. Proposed: one shared `Console`, used by #3 and #31 too, registered before more copies are written.
+- Stays custom: No shared Console exists. The same `now-terminal` markup is written in three places (BackgroundConsole and twice in ActivityPanel). A console has no iOS or Material component, so it looks the same on every device. Proposed: one shared `Console`, used by #3 and #30 too, registered before more copies are written.
 
 ### 5. EditorScreen
 
@@ -615,29 +627,21 @@ The 78 components that draw a role themselves instead of placing a shared one, f
 - Classes: `now-doc-*`
 - Stays custom: A Markdown page inside a screen. Markdown is the shared renderer (`markdown-render.ts`); the page around it has no role of its own.
 
-### 9. CallList / ScriptCallRows
+### 9. CallList
 
 - Source: `components/ActivityPanel.tsx`
-- Role: The tool call list and a script's call list (tool, subject, state per row, a toggle head)
+- Role: Now's list of tool calls: the agent's own and its Code Mode scripts' calls among them, a script's titled "[REPL] " (tool, subject, state per row), drawn by RowList with `windowed`. A compacted chat's earlier sessions list their calls and their scripts' calls as before compacting, read whole from the old session's transcript while it's there; a compacted.json from before version 4 lists its calls as compaction kept them and its scripts' sent files ("[REPL] "). None of them is ever running
 - Classes: `now-call-*`, `now-table`
 - Moves to: RowList/Row (DetailRowText) for the rows
 
-### 10. ScriptNow
-
-- Source: `components/ActivityPanel.tsx`
-- Role: A Code Mode script's current call with its own toolbar and "n of m" place
-- Classes: `now-body`, `now-place`, `now-script-*`
-- Stays custom: Toolbar draws the buttons. Now's own row moved to BottomToolbar; this pager of a REPL call's script calls is inside Now, whose bottom toolbar is Now's, and a screen has one ("Don't use multiple toolbars in compact windows", Material 3 Toolbars). Where it should go on a phone needs a decision (a second level of Now's toolbar, or the script's calls as a pushed list). The filled tint circle for Follow the latest has no source in ios.md (see Differs).
-- Differs: A toolbar inside the sheet's content (Previous, Next, a filled tint circle for "Follow the latest", List, and "78 of 78" in 12 pt secondary); ios.md:138-140 reserves the tinted circle for the confirming action, and a toggled state drawn as a filled circle has no source in ios.md.
-
-### 11. AddonCallScreen
+### 10. AddonCallScreen
 
 - Source: `components/ActivityPanel.tsx`
 - Role: An addon tool call's result screen
 - Classes: `now-result`
 - Moves to: ToolResultView/AddonScreenView (it wraps them with its own result block)
 
-### 12. Background and Files list rows
+### 11. Background and Files list rows
 
 - Source: `components/ActivityPanel.tsx`
 - Role: A background item's row (status, label, kind, summary) and a file row (thumbnail, name, folder)
@@ -647,91 +651,91 @@ The 78 components that draw a role themselves instead of placing a shared one, f
 - Differs: Each section title moves in with it (text at x = 44, in line with the rows' text at 28 + 16), so the title is not further in than the card's text, only than the screen edge ios.md expects.
 - Differs: Android: the same padding puts the rows 28 dp from the screen edge (measured .pg-row x = 28 on a 412 dp Pixel 7), where Looper's other Android lists (Git changes) start at 16 and Material's list items have 16 dp leading padding (Material 3 lists (m3.material.io/components/lists/specs, rendered text saved in m3/components_lists_specs.txt:651)).
 
-### 13. "Nothing is running in the background."
+### 12. "Nothing is running in the background."
 
 - Source: `components/ActivityPanel.tsx`
 - Role: Empty state of the Background tab
 - Classes: none
 - Moves to: EmptyState
 
-### 14. AgentRow
+### 13. AgentRow
 
 - Source: `components/AgentRows.tsx`
 - Role: A subagent's row: description, status and a PropertyList (agent, model, effort, context)
 - Classes: `activity-agent`, `subagent-desc`, `subagent-facts`, `subagent-head`, `subagent-tabs`
 - Moves to: Row with a subtitle (or DetailRowText); the property list inside a list row is its own layout
 
-### 15. WorkflowAgentBack
+### 14. WorkflowAgentBack
 
 - Source: `components/WorkflowView.tsx`
 - Role: A Back button over a workflow agent's conversation
 - Classes: `workflow-back-*`
 - Moves to: NavBar (Back belongs in the bar)
 
-### 16. WorkflowOverview / ResultSection / PhoneResult
+### 15. WorkflowOverview / ResultSection / PhoneResult
 
 - Source: `components/WorkflowView.tsx`
 - Role: A workflow run's header (name, description, error), log and JSON result
 - Classes: `workflow-agents`, `workflow-description`, `workflow-error`, `workflow-head`, `workflow-json`, `workflow-log`, `workflow-name`, `workflow-overview`, `workflow-phase`, `workflow-result-*`, `workflow-text`, `workflow-tool`, `workflow-view`
 - Moves to: Section and PropertyList (the head is its own title row)
 
-### 17. LimitNotice / LoginNotice
+### 16. LimitNotice / LoginNotice
 
 - Source: `components/ChatView.tsx`
 - Role: A banner over the message box: usage limit reached, or sign in
 - Classes: `chat-limit-notice`
 - Moves to: InfoBar (ui.tsx:189)
 
-### 18. ChatView banner and queued message
+### 17. ChatView banner and queued message
 
 - Source: `components/ChatView.tsx`
 - Role: A muted banner line, and a queued message with its actions
 - Classes: `chat-queued-*`
 - Moves to: InfoBar for the banner; the queued message is a Conversation row
 
-### 19. PermissionCard
+### 18. PermissionCard
 
 - Source: `components/PermissionCard.tsx`
 - Role: A permission request card with Allow and Deny
 - Classes: `chat-permission-*`
 - Stays custom: An inline card with Allow and Deny. iOS holds such a choice in an alert or action sheet (`ios.md` Alerts, Action sheets) and Android in a dialog, so whether the card moves needs a decision: it stays because the agent waits on it inside the conversation.
 
-### 20. CommandItem
+### 19. CommandItem
 
 - Source: `components/ChatRows.tsx`
 - Role: A "!" command's card: command line, status, chevron, output or terminal
 - Classes: `chat-command-*`
 - Moves to: Conversation draws it through ChatRows; no shared card
 
-### 21. PromptForm (CommandPromptView)
+### 20. PromptForm (CommandPromptView)
 
 - Source: `components/CommandPrompt.tsx`
 - Role: A "!" command's password prompt (sudo) with a field and buttons
 - Classes: `command-*`
 - Moves to: MessageBox with a field (IosFrame Alert has an input, ios.md:256) or PhoneSheet
 
-### 22. PlusMenu
+### 21. PlusMenu
 
 - Source: `components/Composer.tsx`
 - Role: The message box's + menu on phones
 - Classes: `phone-plus-*`
 - Moves to: Menu (IosMenu / MaterialMenu), which already morph out of their button (ios.md:343-345)
 
-### 23. Composer CommandBar
+### 22. Composer CommandBar
 
 - Source: `components/Composer.tsx`
 - Role: The message box's command bar: model, effort and mode pickers
 - Classes: `bash-prompt`, `chat-commandbar`, `chat-pending`, `commandbar-*`, `slash-*`
 - Moves to: Toolbar (it uses Toolbar, but its pickers are its own labeled buttons)
 
-### 24. Conversation rows (UserMessage, SentMessage, ThinkingBubble, ChatRowView)
+### 23. Conversation rows (UserMessage, SentMessage, ThinkingBubble, ChatRowView)
 
 - Source: `components/ChatRows.tsx`
 - Role: Message bubbles, system lines, thinking, tool rows and the subagent hand-back line
 - Classes: `chat-agent`, `chat-handback`, `chat-msg`, `chat-superseded`, `chat-system`, `chat-thinking`, `chat-tool-pre`, `chat-tool-preview`, `chat-user`
 - Moves to: Conversation (registered) draws them through ChatRows.tsx, which no test guards
 
-### 25. Tool groups and disclosures (ToolGroupView, ScriptCalls, Disclosure)
+### 24. Tool groups and disclosures (ToolGroupView, ScriptCalls, Disclosure)
 
 - Source: `components/ChatRows.tsx`
 - Role: "N tool uses" and "Thinking" disclosure rows
@@ -739,73 +743,73 @@ The 78 components that draw a role themselves instead of placing a shared one, f
 - Moves to: Conversation (rows); iOS has no disclosure row of this form
 - Differs: "› Thinking" and "› N tool uses" put a gray chevron at the leading edge; ios.md:184 puts a disclosure's chevron at the trailing end of its header, in the tint.
 
-### 26. AttachmentList / SentFileList / ThumbButton / RemoveButton
+### 25. AttachmentList / SentFileList / ThumbButton / RemoveButton
 
 - Source: `components/ChatRows.tsx`
 - Role: Attached and sent files as thumbnails and file rows with Remove
 - Classes: `chat-attachments`, `chat-file`, `chat-remove`, `chat-remove-text`, `chat-thumb-*`, `chat-thumbs`
 - Stays custom: No shared attachment strip exists. When one is built, Remove must be a 44 x 44 target on phones.
 
-### 27. ScriptCallBox
+### 26. ScriptCallBox
 
 - Source: `components/ChatRows.tsx`
 - Role: A Code Mode call's box inside a conversation
 - Classes: `tc-image-note`
 - Moves to: Conversation rows
 
-### 28. PendingMessage
+### 27. PendingMessage
 
 - Source: `components/Transcript.tsx`
 - Role: A message waiting in the queue, with its actions
 - Classes: none
 - Moves to: Conversation row
 
-### 29. DraftPanel
+### 28. DraftPanel
 
 - Source: `BuilderApp.tsx`
 - Role: The task builder's draft panel: prompt, lists, properties, errors
 - Classes: `builder-list`, `builder-panel-*`, `builder-prompt`, `builder-props`, `builder-tabs`, `builder-toolbar`
 - Moves to: Inspector holds it; inside, Section and PropertyList (its builder-list rows are its own)
 
-### 30. DraftCard
+### 29. DraftCard
 
 - Source: `BuilderApp.tsx`
 - Role: A card in the builder conversation with Create
 - Classes: `chat-card`
 - Stays custom: No shared card with an action exists. Material has [Cards](https://m3.material.io/components/cards/guidelines); iOS has no card component, and content uses lists (`ios.md` Lists).
 
-### 31. xterm hosts (TerminalView, CommandTerminal, BuilderTerminal)
+### 30. xterm hosts (TerminalView, CommandTerminal, BuilderTerminal)
 
 - Source: `components/TerminalView.tsx`
 - Role: A terminal: the stage around xterm
 - Classes: `builder-chat`, `builder-terminal`, `term-key`, `term-keys-*`, `terminal-*`
 - Stays custom: No shared Terminal exists. One xterm host that adds the phone key row and overlay is proposed in `scratch/platforms.md` (Components to build).
 
-### 32. Chat cards (CardTitle, CardMessages, LiveCard, SmallCard, TerminalCard)
+### 31. Chat cards (CardTitle, CardMessages, LiveCard, SmallCard, TerminalCard)
 
 - Source: `SessionsApp.tsx`
 - Role: A chat's card on the Chats overview: title row, last messages, a reply box, actions
 - Classes: `big`, `card-split`, `kind-`, `live-only`, `overview-*`, `sessions-toolbar`
-- Stays custom: No shared card exists (see #30). The cards follow Material's Cards; iOS has no card, so its form is undecided.
+- Stays custom: No shared card exists (see #29). The cards follow Material's Cards; iOS has no card, so its form is undecided.
 - Differs: A card with its own title row (status icon, 17 pt bold title, an expand button) and a meta line; ios.md has no card component, and its lists are inset grouped cards whose rows are 52 or 68 high (ios.md:169-174).
 - Differs: A terminal card whose chat has ended draws a tall empty white area (the ended terminal's output area).
 - Differs: Android: the cards are rounded 16 dp (measured border-radius 16px on .overview-chat); Material cards use a 12 dp corner radius (Material 3 cards (m3.material.io/components/cards/specs, rendered text saved in m3/components_cards_specs.txt:195)).
 
-### 33. ChatsDashboard / PhoneOverview grids
+### 32. ChatsDashboard / PhoneOverview grids
 
 - Source: `SessionsApp.tsx`
 - Role: The grid the chat cards sit in, with sizes and splitters
 - Classes: `active`, `card-gap`, `card-split-cell`, `focus-*`, `layout-*`, `sessions-center`, `sessions-dashboard`, `sessions-overview`
 - Stays custom: No shared card grid exists (`scratch/platforms.md`, Card grid).
 
-### 34. Group markup written outside Group
+### 33. Group markup written outside Group
 
 - Source: `SessionsApp.tsx`
 - Role: A list section (section.pg-group, h2.pg-group-title, p.pg-group-footer) written by hand
 - Classes: `phone-main`
 - Moves to: Group (PhoneList.tsx:13) or TreeListSection (PhoneList.tsx:365), which draw the same markup
 
-### 35. SessionRow
+### 34. SessionRow
 
 - Source: `components/SessionList.tsx`
 - Role: A chat's row in the Chats list and History: icon, title, subtitle, status
@@ -814,21 +818,21 @@ The 78 components that draw a role themselves instead of placing a shared one, f
 - Differs: iPhone and iPad: each row is 66 high with its subtitle (measured), where ios.md:169 gives 68 for a row with a subtitle.
 - Differs: iPhone History window: the rows (HistoryList with SessionRow) sit on the page with full-width separators under each group title, not in an inset grouped card 16 from the edges (ios.md:169).
 
-### 36. Sidebar trees (FolderTree, GroupedProjects, AddonPaneList, ItemText)
+### 35. Sidebar trees (FolderTree, GroupedProjects, AddonPaneList, ItemText)
 
 - Source: `components/FolderTree.tsx`
 - Role: The desktop's task, project and addon trees: ul.task-list with li.task-item rows
 - Classes: `task-*`
 - Stays custom: RowList is flat and the desktop's folders are a tree (`ul.task-list` with `li.task-item`). A tree variant of RowList is needed; phones already use PhoneFolderRows and Row.
 
-### 37. DetailView header bar
+### 36. DetailView header bar
 
 - Source: `components/DetailView.tsx`
 - Role: A task's or project's title bar over its tabs
 - Classes: `detail`, `detail-bar`, `status-pane`
 - Moves to: NavBar title on phones; PaneHeader-like pane title on the desktop
 
-### 38. DiffPane
+### 37. DiffPane
 
 - Source: `components/DiffPane.tsx`
 - Role: A file diff with its own header (path, counts)
@@ -836,7 +840,7 @@ The 78 components that draw a role themselves instead of placing a shared one, f
 - Moves to: NavBar title for the header; DiffView for the body
 - Differs: Phones: the file's path is repeated in a 13 pt monospace header row with a hairline under the bar, which already shows the file name as its title (cut to "check-docs-dri…"); ios.md:143-144 puts a subtitle in the bar, under the title.
 
-### 39. Git commit rows and message (HistoryView, CommitMessage)
+### 38. Git commit rows and message (HistoryView, CommitMessage)
 
 - Source: `components/GitView.tsx`
 - Role: A commit's line (subject, meta) and its message block
@@ -844,7 +848,7 @@ The 78 components that draw a role themselves instead of placing a shared one, f
 - Moves to: Row with subtitle (DetailRowText) for the line; Section for the message
 - Differs: The commit message sits in a card whose text starts 28 pt inside the card's edge (x = 44 on screen, the card at 16), where ios.md:169 puts a row's text 16 in.
 
-### 40. Tab header with a note (GitView, AddonScreenView)
+### 39. Tab header with a note (GitView, AddonScreenView)
 
 - Source: `components/GitView.tsx`
 - Role: A tab strip with a note beside it (tabs-head, tabs-note) and a footer (tabs-foot)
@@ -853,98 +857,98 @@ The 78 components that draw a role themselves instead of placing a shared one, f
 - Differs: The Changes/History switch sits in its own strip with a full-width hairline under it, which ios.md's segmented control (ios.md:197-205) doesn't have; the note under it ("On master · …") is 13 pt secondary over the card.
 - Differs: Android: the Git tab's Changes/History are a second row of tabs under the project's tabs; Material allows secondary tabs, but here both rows use the same 48 dp primary style with a 3 dp indicator (Material 3 tabs (m3.material.io/components/tabs/specs, rendered text saved in m3/components_tabs_specs.txt:169)).
 
-### 41. FindStrip
+### 40. FindStrip
 
 - Source: `components/FindBar.tsx`
 - Role: The find strip: search field, "n of m", Previous/Next/Close buttons
 - Classes: `chat-find`
 - Moves to: SearchBox is inside; the strip and its buttons are its own (Toolbar would hold them)
 
-### 42. Bare .btn buttons outside the shared button places
+### 41. Bare .btn buttons outside the shared button places
 
 - Source: `components/PermissionCard.tsx`
 - Role: Inline command buttons written as <button className="btn …">
 - Classes: none
 - Stays custom: No shared Button exists. ListButton and WindowActions cover only list and footer buttons.
 
-### 43. Text-link buttons (button.link)
+### 42. Text-link buttons (button.link)
 
 - Source: `components/ChatRows.tsx`
 - Role: Inline actions drawn as links (Open, Remove, Show all, Sign in…)
 - Classes: none
 - Stays custom: No shared link-style button exists (the Buttons entry holds the `link` class).
 
-### 44. MessagesView detail pane
+### 43. MessagesView detail pane
 
 - Source: `components/Messages.tsx`
 - Role: The run window's selected message: its body and result
 - Classes: `messages`, `messages-chat`, `messages-detail-*`
 - Moves to: ListDetail detail column (it is placed by ListDetail, but its header and body are its own)
 
-### 45. Run result previews (RunLog, EngineLogApp, RemoteConversationsApp)
+### 44. Run result previews (RunLog, EngineLogApp, RemoteConversationsApp)
 
 - Source: `components/RunLog.tsx`
 - Role: A selected row's preview under a table: result text, "from" line, raw output
 - Classes: `output`, `run-detail-app`, `runlog`, `runlog-result-*`
 - Moves to: ListDetail detail with a Section (the same runlog-result block is written three times)
 
-### 46. TagSections
+### 45. TagSections
 
 - Source: `components/Markdown.tsx`
 - Role: A message split into labeled sections (msg-section-label)
 - Classes: `msg-*`
 - Moves to: Section
 
-### 47. ParamTable
+### 46. ParamTable
 
 - Source: `components/ToolContent.tsx`
 - Role: A tool call's parameters as a two-column table
 - Classes: `code-text`, `has-code`, `json-tree`, `tc-code`, `tc-fields`, `tc-file`, `tc-heading`, `tc-params`, `tc-web`, `term-block`, `todo-*`
 - Moves to: PropertyList (it is a property list drawn as a table)
 
-### 48. DiffRows / SideBySideDiff
+### 47. DiffRows / SideBySideDiff
 
 - Source: `components/ToolContent.tsx`
 - Role: Unified and side-by-side diffs
 - Classes: `diff`, `diff-`, `diff-code`, `diff-hunk`, `diff-line`, `diff-mark`, `diff-num`, `new`, `old`, `sbs-*`
 - Stays custom: The one drawing of unified and side-by-side diffs. No other code may draw diff rows; it should be added to the shared list when its role is next reviewed.
 
-### 49. CodeView / CodeBlock
+### 48. CodeView / CodeBlock
 
 - Source: `components/ToolContent.tsx`
 - Role: Code with a gutter and caption
 - Classes: `code-caption`, `code-gutter`, `code-line`, `code-view`
 - Stays custom: The one code viewer with a gutter and caption. Other code that shows code uses it.
 
-### 50. JsonNode
+### 49. JsonNode
 
 - Source: `components/ToolContent.tsx`
 - Role: A collapsible JSON tree
 - Classes: `json-children`, `json-leaf`, `json-node`
 - Stays custom: No shared collapsible tree exists.
 
-### 51. FileList
+### 50. FileList
 
 - Source: `components/ToolContent.tsx`
 - Role: A Glob/Grep result as a list of files
 - Classes: `file-list-*`
 - Moves to: RowList
 
-### 52. ToolImage
+### 51. ToolImage
 
 - Source: `components/ToolContent.tsx`
 - Role: An image result with a note
 - Classes: `tc-caption`, `tc-image`, `tc-repl-value`
 - Moves to: ZoomImage/FileViewContent
 
-### 53. AddonScreenView parts (properties, text, markdown, tabs, list note)
+### 52. AddonScreenView parts (properties, text, markdown, tabs, list note)
 
 - Source: `components/AddonScreen.tsx`
 - Role: An addon screen's own property rows, text, Markdown block, tab header and list note
 - Classes: `addon-details`, `addon-fill-*`, `addon-inline`, `addon-markdown`, `addon-prop-*`, `addon-reveal`, `addon-screen`, `addon-section`, `addon-tab-body`, `addon-tabs`, `addon-text`, `addon-wrap`, `tabs-note`
 - Moves to: PropertyList for properties, TabBar for tabs, Section for notes
 
-### 54. AddonListDetail header
+### 53. AddonListDetail header
 
 - Source: `components/AddonListDetail.tsx`
 - Role: The detail's own header (detail-head) and result line
@@ -952,7 +956,7 @@ The 78 components that draw a role themselves instead of placing a shared one, f
 - Moves to: NavBar title
 - Differs: Phones: the commit message card's text starts 28 pt inside the card (x 44 on screen, the card at 16), where ios.md:169 puts a row's text 16 in.
 
-### 55. Agent Settings scope, file path and permission rows
+### 54. Agent Settings scope, file path and permission rows
 
 - Source: `AgentSettingsApp.tsx`
 - Role: The scope switcher, the settings file path and the permission rule rows
@@ -960,161 +964,161 @@ The 78 components that draw a role themselves instead of placing a shared one, f
 - Moves to: SelectList/RowList for the rules; PathField for the path
 - Differs: iPhone: its Settings / MCP Servers / MCP Permissions switch (TabBar) cuts "MCP Permissions" to "MCP Permissi…" (the shared segmented control's truncation, see the findings).
 
-### 56. ModelUpdateApp list
+### 55. ModelUpdateApp list
 
 - Source: `ModelUpdateApp.tsx`
 - Role: Models found, grouped, with check rows and a note
 - Classes: `mu-group-note`, `mu-list`, `mu-rows`
 - Moves to: CheckboxGroup or RowList (GroupHeader is used for the groups)
 
-### 57. Send to Chats list
+### 56. Send to Chats list
 
 - Source: `SendToSessionsApp.tsx`
 - Role: Chats to send to, as checkbox rows with a title and kind
 - Classes: `send-*`
 - Moves to: CheckboxGroup (ui.tsx:100) or RowList
 
-### 58. Pair a Device (QR, code, address, progress)
+### 57. Pair a Device (QR, code, address, progress)
 
 - Source: `RemoteAccessApps.tsx`
 - Role: The pairing page: QR code, code, address with Copy, a progress bar
 - Classes: `pair-address`, `pair-body`, `pair-code`, `pair-icon`, `pair-message`, `pair-progress-*`, `pair-qr`, `pair-source`, `pair-url`
 - Stays custom: No shared form of a QR code, a copyable value and a progress bar exists.
 
-### 59. Remote Access setup summary
+### 58. Remote Access setup summary
 
 - Source: `RemoteAccessApps.tsx`
 - Role: Set-up steps: a link, a QR code, a summary list
 - Classes: `ra-*`
 - Moves to: Section and RowList
 
-### 60. About block
+### 59. About block
 
 - Source: `AboutApp.tsx`
 - Role: The app's icon, name and version
 - Classes: `about`
 - Stays custom: An identity panel (icon, name, version) has no shared form.
 
-### 61. Instructions page
+### 60. Instructions page
 
 - Source: `InstructionsApp.tsx`
 - Role: A help document page
 - Classes: `instructions-*`
 - Stays custom: A help document is Markdown in a window of its own; the window has no role beyond it.
 
-### 62. Preview window body
+### 61. Preview window body
 
 - Source: `PreviewApp.tsx`
 - Role: The preview's body, its notes and a missing-image message
 - Classes: `image-missing`, `image-zoom`, `preview-app`, `preview-body`, `preview-note`
 - Moves to: EmptyState for the missing-image message; FileViewContent for the body
 
-### 63. ImageViewer / ZoomImage
+### 62. ImageViewer / ZoomImage
 
 - Source: `components/ZoomImage.tsx`
 - Role: A zoomable image
 - Classes: `image-viewport`
 - Stays custom: The one zoomable image viewer. Other code that shows a zoomable image uses it.
 
-### 64. Version compare panes
+### 63. Version compare panes
 
 - Source: `VersionDetailApp.tsx`
 - Role: Two version panes and "same"/"missing" notes
 - Classes: `compare-*`
 - Moves to: SplitPane/ListDetail for the panes, EmptyState for the notes
 
-### 65. Move to Folder / Select Window pickers
+### 64. Move to Folder / Select Window pickers
 
 - Source: `MoveToFolderApp.tsx`
 - Role: A list picker with a New Folder button
 - Classes: `picker-body`
 - Moves to: SelectList with ListButton
 
-### 66. Editor window body (div.editor > div.editor-body > div.form)
+### 65. Editor window body (div.editor > div.editor-body > div.form)
 
 - Source: `SettingsApp.tsx`
 - Role: The body of every dialog and editor window
 - Classes: `editor-panel`, `env-tab`, `fill`, `form`, `setup-form`
 - Stays custom: No shared editor body exists: EmptyWindow draws only the empty state. A shared EditorWindow (div.editor, div.editor-body, div.form) is needed so editors stop writing it.
 
-### 67. Time chips
+### 66. Time chips
 
 - Source: `components/TaskEditor.tsx`
 - Role: A daily schedule's times as chips with remove buttons
 - Classes: `time-*`
 - Stays custom: Pills are not allowed (CLAUDE.md, UI style). The chips should become list rows with Remove, which needs a decision before it moves.
 
-### 68. Rebar / Band
+### 67. Rebar / Band
 
 - Source: `components/Rebar.tsx`
 - Role: The main window's toolbar bands you drag and size
 - Classes: `rebar-*`
 - Stays custom: Desktop window layout (toolbar bands). Phones put commands in the bar, so it never draws there.
 
-### 69. IosFrame DeviceSheet list
+### 68. IosFrame DeviceSheet list
 
 - Source: `web/IosFrame.tsx`
 - Role: This Device sheet's grouped list (ios-grouped, ios-group, ios-cell) and its Switch
 - Classes: `ios-cell-value`, `ios-group-title`, `ios-group-titled`, `ios-grouped`, `wrap`
 - Moves to: Group/Row (PhoneList.tsx) and CheckboxField's phone switch; the frame writes its own ios-cell list
 
-### 70. AndroidFrame DeviceSheet list
+### 69. AndroidFrame DeviceSheet list
 
 - Source: `web/AndroidFrame.tsx`
 - Role: This Device sheet's list (md-list, md-list-item) and its Switch
 - Classes: `md-list-*`, `md-sheet-title`
 - Moves to: Group/Row and CheckboxField's switch
 
-### 71. Switch (phone-files.tsx)
+### 70. Switch (phone-files.tsx)
 
 - Source: `web/phone-files.tsx`
 - Role: A switch drawn by the frame (ios-switch, md-switch)
 - Classes: `ios-switch-knob`, `md-switch-handle`
 - Moves to: CheckboxField, which phones draw as a switch (forms.md)
 
-### 72. AndroidFrame FileScreen tabs and FAB
+### 71. AndroidFrame FileScreen tabs and FAB
 
 - Source: `web/AndroidFrame.tsx`
 - Role: File dialog's own tabs (md-tabs) and a floating New Folder button (md-fab)
 - Classes: `md-fab`, `md-field-*`, `md-tab`, `md-tabs`
 - Moves to: TabBar for the tabs
 
-### 73. PairPage
+### 72. PairPage
 
 - Source: `web/PairPage.tsx`
 - Role: The phone's pairing page before it is paired: logo, code field, buttons
 - Classes: `ios-large-title`, `md-headline`, `pair-logo`, `pair-page-*`
 - Stays custom: The page frame before pairing stays custom, outside the shell. Its fields and buttons should be Field and WindowActions.
 
-### 74. Waiting
+### 73. Waiting
 
 - Source: `web/Waiting.tsx`
 - Role: "Waiting for the computer" page
 - Classes: `offline-waiting-*`
 - Moves to: EmptyState
 
-### 75. QrScanner
+### 74. QrScanner
 
 - Source: `web/QrScanner.tsx`
 - Role: Camera view to scan a pairing code
 - Classes: `qr-*`
 - Stays custom: A camera view; neither iOS nor Material has a component for it.
 
-### 76. HtmlFrame bar
+### 75. HtmlFrame bar
 
 - Source: `components/preview/HtmlFrame.tsx`
 - Role: An HTML preview with its own note and button bar
 - Classes: `preview-html`
 - Moves to: InfoBar for the note
 
-### 77. XlsxSheets tabs
+### 76. XlsxSheets tabs
 
 - Source: `components/preview/XlsxSheets.tsx`
 - Role: A workbook's sheet tabs
 - Classes: `preview-book`, `preview-sheet-tabs`
 - Moves to: TabBar
 
-### 78. DocxPages / PptxSlides / PdfPages / PhoneGrid
+### 77. DocxPages / PptxSlides / PdfPages / PhoneGrid
 
 - Source: `components/preview/DocxPages.tsx`
 - Role: Document pages, slides, PDF pages and a phone's sheet grid

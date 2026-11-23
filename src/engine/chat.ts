@@ -42,7 +42,7 @@ import {
   resolveEnvironment,
   resolveHarness,
 } from '../shared/environments';
-import { compactRows, compactedText, contextFullResend, contextFullRetry, layered, proseRows } from '../shared/compact';
+import { compactRows, compactedText, fromRun, contextFullResend, contextFullRetry, layered } from '../shared/compact';
 import type { MessageRow } from '../shared/messages';
 import type { EngineEvent, Harness, RunRecord, Settings, Task } from '../shared/types';
 import { CHAT_MESSAGE_FILE, chatMessageWaiting, queueGuidance, readPendingGuidance, takeChatMessage, takePendingGuidance, writeChatMessage } from './guidance';
@@ -925,8 +925,8 @@ class ChatSession {
       // The newest session's rows get their layer here, once, so a conversation continued in a chat stays one session.
       const rows = layered(opening.history);
       this.opening = { ...opening, history: rows };
-      // Its ids (c0, c1…) are compacted.json's, which a reopened chat's history starts with. It shows the messages only.
-      this.history = proseRows(rows);
+      // Its ids (c0, c1…) are compacted.json's, which a reopened chat's history starts with. It shows them all, as before compacting.
+      this.history = rows;
       this.historyCompact = rows;
       this.compacted = rows;
       this.draft = opening.draft;
@@ -980,6 +980,11 @@ class ChatSession {
    * the chat's own session hasn't written yet: a run's (Continue in Chat on a
    * run), or a transcript from outside Looper (History's Continue in Chat).
    */
+  /** The run whose transcript holds a call of the compacted conversation this chat started from (MessageRow.run). */
+  compactedRun(toolUseId: string): string | undefined {
+    return this.history.find((r) => r.layer !== undefined && r.toolUseId === toolUseId)?.run;
+  }
+
   historySource(): ChatHistorySource | undefined {
     if (this.opening.kind === 'resume') return { transcript: this.opening.transcript, format: this.claude ? 'claude' : 'codex' };
     // A compacted chat holding a run starts from its compacted rows, not the run's conversation.
@@ -2842,8 +2847,9 @@ class ChatSession {
     if (this.busy()) throw new Error('The agent is still working. Compact the chat once its turn has ended.');
     // Before it has all been read, the history would be compacted without its start.
     if (this.historyReading) throw new Error(HISTORY_READING);
-    const history = this.historyCompact ?? compactRows(this.history);
-    const rows = compactRows([...history, ...(auto?.rows ?? this.acc.rows)]);
+    // Each call says whose transcript holds it: a forked conversation's the run it was forked from, this chat's its own.
+    const history = this.historyCompact ?? compactRows(fromRun(this.history, this.forkedFrom));
+    const rows = compactRows([...history, ...fromRun(auto?.rows ?? this.acc.rows, this.id)]);
     if (!rows.some((r) => r.kind === 'agent')) throw new Error('The chat has no reply to compact yet.');
     // A chat that hasn't sent a message isn't a run yet: its conversation is the run it went on with.
     const from = this.recorded ? this.id : (this.compactedFrom ?? this.fromRunId ?? this.forkedFrom ?? this.id);
@@ -3309,6 +3315,11 @@ export class ChatManager {
 
   get(id: string): ChatState | undefined {
     return this.sessions.get(id)?.state();
+  }
+
+  /** The run whose transcript holds a call of an open compacted chat's earlier conversation; undefined when it has none. */
+  compactedRun(id: string, toolUseId: string): string | undefined {
+    return this.sessions.get(id)?.compactedRun(toolUseId);
   }
 
   /** Where an open chat's earlier conversation was read from (ChatSession.historySource). */

@@ -5,7 +5,8 @@
 // iOS (ios.md): Navigation bar (Back a 44 x 44 glass circle with a chevron alone, a centered title), Lists (cards 16 from the edges),
 // Sheets (a large sheet starts right under the status bar; a grabber only on a sheet with more than one height, and a button). Android (Material 3): Top app bar (a 64 dp bar whose leading icon
 // button holds the back arrow), Lists (16 dp leading padding). Both: Back is drawn only in the bar, and commands for what a
-// screen shows are its bottom toolbar, not a strip of buttons in its content.
+// screen shows are its bottom toolbar, not a strip of buttons in its content, and a conversation's message box sits on the
+// conversation (on iOS the conversation runs under it to the screen's bottom).
 
 /** The rules, with what each is measured against, for the report. */
 export const RULES = {
@@ -15,6 +16,9 @@ export const RULES = {
   'group-in-card': "a list's group header is its section's title outside the card, never a row inside it (ios.md, Lists: a section title is 9 above its card; Material 3, Lists)",
   'pane-group-mix': "each group of an addon's pane is a list section of its own: its name as the title, only its items in the card (ios.md, Lists)",
   'sheet-top': 'a large sheet starts under the status bar (ios.md, Sheets)',
+  'row-one-line':
+    "a form row that picks (a path, a pop-up button) spans its card, its label at the leading edge and its value on the same line at the trailing end (ios.md, Lists: a value at the trailing end; kit: Lists, Type=Pop-up)",
+  'separator-edge': "a row's hairline runs from its text's start to the card's trailing edge (ios.md, Lists)",
   'segment-cut': "a segmented control's labels show whole (ios.md, Segmented control: short labels, at most five)",
   'title-cut': "the bar's title is cut only when it doesn't fit between the buttons, centered or not (ios.md, Navigation bar)",
   'tabs-cut': "a segmented control or tab strip stays inside the screen (ios.md, Segmented control)",
@@ -25,7 +29,11 @@ export const RULES = {
   'dialog-width': 'a dialog on an Android tablet is 280 to 560 dp wide (Material 3, Dialogs: container width min 280dp, max 560dp)',
   'grabber-detents': 'a grabber only on a sheet that rests at more than one height (ios.md, Sheets; HIG Sheets: "Include a grabber in a resizable sheet")',
   'grabber-button': "a resizable sheet's grabber is a labeled button, so a tap, VoiceOver or TalkBack moves the sheet to its other height (HIG Sheets: \"tap it to cycle through the detents\")",
+  'under-bar':
+    "on iOS a page runs under the bar to the screen's top and starts its content below it: only content scrolled up goes under the bar (WWDC25 284: \"extend the scroll view fully under the navigationBar\"; ios.md, Scroll edge effects)",
   'frames-stall': 'the screen keeps drawing: requestAnimationFrame runs at least 5 times in each second sampled (a page whose frames stop takes no taps)',
+  'box-under':
+    "a conversation's message box sits on the conversation: on iOS the conversation runs to the screen's bottom under it (ios.md, Scroll edge effects: \"A conversation runs to the screen's bottom under its message box, as in Messages\"), and on every phone the color around the box is the conversation's, not a band of the screen's or the sheet's",
   'content-toolbar':
     "commands that act on what a screen shows are its bottom toolbar (BottomToolbar), not a strip of buttons in its content (HIG Tab bars: \"If you need to provide controls that act on elements in the current view, use a Toolbar\"; Material 3 Toolbars: a floating toolbar for \"contextual actions relevant to the body content\")",
 };
@@ -71,6 +79,27 @@ export function inspect({ os, tablet }) {
   };
 
   if (os === 'ios') {
+    // A row that picks a path or opens a pop-up button's menu: as wide as its card, its label and its value on one line.
+    for (const row of all('.form-group .path-row, .form-group .field-line:has(> .select-control)')) {
+      const card = row.closest('.form-group-rows, .form-group') ?? row.parentElement;
+      const label = row.querySelector('.field-label');
+      const value = row.querySelector('.path-row-value, .select-value');
+      if (!card || !label || !value) continue;
+      const rr = row.getBoundingClientRect();
+      const cr = card.getBoundingClientRect();
+      const lr = label.getBoundingClientRect();
+      const vr = value.getBoundingClientRect();
+      const oneLine = Math.abs((lr.top + lr.bottom) / 2 - (vr.top + vr.bottom) / 2) <= 4 && vr.left >= lr.right - 0.5;
+      // A row's line is the card's width less a field's 16 of padding on each side, or the whole card for a row that is the field.
+      if (!oneLine || rr.width < cr.width - 33) fail('row-one-line', row, `${round(rr.width)} wide in a ${round(cr.width)} card, the value ${oneLine ? 'beside' : 'under'} the label`);
+    }
+    // Each row's hairline (its ::before) reaches its card's trailing edge.
+    for (const row of all('.form-group :is(.field, .checkbox-field), .pg-list .pg-row')) {
+      const cs = getComputedStyle(row, '::before');
+      if (cs.content === 'none' || cs.content === 'normal' || cs.position !== 'absolute' || parseFloat(cs.height) > 1) continue;
+      const right = parseFloat(cs.right) || 0;
+      if (right > 0.5) fail('separator-edge', row, `ends ${round(right)} short of the trailing edge`);
+    }
     for (const el of all('.ios-bar-row .ios-back')) {
       const r = el.getBoundingClientRect();
       const text = (el.textContent || '').trim();
@@ -134,6 +163,28 @@ export function inspect({ os, tablet }) {
       }
     }
   }
+  // A conversation's message box (ConversationWithBox), but a dashboard card's, which keeps its box under its conversation.
+  const opaque = (c) => c && c !== 'transparent' && !/^rgba\([^)]*,\s*0\)$/.test(c);
+  const behind = (el) => {
+    for (let e = el; e; e = e.parentElement) {
+      const c = getComputedStyle(e).backgroundColor;
+      if (opaque(c)) return c;
+    }
+    return null;
+  };
+  for (const box of all('.chat-composer.phone-composer')) {
+    if (box.closest('.overview-card, .overview-chat, .overview-composer')) continue;
+    let host = box.parentElement;
+    while (host && !host.querySelector('.chat-scroll')) host = host.parentElement;
+    const scroll = host?.querySelector('.chat-scroll');
+    if (!scroll || !shown(scroll)) continue;
+    const b = box.getBoundingClientRect();
+    const s = scroll.getBoundingClientRect();
+    if (os === 'ios' && s.bottom < b.bottom - 1) fail('box-under', box, `the conversation ends ${round(b.bottom - s.bottom)} pt above the box's bottom, so the box sits under it`);
+    const around = behind(box.parentElement);
+    const conversation = behind(scroll);
+    if (around !== conversation) fail('box-under', box, `${around} around the box, ${conversation} behind the conversation`);
+  }
   // A strip of buttons in the content where the bottom toolbar belongs: a Toolbar drawn in place (.toolbar), or three or more
   // icon buttons side by side, outside the bars, the bottom toolbar, tab bars, menus, the message box, cards and list rows.
   const CHROME = '.ios-bar-row, .md-bar-row, .bottom-toolbar, [class*="tabbar"], [role=tablist], [role=menu], [role=menubar], .chat-composer, .overview-composer, .overview-chat, .pg-row, .pg-sheet-handle, .md-fab';
@@ -154,6 +205,31 @@ export function inspect({ os, tablet }) {
     if (os === 'ios' && heights < 2) fail('grabber-detents', el, sheet ? `its sheet rests at ${heights} height` : 'its sheet has one height (no data-detents)');
     const label = (el.getAttribute('aria-label') || '').trim();
     if (heights >= 2 && !(el.matches('button, [role=button]') && label)) fail('grabber-button', el, `a <${el.tagName.toLowerCase()}>${label ? '' : ' without a label'}`);
+  }
+  // iOS: the frame's bar floats over the page (data-under-bar, --looper-bar-h). With nothing scrolled, no text or control
+  // of the page is under it.
+  const root = document.documentElement;
+  if (os === 'ios' && root.hasAttribute('data-under-bar') && !root.hasAttribute('data-lifted')) {
+    const bar = parseFloat(root.style.getPropertyValue('--looper-bar-h')) || 0;
+    const content = 'button, input, textarea, select, img, canvas, [role=tab], [role=button]';
+    for (const el of document.querySelectorAll('body *')) {
+      const box = el.getBoundingClientRect();
+      if (box.height <= 0 || box.bottom <= 0.5 || box.top >= bar - 0.5) continue;
+      const texts = [...el.childNodes].filter((n) => n.nodeType === 3 && n.textContent.trim());
+      if (!texts.length && !el.matches(content)) continue;
+      // Text is where its lines are, not where its box is (an empty state centered in a column as tall as the screen).
+      const r = el.matches(content) ? box : (() => {
+        const range = document.createRange();
+        range.setStartBefore(texts[0]);
+        range.setEndAfter(texts[texts.length - 1]);
+        return range.getBoundingClientRect();
+      })();
+      if (r.height <= 0 || r.bottom <= 0.5 || r.top >= bar - 0.5) continue;
+      if (!shown(el) || el.closest('.pg-sheet, [role=dialog]')) continue;
+      let scrolled = false;
+      for (let p = el.parentElement; p && !scrolled; p = p.parentElement) scrolled = p.scrollTop > 0;
+      if (!scrolled) fail('under-bar', el, `${round(r.top)} to ${round(r.bottom)} from the top, under the ${round(bar)} high bar`);
+    }
   }
   for (const el of document.querySelectorAll('*')) {
     if (el.closest('.ios-bar-row, .md-bar-row') || !shown(el)) continue;

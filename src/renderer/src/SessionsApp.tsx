@@ -33,6 +33,7 @@ import { LargeTitle } from './components/phone/PhoneList';
 import { PhoneSheet } from './components/phone/PhoneSheet';
 import { ReorderSheet } from './components/phone/ReorderSheet';
 import { useSplit } from './components/phone/PhoneSplit';
+import { useTypingCard } from './components/phone/useTypingCard';
 import { TerminalOverlay } from './components/phone/TerminalOverlay';
 import { UsagePanel } from './components/phone/UsagePanel';
 import { NO_CHATS, SessionIcon, SessionList, SessionStatus, sessionKind, unreadSwipe } from './components/SessionList';
@@ -43,6 +44,7 @@ import { contextFraction, factLine, limitFacts, sessionFacts, sessionLimits, usa
 import { WorkflowView } from './components/WorkflowView';
 import { terminalTitle } from './phone-lists';
 import { getChat, subscribe } from './events';
+import { followCard } from './components/card-feed';
 import { useSessionsWindow, type SessionsWindow } from './useSessionsWindow';
 import { isPhone } from './web/page-nav';
 import type { PageNavAction } from './web/nav-bar-model';
@@ -97,6 +99,12 @@ export function SessionsStatusBar({ summary, chat, limits, children }: { summary
 /** What the dashboard says when Dashboard Filter leaves out every chat. */
 const FILTERED_OUT = 'Dashboard Filter hides every chat.';
 
+/** Marks a card's messages that scroll off the top, so the text fades there (data-cut) and no line is cut through. */
+const cutTop = (el: HTMLElement) => {
+  if (el.scrollTop > 1) el.dataset.cut = '';
+  else delete el.dataset.cut;
+};
+
 /** A card's messages: those since the user's last one, following the newest unless scrolled up, on a phone as on the desktop. */
 function CardMessages({ s }: { s: SessionSummary }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -109,6 +117,7 @@ function CardMessages({ s }: { s: SessionSummary }) {
       ref={ref}
       onScroll={(e) => {
         atBottom.current = atEnd(e.currentTarget);
+        cutTop(e.currentTarget);
       }}
     >
       {s.recent?.length ? (
@@ -264,6 +273,9 @@ export function PhoneOverview({
     setRoot(el?.closest<HTMLElement>('.pg-scroll') ?? null);
   }, []);
   const filtered = dashboardCards(groups, shown);
+  useLiveCards(filtered, inView);
+  // The keyboard up for a card's message box: the card fills what shows above it.
+  useTypingCard(overview, root);
   // The row of small cards shows when a second card does, and goes with it: the large card's height changes with it.
   const hasStrip = filtered.length > 1;
   // Focus on a phone: the large conversation takes what's left of the screen below the cards' row (and the title above),
@@ -453,30 +465,31 @@ function useCardsInView(root: HTMLElement | null): [ReadonlySet<string>, TrackCa
 }
 
 /**
- * A card's conversation while it's in view: read once (`read`), then kept current by
- * its own events only (`of` picks them). `read` and `of` are module constants.
+ * A card's conversation while it's in view: read (again after a read that brought nothing), then kept
+ * current by its own events only (`of` picks them): followCard. `read` and `of` are module constants.
  */
 function useCardFeed<T>(id: string, live: boolean, read: (id: string) => Promise<T | null>, of: (e: EngineEvent, id: string) => T | undefined): T | null {
   const [value, setValue] = useState<T | null>(null);
   useEffect(() => {
     setValue(null);
     if (!live) return;
-    let current = true;
-    const unsub = subscribe((e) => {
-      const v = of(e, id);
-      if (v) setValue(() => v);
-    });
-    // An event that came first is newer than what was read.
-    void read(id).then((v) => {
-      if (current && v) setValue((prev) => prev ?? v);
-    });
-    return () => {
-      current = false;
-      unsub();
-    };
+    return followCard(id, read, of, subscribe, setValue);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, live]);
   return live ? value : null;
+}
+
+/**
+ * A dashboard's cards that show their conversation (those in view, `inView`): the window tells Looper, so their chats'
+ * and task runs' events come to it, and Looper follows those runs closely (watchShownSessions). Without it a card
+ * shows what it read once, and a card whose read failed waits for events that never come. A layout effect, so the
+ * window takes the events before the cards read them.
+ */
+function useLiveCards(cards: SessionSummary[], inView: ReadonlySet<string>): void {
+  const live = liveCards(cards, inView);
+  const liveKey = live.join('\n');
+  useLayoutEffect(() => window.looper.sessions.showCards(live), [liveKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => () => window.looper.sessions.showCards([]), []);
 }
 
 const readChat = getChat;
@@ -758,11 +771,7 @@ function ChatsDashboard({ s }: { s: SessionsWindow }) {
   const [drop, setDrop] = useState<{ id: string; after: boolean } | null>(null);
   // Dashboard Filter's cards, in the list's order (the order they were dragged to first).
   const filtered = useMemo(() => dashboardCards(s.groups, s.shown), [s.groups, s.shown]);
-  const live = liveCards(filtered, inView);
-  const liveKey = live.join('\n');
-  // A layout effect, so the window takes the chats' and runs' events before the cards read them.
-  useLayoutEffect(() => window.looper.sessions.showCards(live), [liveKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  useLayoutEffect(() => () => window.looper.sessions.showCards([]), []);
+  useLiveCards(filtered, inView);
   if (sessions.length === 0) return <EmptyState>{NO_CHATS}</EmptyState>;
   if (filtered.length === 0) return <EmptyState>{FILTERED_OUT}</EmptyState>;
   const big = s.shown.bigCards;

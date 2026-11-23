@@ -27,6 +27,7 @@ export const READ_CHANNELS: ReadonlySet<string> = new Set([
   'runs:messages',
   'runs:messageImage',
   'runs:scriptCalls',
+  'runs:call',
   'rest:state',
   'prevent-sleep:state',
   'logins:list',
@@ -154,9 +155,9 @@ function withPiece(kept: unknown, piece: OutputRead): OutputRead {
   return { end: next.end, from: next.end - utf8Length(next.text), text: next.text };
 }
 // Channels whose first argument is a task id.
-const TASK_KEYED = new Set(['runs:list', 'versions:list', 'versions:detail', 'runs:output', 'runs:messages', 'runs:messageImage', 'runs:scriptCalls', 'run:canGuide']);
+const TASK_KEYED = new Set(['runs:list', 'versions:list', 'versions:detail', 'runs:output', 'runs:messages', 'runs:messageImage', 'runs:scriptCalls', 'runs:call', 'run:canGuide']);
 // Channels whose second argument is a run id (a session's id for its subagents' transcripts).
-const RUN_KEYED = new Set(['runs:output', 'runs:messages', 'runs:messageImage', 'runs:scriptCalls', 'run:canGuide']);
+const RUN_KEYED = new Set(['runs:output', 'runs:messages', 'runs:messageImage', 'runs:scriptCalls', 'runs:call', 'run:canGuide']);
 // Kept while the task they belong to exists, whatever connection last read them.
 const SWEPT_BY_OWNER = new Set([...SESSION_KEYED, ...TASK_KEYED].filter((c) => c !== 'versions:detail'));
 

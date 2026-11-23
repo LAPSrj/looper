@@ -346,7 +346,7 @@ describe('the component registry (components/components.md)', () => {
   });
 
   it('gives every custom component its source, its classes and a reason: the shared component it moves to or why it stays', () => {
-    expect(custom.length).toBeGreaterThanOrEqual(78);
+    expect(custom.length).toBeGreaterThanOrEqual(77);
     for (const e of custom) {
       expect(exists(e.fields.get('Source')!), `${e.heading}: Source`).toBe(true);
       expect(e.fields.get('Role'), `${e.heading}: Role`).toBeTruthy();

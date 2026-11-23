@@ -33,9 +33,8 @@ export interface PageNav {
    */
   ownsBottom?: boolean;
   /**
-   * The page's own large title shows (iOS); the bar shows the title only once
-   * it scrolls away. The frame watches the element marked `data-large-title`;
-   * without one, the bar shows the title.
+   * The page's own large title shows at the top of its scroller (iOS, LargeTitle): the bar shows the title only once
+   * the page begins to scroll, and hides it again back at the top (HIG Toolbars).
    */
   largeTitle?: boolean;
   /** A toolbar the phone doesn't draw (an addon's buttons, a terminal's text size): More starts with it. */
@@ -72,7 +71,7 @@ export interface PageNavSplit {
   width: number;
   title: string;
   actions?: PageNavAction[];
-  /** The list has a large title of its own (data-large-title): its bar title shows once that scrolls away. */
+  /** The list has a large title of its own (LargeTitle): its bar title shows once the list begins to scroll. */
   largeTitle?: boolean;
   /** An inspector column at the trailing edge, and its title: the bar gives it a part of its own. */
   inspector?: { width: number; title: string };

@@ -8,7 +8,7 @@ import { Logger } from '../src/engine/log';
 import { CodexAccumulator, COMPACTED_FILE, compactedFile, MessagesService, migrateCompactedFile, readCompactedReplNames, readCompactedRows, TranscriptAccumulator } from '../src/engine/messages';
 import { loadSettings } from '../src/engine/store/settings';
 import { chatCanCompact } from '../src/shared/chat';
-import { compactedText, compactRows, isCall, layered, proseRows, RESULT_MAX_CHARS, withoutCompacted } from '../src/shared/compact';
+import { compactedText, compactRows, isCall, layered, RESULT_MAX_CHARS, withoutCompacted } from '../src/shared/compact';
 import type { MessageRow } from '../src/shared/messages';
 import { SettingsSchema, TaskSchema } from '../src/shared/types';
 
@@ -47,7 +47,6 @@ describe('compactRows', () => {
       ['c7', 'agent', '', 'Fixed, and the tests pass.'],
     ]);
     expect(rows.filter(isCall).map((r) => r.id)).toEqual(['c1', 'c4']);
-    expect(proseRows(rows).map((r) => r.id)).toEqual(['c0', 'c2', 'c3', 'c5', 'c6', 'c7']);
     // Nothing that points into the old conversation (Fork from Here, subagent tabs) comes along.
     expect(rows[7].uuid).toBeUndefined();
     expect(rows[0].attachments).toHaveLength(1);
@@ -232,10 +231,11 @@ describe("a compacted chat's run", () => {
     writeFileSync(join(runDir, 'session.json'), JSON.stringify({ session_id: 's2', transcript_path: transcript }));
     const service = new MessagesService({ getTask: () => undefined, runDir: () => runDir, attachment: () => null, host: 'linux', settings: SettingsSchema.parse({}), log: new Logger() });
 
-    // The window shows the earlier conversation's messages only.
+    // The window shows the earlier conversation as compaction kept it, its calls too.
     const res = await service.read('t1', 'r1');
     expect(res.rows.map((r) => [r.kind, r.text])).toEqual([
       ['prompt', 'q1'],
+      ['tool', 'pwd'],
       ['agent', 'a1'],
       ['prompt', 'q2'],
       ['tool', 'command: ls'],
@@ -250,6 +250,8 @@ describe("a compacted chat's run", () => {
       ['c4', 'command: ls', undefined],
       ['c5', 'a2', undefined],
     ]);
+    // The run's own call says it's the run's: its script's calls and its whole row are read from there.
+    expect(again[4]).toMatchObject({ toolUseId: 'tu1', run: 'r1' });
     expect(layered(again).map((r) => [r.layer, r.result])).toEqual([
       [0, undefined],
       [0, undefined],
@@ -260,43 +262,47 @@ describe("a compacted chat's run", () => {
     ]);
   });
 
-  it('migrates a first-version compacted.json, an array of messages, to version 3 once, and reads wait for it', async () => {
+  it('migrates a first-version compacted.json, an array of messages, to version 4 once, and reads wait for it', async () => {
     const runDir = mkdtempSync(join(tmpdir(), 'looper-compacted-v1-'));
     const plain = mkdtempSync(join(tmpdir(), 'looper-plain-run-'));
     const file = join(runDir, COMPACTED_FILE);
     writeFileSync(file, JSON.stringify([row({ id: 'c0', kind: 'prompt', text: 'q1' }), row({ id: 'c1', kind: 'agent', text: 'a1' })]));
-    // The readers take only version 3.
+    // The readers take only version 4.
     expect(readCompactedRows(runDir)).toEqual([]);
     const service = new MessagesService({ getTask: () => undefined, runDir: () => runDir, attachment: () => null, host: 'linux', settings: SettingsSchema.parse({}), log: new Logger() });
     const migrated = service.migrateCompacted(Promise.resolve([runDir, plain]));
-    // Asked while the migration runs, it answers once the file is version 3.
+    // Asked while the migration runs, it answers once the file is version 4.
     expect((await service.compactable('t1', 'r1')).map((r) => [r.text, r.layer])).toEqual([
       ['q1', 0],
       ['a1', 0],
     ]);
     expect(await migrated).toBe(1);
-    expect((JSON.parse(readFileSync(file, 'utf8')) as { version: number }).version).toBe(3);
+    expect((JSON.parse(readFileSync(file, 'utf8')) as { version: number }).version).toBe(4);
     expect(await migrateCompactedFile(runDir)).toBe(false);
     expect(await migrateCompactedFile(plain)).toBe(false);
   });
 
-  it('migrates a version 2 compacted.json to version 3, keeping its rows, and keeps the REPL names a Code Mode chat got back', async () => {
+  it('migrates a version 2 or 3 compacted.json to version 4, keeping its rows and REPL names as they are', async () => {
     const runDir = mkdtempSync(join(tmpdir(), 'looper-compacted-v2-'));
     const file = join(runDir, COMPACTED_FILE);
     const rows = [row({ id: 'c0', kind: 'prompt', text: 'q1', layer: 0 }), row({ id: 'c1', kind: 'agent', text: 'a1', layer: 0 })];
     // As writeJsonAtomic wrote it, and as JSON.stringify alone would.
-    for (const text of [JSON.stringify({ version: 2, rows }, null, 2), JSON.stringify({ version: 2, rows })]) {
+    for (const text of [JSON.stringify({ version: 2, rows }, null, 2), JSON.stringify({ version: 2, rows }), JSON.stringify({ version: 3, rows }, null, 2)]) {
       writeFileSync(file, text);
       expect(readCompactedRows(runDir)).toEqual([]);
       expect(await migrateCompactedFile(runDir)).toBe(true);
-      expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ version: 3, rows });
+      expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ version: 4, rows });
       expect(readCompactedRows(runDir)).toEqual(rows);
       expect(await migrateCompactedFile(runDir)).toBe(false);
     }
     expect(readCompactedReplNames(runDir)).toEqual([]);
     writeFileSync(file, JSON.stringify(compactedFile(rows, ['total', 'hello'])));
     expect(readCompactedReplNames(runDir)).toEqual(['total', 'hello']);
-    expect(compactedFile(rows, [])).toEqual({ version: 3, rows });
+    expect(compactedFile(rows, [])).toEqual({ version: 4, rows });
+    // A version 3 file keeps the names it got back; its calls stay as they were (nothing says where they are).
+    writeFileSync(file, JSON.stringify({ version: 3, rows, replNames: ['total'] }));
+    expect(await migrateCompactedFile(runDir)).toBe(true);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ version: 4, rows, replNames: ['total'] });
   });
 
   it("tells the agent what the new session's REPL starts with, at the end of the compacted conversation", () => {
@@ -353,7 +359,7 @@ describe.skipIf(process.platform === 'win32')('Compact into New Chat', { timeout
     manager = null;
   });
 
-  it('opens a chat that shows the messages only, sends them with its first message, and closes the old chat', async () => {
+  it('opens a chat that shows the conversation as it was, sends it with its first message, and closes the old chat', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'looper-compact-'));
     const dir = mkdtempSync(join(tmpdir(), 'looper-compact-cwd-'));
     const log = join(dir, 'received.jsonl');
@@ -387,10 +393,13 @@ describe.skipIf(process.platform === 'win32')('Compact into New Chat', { timeout
     const next = await manager.compact(task, first);
     expect(manager.get(first)).toBeUndefined();
     expect(next.historyLabel).toBe(`Compacted from run ${first}`);
+    // As if the session went on: the earlier session's call is there too, and says which run's transcript holds it.
     expect(next.history.map((r) => [r.kind, r.text])).toEqual([
       ['prompt', 'first question'],
+      ['tool', 'command: ls'],
       ['agent', 'reply 1'],
     ]);
+    expect(next.history[1]).toMatchObject({ run: first, toolUseId: expect.any(String), layer: 0 });
     // Only text goes to the new conversation, so it may still move to another harness.
     expect(next.harnessLocked).toBe(false);
 
@@ -411,7 +420,8 @@ describe.skipIf(process.platform === 'win32')('Compact into New Chat', { timeout
     const saved = join(runDir(task.id, next.id), COMPACTED_FILE);
     expect(existsSync(saved)).toBe(true);
     const file = JSON.parse(readFileSync(saved, 'utf8')) as { version: number; rows: MessageRow[] };
-    expect(file.version).toBe(3);
+    expect(file.version).toBe(4);
+    expect(file.rows[1].run).toBe(first);
     expect(file.rows.map((r) => [r.text, r.layer])).toEqual([
       ['first question', 0],
       ['command: ls', 0],

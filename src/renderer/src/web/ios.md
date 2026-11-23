@@ -102,6 +102,11 @@ SF Pro through `-apple-system`, sizes in `--u` so Dynamic Type scales them
 | Footnote | 13 / 18, tracking -0.08 | Regular |
 | Caption 1, 2 | 12 / 16, 11 / 13 | Regular |
 
+The messages in the Overview's cards (phones and tablets) are 14 / 19, tracking
+-0.15, by Leandro's choice: iOS has no 14 pt style, so this sits between
+Subheadline (15 / 20, -0.23) and Footnote (13 / 18, -0.08). A small card's text
+in Focus's row is Footnote.
+
 ## Liquid Glass
 
 - Glass is for the layer of controls and navigation that floats over the
@@ -123,10 +128,29 @@ SF Pro through `-apple-system`, sizes in `--u` so Dynamic Type scales them
 
 ## Scroll edge effects
 
-- **Hard**, under a top bar once the page has scrolled: white at 85% with a
-  6 pt blur and a line of black at 5% (dark: black at 55%, line at 10%) (kit).
-  Nothing scrolls behind Looper's top bar, so `--ios-bar` is that white over
-  the page (`#fdfdfd`, dark `#050505`) and `--ios-bar-line` the line.
+- A page runs under its top bar to the screen's top, and the bar has no
+  background: "Large titles are now placed at the top of the content scroll
+  view, and scroll with the content underneath the bar. To keep the large title
+  visible, extend the scroll view fully under the navigationBar"; "the bar
+  background is now transparent by default. Remove any background
+  customization from your navigation and toolbars" (WWDC25 284). The page's
+  content starts below the bar (`--looper-bar-h`, which the frame sets) and
+  its scrollers carry it under the bar (`phone.css`, the `::before` of a
+  `.phone-page`'s or an editor's `.pg-scroll` and `.chat-scroll`). Any
+  other page starts below the bar, which then takes the page's top color.
+- **Hard**, under a top bar once the page has scrolled under it: white at 85%
+  with a 6 pt blur and a line of black at 5% (dark: black at 55%, line at 10%)
+  (kit), `--ios-edge-hard` on the bar's `::before`. "All scroll views
+  underneath navigation or toolbars automatically apply a visual treatment"
+  (WWDC25 284). It's the hard one because the bar then shows its title, text
+  outside the glass: the automatic style "provides a more opaque visual
+  separation for top toolbars that contain ... text that appears outside of
+  Liquid Glass controls" (HIG Scroll views). An iPad's split bar has one per
+  column, the bar's full height: "each pane can have its own scroll edge
+  effect; in this case, keep them consistent in height" (HIG Scroll views).
+  The bar's glass buttons don't blur again over it. Over a page that starts
+  below the bar nothing passes behind it, so `--ios-bar` is that white drawn
+  opaque (`#fdfdfd`, dark `#050505`) and `--ios-bar-line` the line.
 - **Soft**, behind the floating tab bar: a 10 pt blur under a gradient mask,
   with no color (kit). `.phone-main::after` on a tab's own screen.
 - A conversation runs to the screen's bottom under its message box, as in
@@ -156,7 +180,12 @@ Sizes are points, which are CSS pixels.
   `IosBarRow`), so the title stays centered on the screen whatever Back and the
   buttons at the end hold, and is cut when it doesn't fit, never moved.
 - A large title is 34/41 bold, 16 from the leading edge, its subtitle 15/20
-  medium (kit).
+  medium (kit). It's the first thing in the page's scroller and scrolls under
+  the bar with the content: "By default, a large title transitions to a
+  standard title as people begin scrolling the content, and transitions back
+  to large when people scroll to the top" (HIG Toolbars). The bar's title shows
+  once the page has scrolled at all, with the scroll edge effect, and goes back
+  at the top.
 - In a sheet the bar's buttons sit 16 below the sheet's top (kit), and on iPad
   10 in from its edges (kit log).
 - Where an item goes (SwiftUI, `ToolbarItemPlacement`): `navigation` and
@@ -169,7 +198,50 @@ Sizes are points, which are CSS pixels.
   tints the action so there’s a clear focal point. Only specify one primary
   action, and put it on the trailing side of the toolbar" (HIG Toolbars).
 - No bar background: "Remove any background customization from your
-  navigation and toolbars" (WWDC25 284).
+  navigation and toolbars" (WWDC25 284); see Scroll edge effects.
+
+### Status bar
+
+What Safari draws behind the status bar, in a tab and in the Home Screen app,
+is WebKit's (read in its source, main of November 2026), not a setting of the
+page:
+
+- It fills that area with the background color of the fixed element at the
+  top of the page and blurs it when there's none, and that blur reaches down
+  over the bar's buttons. WebKit hit-tests the middle of the top edge, 4 px
+  down, in the top document only, and takes the first fixed or sticky element
+  there over 10 px tall and 90% of the width
+  (`LocalFrameView::fixedContainerEdges`,
+  `PageColorSampler::fixedContainerSampleRectMargin`); with one, it shows a
+  color extension view in that color and hides the soft top blur
+  (`WKWebView _updateFixedColorExtensionViews`, `_shouldHideTopScrollPocket`).
+  A color under 75% opacity is blended over the page's background, a higher
+  one made opaque (`PageColorSampler::finishedFixedContainerColor`).
+- It samples only when the page loads, when a fixed element comes or goes
+  (`WebPage::didAddOrRemoveViewportConstrainedObjects`) or when the insets
+  change, never because a color changed. On an iPad the top isn't sampled
+  again once the person has scrolled or touched the page
+  (`Page::canSampleTopFixedContainerEdge`;
+  `TopContentInsetBackgroundCanChangeAfterScrolling` is on only for the small
+  screen idiom), and the iPad's hard top pocket is drawn solid in the color
+  last sampled.
+- So the served page starts with a fixed strip at the top (`pwa.ts`,
+  `.ios-top-edge`), and the frame puts a new one in each time what the
+  screen shows there changes: the page under the bar, the scroll edge effect,
+  a sheet's or alert's dimming, the dark theme (`IosFrame`
+  `screenTopColor`, `top-bar.ts` `paintTopEdge`). The strip has no
+  transition, so WebKit never keeps a color halfway.
+- `theme-color` is read from the top document only (`Page::themeColor`); WebKit
+  only hands it to Safari, which no WebKit code uses for this area. The frame
+  sets it to the same color.
+- `apple-mobile-web-app-status-bar-style` stays unset: "If set to default or
+  black, the web content is displayed below the status bar. If set to
+  black-translucent, the web content is displayed on the entire screen,
+  partially obscured by the status bar" (Apple, Supported Meta Tags). Under
+  black-translucent iOS 26 blurred the top ~110 pt of the Home Screen app
+  (unverified beyond Looper's own test on a phone).
+- Playwright's WebKit draws no status bar: what it shows there is confirmed
+  only on a device.
 
 ### Bottom toolbar
 
@@ -362,6 +434,20 @@ Sizes are points, which are CSS pixels.
   The target stays 44 high.
 - Text or symbols, not both; at most five segments on iPhone (HIG Segmented
   controls).
+- **Tabs that don't fit.** A screen whose tabs lead to long, separate views (the
+  Activity sheet's Now, Background, Subagents, Files, Git) asks TabBar for
+  `overflow: 'sections'`: when they don't fit as a segmented control (more than
+  five, or labels wider than their segment), they are the list of rows of a
+  Settings page, with chevrons and the counts in the titles ("Background (2)"),
+  and a row opens its view under a bar whose Back returns to the list. When they
+  fit, the segmented control stays. Reason: a pop-up button hides the choices
+  behind a tap and gives no place to return to, and each of these views already
+  pushes its own details, so a push stack of list, tab, detail is the one a
+  person knows from Settings (HIG Lists and tables; HIG Pop-up buttons: for "a
+  flat list of mutually exclusive options" when space is limited, which these
+  are not: each is a destination). The bars' Back, the edge swipe and Safari's
+  back are one path: detail, tab, list. A screen that has no such destinations
+  keeps the pop-up button.
 
 ### Switch
 

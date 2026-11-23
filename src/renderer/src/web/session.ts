@@ -2,7 +2,9 @@
 import { createLooperApi, type AttachmentInputItem, type LooperTransport } from '../../../shared/api-client';
 import type { LooperApi } from '../../../shared/api';
 import {
-  MAX_WS_MESSAGE_BYTES,
+  MessageJoiner,
+  isMessagePart,
+  splitMessage,
   type ClientMessage,
   type DialogResult,
   type EncodedBytes,
@@ -18,6 +20,8 @@ import { requestHeaders } from './request';
 
 /** Files up to this size travel inside the WebSocket; bigger ones are uploaded. */
 export const MAX_INLINE_FILE_BYTES = 4 * 1024 * 1024;
+/** The most of a message from the computer kept in parts while the rest comes (UTF-16 units). */
+const MAX_JOINED_CHARS = 256 * 1024 * 1024;
 export const NOT_CONNECTED = 'Not connected to Looper.';
 /** While the page is on screen the computer is tried again soon; hidden, the phone isn't kept busy. */
 const RECONNECT_VISIBLE_MS = [500, 1000, 2000, 3000];
@@ -179,6 +183,10 @@ export class Session {
   private socketAt = 0;
   /** Counts the messages heard, which show the socket alive. */
   private heard = 0;
+  /** The current socket's long messages, as their parts come (splitMessage). */
+  private joiner = new MessageJoiner(MAX_JOINED_CHARS);
+  /** Messages sent, which name a long one's parts. */
+  private posted = 0;
   /** When data last came from the computer (stamped every few seconds), or when the stored data was last live. */
   private liveAt: number | null;
   private nextId = 1;
@@ -267,7 +275,7 @@ export class Session {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       if (!this.post({ t: 'invoke', id, w, channel, args: encodeBytes(args) as unknown[] })) {
-        reject(new Error(`The request to Looper is too large (${channel}).`));
+        reject(new Error(NOT_CONNECTED));
         return;
       }
       this.pending.set(id, { resolve, reject, w, channel, args });
@@ -445,14 +453,11 @@ export class Session {
     return this.upload(f);
   }
 
-  /** False when the message is over the size limit and wasn't sent. */
+  /** False when there's no open socket to send it on. A message longer than one WebSocket message goes as parts. */
   private post(msg: ClientMessage): boolean {
     const socket = this.socket;
     if (!socket || socket.readyState !== SOCKET_OPEN) return false;
-    const text = JSON.stringify(msg);
-    // Base64 and JSON are ASCII-heavy; the length is a close enough byte count.
-    if (text.length > MAX_WS_MESSAGE_BYTES) return false;
-    socket.send(text);
+    for (const part of splitMessage(JSON.stringify(msg), String(++this.posted))) socket.send(part);
     return true;
   }
 
@@ -460,6 +465,8 @@ export class Session {
     if (this.stopped) return;
     const socket = this.env.createSocket(this.env.wsUrl);
     this.socket = socket;
+    // Parts of a message the last socket was in the middle of never come.
+    this.joiner = new MessageJoiner(MAX_JOINED_CHARS);
     this.socketAt = Date.now();
     socket.onopen = () => {
       if (this.socket !== socket) return;
@@ -564,10 +571,14 @@ export class Session {
   }
 
   private handle(data: unknown): void {
+    let text: string | null = String(data);
+    // A part of a message longer than one WebSocket message: it's read once its last part is here.
+    if (isMessagePart(text)) text = this.joiner.push(text);
+    if (text === null) return;
     const done = this.env.onMessage?.();
     let msg: ServerMessage;
     try {
-      msg = JSON.parse(String(data)) as ServerMessage;
+      msg = JSON.parse(text) as ServerMessage;
     } catch {
       return;
     }

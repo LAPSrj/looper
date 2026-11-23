@@ -1,5 +1,6 @@
 import { Children, cloneElement, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { ChangeEvent, ComponentProps, MouseEvent as ReactMouseEvent, ReactElement, ReactNode } from 'react';
+import type { MenuItemSpec } from '@shared/remote-access';
 // On a phone, marks the window's page and keeps the keyboard and safe-area insets its styles use.
 import './phone/keyboard';
 import { platform } from '../platform';
@@ -415,22 +416,50 @@ export function SelectInput({ autoFocus, ...rest }: ComponentProps<'select'>) {
   return <select autoFocus={autoFocus && !isPhone} {...rest} />;
 }
 
+/** A select's options as a pop-up button's menu items: the chosen one checked, their `&` kept as text. */
+export const popUpItems = (options: readonly HTMLOptionElement[]): MenuItemSpec[] =>
+  options.map((o, i) => ({ id: String(i), type: 'radio', label: o.text.trim().replace(/&/g, '&&'), checked: o.selected, enabled: !o.disabled }));
+
 /**
  * iOS's pop-up button: the chosen option as ordinary text that wraps at the row's end, with the up-and-down
- * chevrons. The select lies over it, unseen, so a tap opens the system's own menu (a select can't wrap its text).
+ * chevrons. A tap on it (in a form, anywhere on the row) opens Looper's menu out of the value, lined up with its
+ * trailing edge, as a list row's pop-up button opens (ios.md: Menus; IosMenu's placePopUp): the system's menu for a
+ * select opened centered over the whole row and covered its label. The select stays, unseen, for the value and
+ * onChange.
  */
-function IosPopUp({ onChange, ...rest }: ComponentProps<'select'>) {
+export function IosPopUp({ onChange, id, disabled, 'aria-label': ariaLabel, 'aria-labelledby': labelledBy, ...rest }: ComponentProps<'select'>) {
   const ref = useRef<HTMLSelectElement>(null);
+  const valueRef = useRef<HTMLSpanElement>(null);
+  const valueId = useId();
   const [text, setText] = useState('');
   const sync = () => setText(ref.current?.selectedOptions[0]?.text.trim() ?? '');
   useLayoutEffect(sync);
+  const open = () => {
+    const select = ref.current;
+    const at = valueRef.current?.getBoundingClientRect();
+    if (!select || !at) return;
+    const options = [...select.options];
+    const button = { x: at.left, y: at.top, width: at.width, height: at.height };
+    void window.looper.commands.popup(popUpItems(options), { x: at.left, y: at.bottom, button }).then((picked) => {
+      const option = picked === null ? undefined : options[Number(picked)];
+      if (!option || option.selected) return;
+      select.value = option.value;
+      // React's onChange for a select listens for the change event.
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  };
   return (
-    <span className={`select-control${rest.disabled ? ' disabled' : ''}`}>
-      <span className="select-value" aria-hidden="true">
+    <span className={`select-control${disabled ? ' disabled' : ''}`}>
+      <span ref={valueRef} id={valueId} className="select-value">
         {text}
       </span>
+      <button type="button" id={id} className="select-hit" aria-haspopup="menu" aria-label={ariaLabel} aria-labelledby={labelledBy} aria-describedby={valueId} disabled={disabled} onClick={open} />
       <select
         ref={ref}
+        hidden
+        tabIndex={-1}
+        aria-hidden="true"
+        disabled={disabled}
         onChange={(e: ChangeEvent<HTMLSelectElement>) => {
           onChange?.(e);
           sync();
@@ -592,6 +621,12 @@ const ONE_PAGE = 3;
  * With `panels`, the TabBar draws the window's body: an iPhone shows a short
  * window as one page, each later tab's name heading its part; every other
  * platform shows the tabs with the active panel below.
+ * `overflow` says what an iPhone or iPad shows for tabs a segmented control
+ * can't hold (more than five, or labels too long): a pop-up button, or with
+ * 'sections' the same list of rows as `sections` (the TabBar's `children` are
+ * then the panel, and a screen that has a detail pushed in it says so with
+ * `hidden`, which only the tab strip gives way to: the rows' own bar yields to
+ * the detail's by order). When the tabs do fit, the segmented control stays.
  */
 export function TabBar<T extends string>({
   tabs,
@@ -600,6 +635,9 @@ export function TabBar<T extends string>({
   className,
   label = 'Sections',
   sections,
+  overflow = 'popup',
+  hidden,
+  startOpen,
   panels,
   ctrlTab,
   children,
@@ -613,47 +651,63 @@ export function TabBar<T extends string>({
   /** The tab list's accessible name. */
   label?: string;
   sections?: boolean;
+  /** iOS: what shows for tabs a segmented control can't hold: a pop-up button (HIG Pop-up buttons) or the list of rows of `sections`, whose rows open the `children`. */
+  overflow?: 'popup' | 'sections';
+  /** The screen shows a pushed detail with a bar of its own, so the tab strip gives way to it (the rows' own bar yields by order). */
+  hidden?: boolean;
+  /** With rows, the panel of the `active` tab is open at the start, not the list. */
+  startOpen?: boolean;
   panels?: (id: T) => ReactNode;
   children?: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!startOpen);
   // Whether the segments (iOS) or fixed tabs (Material) fit (Segmented's onFit); while they don't, the scrolling strip shows instead.
   const [segmentsFit, setSegmentsFit] = useState(true);
-  // iOS has no tab strip: tabs a segmented control can't hold are a pop-up button (below), which Ctrl+Tab still cycles.
-  const popUp = onIos && !sections && (tabs.length > SEGMENTS || !segmentsFit);
+  // iOS has no tab strip: tabs a segmented control can't hold are rows (`overflow` 'sections') or a pop-up button (below), which Ctrl+Tab still cycles.
+  const fits = tabs.length <= SEGMENTS && segmentsFit;
+  const overflowRows = onIos && !sections && overflow === 'sections' && !fits;
+  const popUp = onIos && !sections && !overflowRows && !fits;
   useCtrlTab(
     tabs.map(([id]) => id),
     active,
     onSelect as (id: string) => void,
     ctrlTab && popUp,
   );
-  const rows = isPhone && !!sections;
+  const rows = isPhone && (!!sections || overflowRows);
   const close = () => setOpen(false);
   if (rows) {
+    // The segments are out of the way while the rows show, but measured (drawn at no height) so the rows give way to them when the room grows.
+    const probe = overflowRows && tabs.length <= SEGMENTS && (
+      <Segmented items={tabs} value={active} onChange={onSelect} label={label} onFit={setSegmentsFit} probe />
+    );
     if (open) {
       return (
         <>
+          {probe}
           <NavBar title={tabs.find(([id]) => id === active)?.[1]} back={close} order={3} />
           {children}
         </>
       );
     }
     return (
-      <div className="pg-scroll tab-sections">
-        <Group>
-          {tabs.map(([id, text]) => (
-            <Row
-              key={id}
-              title={text}
-              chevron
-              onOpen={() => {
-                onSelect(id);
-                setOpen(true);
-              }}
-            />
-          ))}
-        </Group>
-      </div>
+      <>
+        {probe}
+        <div className="pg-scroll tab-sections">
+          <Group>
+            {tabs.map(([id, text]) => (
+              <Row
+                key={id}
+                title={text}
+                chevron
+                onOpen={() => {
+                  onSelect(id);
+                  setOpen(true);
+                }}
+              />
+            ))}
+          </Group>
+        </div>
+      </>
     );
   }
   if (onIos && panels && tabs.length <= ONE_PAGE) {
@@ -680,10 +734,10 @@ export function TabBar<T extends string>({
           ctrlTab={ctrlTab}
           className={`pg-segmented tabs-segmented${className ? ` ${className}` : ''}`}
           onFit={setSegmentsFit}
-          probe={!segmentsFit}
+          probe={!segmentsFit || hidden}
         />
       )}
-      {popUp ? (
+      {hidden ? null : popUp ? (
         // HIG Segmented controls: about five segments at most on iPhone; HIG Pop-up buttons: "a flat list of mutually
         // exclusive options", "when space is limited and you don't need to display all options all the time".
         <div className={`tabs-popup${className ? ` ${className}` : ''}`}>

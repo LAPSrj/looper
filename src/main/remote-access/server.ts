@@ -11,6 +11,7 @@ import {
   DEVICE_COOKIE,
   FRAME_PAGE,
   MAX_WS_MESSAGE_BYTES,
+  MessageJoiner,
   PROXY_LOGIN_HEADER,
   PROXY_SECRET_HEADER,
   REQUEST_HEADER,
@@ -27,6 +28,8 @@ import {
   type RenameRequest,
   type ServerMessage,
   type UploadResponse,
+  isMessagePart,
+  splitMessage,
 } from '../../shared/remote-access';
 import { cleanDeviceName, safeEqual, type Clock, type DeviceStore, type Pairing, type StoredDevice } from './devices';
 import { manifest, serviceWorker, withMobileHead } from './pwa';
@@ -57,6 +60,8 @@ const PING_INTERVAL_MS = 30_000;
 const PRECACHE_EXT = /\.(js|css|woff2?|ttf)$/i;
 /** A WebSocket must say hello this soon after it opens. */
 const HELLO_TIMEOUT_MS = 15_000;
+/** The most of a device's message in parts kept while the rest comes (UTF-16 units): far past what it sends, files over 4 MB being uploaded. */
+const MAX_JOINED_CHARS = 64 * 1024 * 1024;
 /** Rejected requests logged per minute; the rest are counted. */
 const REJECT_LOG_PER_MIN = 5;
 
@@ -178,12 +183,17 @@ const isStr = (v: unknown): v is string => typeof v === 'string';
 const PLATFORMS = new Set<unknown>(['web', 'ios', 'android']);
 const DIALOG_KINDS = new Set<unknown>(['message', 'open', 'save']);
 
-/** A client message, checked field by field; null for anything else. */
-export function parseClientMessage(data: RawData, isBinary: boolean): ClientMessage | null {
+/** A WebSocket message's text; null for a binary one, which no client sends. */
+export function messageText(data: RawData, isBinary: boolean): string | null {
   if (isBinary) return null;
+  return Buffer.isBuffer(data) ? data.toString('utf8') : Buffer.concat(data as Buffer[]).toString('utf8');
+}
+
+/** A client message, checked field by field; null for anything else. */
+export function parseClientMessage(text: string): ClientMessage | null {
   let m: Record<string, unknown>;
   try {
-    const v: unknown = JSON.parse(Buffer.isBuffer(data) ? data.toString('utf8') : Buffer.concat(data as Buffer[]).toString('utf8'));
+    const v: unknown = JSON.parse(text);
     if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
     m = v as Record<string, unknown>;
   } catch {
@@ -272,6 +282,8 @@ class Connection implements RemoteConnection {
   readonly id = crypto.randomBytes(6).toString('base64url');
   private readonly messageCbs = new Set<(msg: ClientMessage) => void>();
   private readonly closeCbs = new Set<() => void>();
+  /** Messages sent, which name a long one's parts. */
+  private messages = 0;
 
   constructor(
     private readonly ws: WebSocket,
@@ -294,11 +306,8 @@ class Connection implements RemoteConnection {
       this.log.warn(`remote access: can't send a ${kind} message to ${this.device.name}: ${String(err)}`);
       return false;
     }
-    if (Buffer.byteLength(text) > MAX_WS_MESSAGE_BYTES) {
-      this.log.warn(`remote access: dropped a ${kind} message to ${this.device.name}: larger than ${MAX_WS_MESSAGE_BYTES} bytes`);
-      return false;
-    }
-    this.ws.send(text);
+    // Longer than one WebSocket message takes: it goes as parts the page puts together again.
+    for (const part of splitMessage(text, String(++this.messages))) this.ws.send(part);
     return true;
   }
 
@@ -1001,11 +1010,15 @@ export class RemoteServer {
     ws.on('error', () => ws.terminate());
     let conn: Connection | null = null;
     const helloTimer = setTimeout(() => ws.close(1008, 'hello expected'), HELLO_TIMEOUT_MS);
+    const joiner = new MessageJoiner(MAX_JOINED_CHARS);
     ws.on('message', (data, isBinary) => {
       // Frames already read in the same chunk still arrive after terminate().
       if (live.cut) return;
       live.alive = true;
-      const msg = parseClientMessage(data, isBinary);
+      let text = messageText(data, isBinary);
+      // A part of a message longer than one WebSocket message: it's read once its last part is here.
+      if (text !== null && isMessagePart(text)) text = joiner.push(text);
+      const msg = text === null ? null : parseClientMessage(text);
       if (!msg) return;
       if (msg.t === 'ping') {
         conn?.send({ t: 'pong' });

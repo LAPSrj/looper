@@ -58,11 +58,14 @@ export function compactRow(r: MessageRow): MessageRow | null {
   if (r.kind === 'agent' || r.kind === 'events' || r.kind === 'delegate' || r.kind === 'taskEvents') return { ...base, kind: r.kind, preview: r.preview, text: r.text };
   if (r.kind === 'peer') return { ...base, kind: r.kind, preview: r.preview, text: r.text, ...(r.from ? { from: r.from } : {}) };
   if (r.kind !== 'tool') return null;
-  if (r.sent) return { ...base, kind: 'tool', tool: r.tool, preview: r.preview, text: r.sent.caption ?? '', sent: r.sent };
+  // Where the call is: its whole row and its script's calls are read from its run's transcript while it's there.
+  const call = { ...(r.toolUseId ? { toolUseId: r.toolUseId } : {}), ...(r.run ? { run: r.run } : {}) };
+  // A file a Code Mode script sent stays marked as the script's.
+  if (r.sent) return { ...base, kind: 'tool', tool: r.tool, preview: r.preview, text: r.sent.caption ?? '', sent: r.sent, ...call, ...(r.fromScript ? { fromScript: true as const } : {}) };
   if (AGENT_TOOLS.has(r.tool ?? '') && r.resultChars === undefined) {
     const result = r.result?.trim() ?? '';
     const report = result.startsWith(ASYNC_LAUNCH) ? (r.background?.summary?.trim() ?? '') : result;
-    if (report) return { ...base, kind: 'tool', tool: r.tool, preview: r.preview, text: r.preview, result: report, ...(r.resultError ? { resultError: true } : {}) };
+    if (report) return { ...base, kind: 'tool', tool: r.tool, preview: r.preview, text: r.preview, result: report, ...call, ...(r.resultError ? { resultError: true } : {}) };
   }
   const resultChars = r.resultChars ?? r.result?.length ?? 0;
   return {
@@ -72,10 +75,28 @@ export function compactRow(r: MessageRow): MessageRow | null {
     preview: r.preview,
     text: clip(r.text, INPUT_MAX_CHARS),
     ...(r.file ? { file: r.file } : {}),
+    // The input its views draw (Now's title, the conversation's fields), when it's no longer than the text kept.
+    ...(r.input !== undefined && inputChars(r.input) <= INPUT_MAX_CHARS ? { input: r.input } : {}),
     ...(r.result && r.result.length <= RESULT_MAX_CHARS ? { result: r.result } : {}),
     resultChars,
     ...(r.resultError ? { resultError: true } : {}),
+    ...call,
+    // A Code Mode script's calls, as its REPL call counts them and where they ran.
+    ...(r.calls ? { calls: r.calls } : {}),
   };
+}
+
+const inputChars = (input: unknown): number => {
+  try {
+    return JSON.stringify(input)?.length ?? 0;
+  } catch {
+    return Infinity;
+  }
+};
+
+/** The tool calls and sent files of `rows` marked as `run`'s (MessageRow.run), when they don't say whose they are yet. */
+export function fromRun(rows: MessageRow[], run: string | undefined): MessageRow[] {
+  return run ? rows.map((r) => (r.kind === 'tool' && !r.run ? { ...r, run } : r)) : rows;
 }
 
 /** A tool call of a compacted conversation (compactRow's form), not a message, report or sent files. */
@@ -88,6 +109,7 @@ export function slimCall(r: MessageRow): MessageRow {
   if (!isCall(r)) return r;
   const slim = { ...r, text: listInput(r.text) };
   delete slim.result;
+  if (slim.input !== undefined && inputChars(slim.input) > LIST_INPUT_CHARS) delete slim.input;
   return slim;
 }
 
@@ -114,11 +136,6 @@ export function layered(rows: MessageRow[]): MessageRow[] {
 
 /** A row's session in compactedText: one without a layer is the newest's. */
 const layerOf = (r: MessageRow) => r.layer ?? Infinity;
-
-/** The messages, reports and sent files of compacted rows: what a chat shows of the conversation it was compacted from. */
-export function proseRows(rows: MessageRow[]): MessageRow[] {
-  return rows.filter((r) => !isCall(r));
-}
 
 /** The labels compactedText starts its blocks with. */
 const LABEL_RE = /^(\s*)(\[(?:User|Agent|Subagent report|Trigger events|Task events|From the agents|Tool call #|Result\]|Earlier session|Compaction))/gm;
