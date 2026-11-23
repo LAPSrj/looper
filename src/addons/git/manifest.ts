@@ -13,11 +13,15 @@ export const MANIFEST = {
   $version: 2 satisfies typeof ADDON_FORMAT,
   id: 'git',
   name: 'Git',
-  version: '1.2.2',
+  version: '1.2.3',
   description: "Your projects' git repositories: changes, history, commits, branches, pull and push.",
   run: { on: 'looper', command: ['${addonDir}/addon.js'] },
   panes: [{ id: 'repositories', title: 'Git' }],
   panesIcon: 'library:git-branch',
+  // A branch line through a commit, beside a changed file.
+  icons: {
+    commit: "<svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\"><path d=\"M3.5 1.5V6M3.5 10v4.5\"/><circle cx=\"3.5\" cy=\"8\" r=\"2\"/><path d=\"M9.5 12.5h4a1 1 0 0 0 1-1V6L12 3.5H9.5a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1Z\"/><path d=\"M12 3.5V6h2.5\"/></svg>",
+  },
   projectTabs: [{ id: 'git', title: 'Git', view: 'project' }],
   commands: [
     {
@@ -27,7 +31,7 @@ export const MANIFEST = {
       opens: { view: 'clone', width: 560, height: 440 },
       in: { new: { toolbar: true }, panes: { toolbar: true, main: true } },
     },
-    { id: 'commit', label: '&Commit…', icon: 'library:git-commit-horizontal', menu: 'tools', group: 'commit', in: onRepo(true) },
+    { id: 'commit', label: '&Commit…', icon: 'commit', menu: 'tools', group: 'commit', in: onRepo(true) },
     { id: 'pull', label: 'P&ull', icon: 'library:arrow-down-to-line', menu: 'tools', group: 'remote', in: onRepo() },
     { id: 'push', label: '&Push', icon: 'library:arrow-up-from-line', menu: 'tools', group: 'remote', in: onRepo() },
     { id: 'sync', label: '&Sync', icon: 'library:arrow-down-up', menu: 'tools', group: 'remote', in: onRepo(true) },
@@ -60,7 +64,7 @@ export const MANIFEST = {
     { id: 'init', label: 'Create Rep&ository', icon: 'library:folder-git', menu: 'tools', group: 'repo', in: onRepo() },
     { id: 'settings', label: 'Git Setti&ngs…', icon: 'settings', menu: 'tools', group: 'settings', in: { app: {}, panes: { toolbar: true } } },
   ],
-} satisfies Omit<AddonManifest, 'tabs' | 'icons' | 'toolCalls'>;
+} satisfies Omit<AddonManifest, 'tabs' | 'toolCalls'>;
 
 /** The commands that act on a project's repository, which each item, project tab and screen says how they are. */
 export type RepoCommand = 'commit' | 'pull' | 'push' | 'sync' | 'fetch' | 'branch' | 'repo-settings' | 'init';
